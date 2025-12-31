@@ -1,0 +1,242 @@
+PROBE POINT ANALYTICS SRL - SOURCE AVAILABLE LICENSE
+Version 1.0
+
+Copyright (c) 2024-2025 Probe Point Analytics SRL. All rights reserved.
+
+================================================================================
+PREAMBLE
+================================================================================
+
+This license governs the use of the OSINT Copilot plugin software (the
+"Software"). The Software is made available in source-available form to promote
+transparency and allow users to inspect, learn from, and use the code for
+personal purposes, including personal commercial use by individual freelancers
+and professionals. However, this is NOT an open-source license in the
+traditional sense. Corporate/organizational commercial use, distribution of
+derivative works, and other activities are restricted as described below.
+
+By using, copying, or distributing the Software, you agree to be bound by the
+terms of this license.
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+
+1.1 "Software" means the OSINT Copilot plugin source code, documentation,
+    associated files, and any updates or modifications provided by Probe Point
+    Analytics SRL.
+
+1.2 "Licensor" means Probe Point Analytics SRL, the copyright holder.
+
+1.3 "You" or "Your" means the individual or legal entity exercising rights
+    under this license.
+
+1.4 "Commercial Use" means any use of the Software by a company, corporation,
+    organization, or other legal entity (other than an individual) intended for
+    or directed toward commercial advantage or monetary compensation, including
+    but not limited to: selling the Software or derivative works; incorporating
+    the Software into commercial products for sale; using the Software to
+    provide paid SaaS or hosted services to third parties; or reselling or
+    redistributing the Software commercially. Commercial Use expressly EXCLUDES
+    Personal Commercial Use as defined in Section 1.6.
+
+1.5 "Personal Commercial Use" means use of the Software by an individual
+    natural person (not a company or organization) for their own commercial
+    work, including but not limited to:
+    (a) Individual freelancers or sole proprietors using the Software for
+        their own commercial projects or client work;
+    (b) Personal consulting or professional services where the individual
+        directly uses the Software as a tool in their work;
+    (c) Small-scale commercial use by individuals acting in their personal
+        capacity, not on behalf of a company or organization.
+    Personal Commercial Use is permitted under this license without requiring
+    additional authorization from the Licensor.
+
+1.6 "Derivative Work" means any work that is based on or derived from the
+    Software, including modifications, adaptations, translations, ports,
+    extensions, or any work that incorporates substantial portions of the
+    Software's code or functionality.
+
+================================================================================
+2. GRANT OF RIGHTS
+================================================================================
+
+Subject to the terms and conditions of this license, the Licensor hereby grants
+You a worldwide, royalty-free, non-exclusive, non-transferable license to:
+
+2.1 VIEW AND STUDY the Software source code for educational and personal
+    learning purposes.
+
+2.2 USE the Software for personal, non-commercial purposes.
+
+2.3 MAKE PRIVATE MODIFICATIONS to the Software for Your own personal use,
+    provided such modifications are not distributed or made publicly available.
+
+2.4 PERSONAL COMMERCIAL USE: Use the Software for Personal Commercial Use as
+    defined in Section 1.5. This includes individual freelancers, sole
+    proprietors, and independent professionals using the Software as a tool
+    in their own commercial work, consulting, or professional services. This
+    right is granted without requiring additional authorization or payment,
+    subject to all other terms of this license.
+
+================================================================================
+3. RESTRICTIONS
+================================================================================
+
+The following activities are expressly PROHIBITED without prior written
+authorization from Probe Point Analytics SRL:
+
+3.1 COMMERCIAL USE: You may not use the Software, in whole or in part, for any
+    Commercial Use as defined in Section 1.4. This prohibition applies to:
+    (a) Corporate or organizational use for commercial purposes;
+    (b) Reselling or redistributing the Software commercially;
+    (c) Incorporating the Software into commercial products for sale;
+    (d) Using the Software to provide paid SaaS or hosted services to third
+        parties;
+    (e) Any commercial use by companies, corporations, or organizations.
+
+    This restriction does NOT prohibit Personal Commercial Use by individuals
+    as defined in Section 1.5 and granted in Section 2.4.
+
+    To obtain a commercial license for organizational use, You must either:
+    (i)  Obtain explicit written permission from Probe Point Analytics SRL; or
+    (ii) Purchase the appropriate products or licensing from Probe Point
+         Analytics SRL.
+
+3.2 DISTRIBUTION OF DERIVATIVE WORKS: You may not publish, distribute, share,
+    or make publicly available any Derivative Work based on the Software,
+    whether as open source, closed source, or otherwise. This includes but is
+    not limited to:
+    (a) Publishing forks of the Software on code hosting platforms;
+    (b) Distributing modified versions of the Software;
+    (c) Incorporating the Software into other projects for distribution;
+    (d) Creating and distributing plugins, extensions, or add-ons based on
+        substantial portions of the Software.
+
+3.3 SUBLICENSING: You may not sublicense, rent, lease, or lend the Software or
+    any rights granted under this license to any third party.
+
+3.4 REMOVAL OF NOTICES: You may not remove, alter, or obscure any copyright
+    notices, license terms, or attribution notices included in the Software.
+
+================================================================================
+4. ATTRIBUTION REQUIREMENTS
+================================================================================
+
+4.1 All copies of the Software, whether complete or partial, must retain:
+    (a) The complete copyright notice: "Copyright (c) 2024-2025 Probe Point
+        Analytics SRL. All rights reserved."
+    (b) This license in its entirety.
+    (c) Any other attribution notices included in the original Software.
+
+4.2 If You use the Software in any permitted manner that involves display or
+    acknowledgment, You must provide appropriate credit to Probe Point
+    Analytics SRL as the original author.
+
+================================================================================
+5. INTELLECTUAL PROPERTY
+================================================================================
+
+5.1 The Licensor retains all right, title, and interest in and to the Software,
+    including all intellectual property rights therein.
+
+5.2 This license does not grant You any rights to use the Licensor's
+    trademarks, service marks, trade names, or logos.
+
+5.3 Nothing in this license shall be construed as granting any rights to
+    patents held by the Licensor.
+
+================================================================================
+6. DISCLAIMER OF WARRANTIES
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+THE LICENSOR DOES NOT WARRANT THAT:
+(a) THE SOFTWARE WILL MEET YOUR REQUIREMENTS;
+(b) THE SOFTWARE WILL BE UNINTERRUPTED, TIMELY, SECURE, OR ERROR-FREE;
+(c) THE RESULTS OBTAINED FROM USE OF THE SOFTWARE WILL BE ACCURATE OR RELIABLE;
+(d) ANY ERRORS IN THE SOFTWARE WILL BE CORRECTED.
+
+YOU ASSUME ALL RISK AND RESPONSIBILITY FOR THE SELECTION, USE, AND RESULTS
+OBTAINED FROM THE SOFTWARE.
+
+================================================================================
+7. LIMITATION OF LIABILITY
+================================================================================
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+LICENSOR, ITS AFFILIATES, OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, OR LICENSORS
+BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, PUNITIVE, OR
+EXEMPLARY DAMAGES, INCLUDING BUT NOT LIMITED TO DAMAGES FOR LOSS OF PROFITS,
+GOODWILL, USE, DATA, OR OTHER INTANGIBLE LOSSES, ARISING OUT OF OR IN
+CONNECTION WITH:
+
+(a) YOUR USE OR INABILITY TO USE THE SOFTWARE;
+(b) ANY UNAUTHORIZED ACCESS TO OR ALTERATION OF YOUR DATA;
+(c) ANY THIRD-PARTY CONDUCT OR CONTENT;
+(d) ANY CONTENT OBTAINED FROM THE SOFTWARE; OR
+(e) UNAUTHORIZED ACCESS, USE, OR ALTERATION OF YOUR TRANSMISSIONS OR CONTENT.
+
+IN NO EVENT SHALL THE LICENSOR'S TOTAL LIABILITY TO YOU FOR ALL CLAIMS ARISING
+OUT OF OR RELATING TO THIS LICENSE OR THE SOFTWARE EXCEED THE AMOUNT YOU PAID
+TO THE LICENSOR FOR THE SOFTWARE, IF ANY, OR ONE HUNDRED EUROS (€100),
+WHICHEVER IS GREATER.
+
+================================================================================
+8. TERMINATION
+================================================================================
+
+8.1 This license is effective until terminated.
+
+8.2 Your rights under this license will terminate automatically without notice
+    if You fail to comply with any of its terms.
+
+8.3 Upon termination, You must cease all use of the Software and destroy all
+    copies in Your possession or control.
+
+8.4 Sections 5, 6, 7, and 9 shall survive any termination of this license.
+
+================================================================================
+9. GENERAL PROVISIONS
+================================================================================
+
+9.1 GOVERNING LAW: This license shall be governed by and construed in
+    accordance with the laws of Romania, without regard to its conflict of
+    law provisions.
+
+9.2 DISPUTE RESOLUTION: Any disputes arising under this license shall be
+    subject to the exclusive jurisdiction of the courts of Romania.
+
+9.3 SEVERABILITY: If any provision of this license is held to be unenforceable
+    or invalid, that provision shall be modified to the minimum extent
+    necessary to make it enforceable, and the remaining provisions shall
+    continue in full force and effect.
+
+9.4 ENTIRE AGREEMENT: This license constitutes the entire agreement between
+    You and the Licensor regarding the Software and supersedes all prior
+    agreements and understandings.
+
+9.5 WAIVER: No waiver of any term of this license shall be deemed a further or
+    continuing waiver of such term or any other term.
+
+9.6 AMENDMENTS: The Licensor reserves the right to modify this license at any
+    time. Continued use of the Software after such modifications constitutes
+    acceptance of the modified terms.
+
+================================================================================
+10. CONTACT INFORMATION
+================================================================================
+
+For licensing inquiries, commercial use permissions, or authorization to create
+derivative works, please contact:
+
+Probe Point Analytics SRL
+Email: contact@probepointanalytics.com
+
+================================================================================
+
+By using the Software, You acknowledge that You have read, understood, and
+agree to be bound by the terms and conditions of this license.

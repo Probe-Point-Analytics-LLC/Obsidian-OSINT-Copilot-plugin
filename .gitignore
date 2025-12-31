@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (keep main.js for distribution)
+main.js.map
+*.map
+
+# OS files
+.DS_Store
+
+# Build directories
+dist/
+
+# IDE
+.idea/*
+
+# Old files
+/old-graph-ui/
+
+# Python
+__pycache__/
+
+# User data (should not be committed)
+data.json
+docs/

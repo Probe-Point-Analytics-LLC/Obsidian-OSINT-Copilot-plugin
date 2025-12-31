@@ -1,0 +1,11 @@
+{
+  "id": "vault-ai-remote",
+  "name": "OSINT Copilot",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "OSINT Copilot for Obsidian - Lookup chat and OSINT connections graph. Sign-in required.",
+  "author": "Your Name",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
+
