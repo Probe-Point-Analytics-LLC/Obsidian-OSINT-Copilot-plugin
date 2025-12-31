@@ -785,7 +785,8 @@ The geocoding service uses **Nominatim** (OpenStreetMap):
 
 ## License
 
-MIT License - See LICENSE file for details.
+PROBE POINT ANALYTICS SRL - SOURCE AVAILABLE LICENSE
+- See LICENSE file for details.
 
 ## Credits
 
