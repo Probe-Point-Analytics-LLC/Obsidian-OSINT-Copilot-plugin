@@ -1,11 +1,11 @@
 {
-  "id": "vault-ai-remote",
+  "id": "osint-copilot",
   "name": "OSINT Copilot",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "minAppVersion": "1.5.0",
-  "description": "OSINT Copilot for Obsidian - Lookup chat and OSINT connections graph. Sign-in required.",
-  "author": "Your Name",
-  "authorUrl": "",
+  "description": "AI-powered OSINT investigation plugin with entity extraction, relationship mapping, dark web investigations, and interactive visualizations for SOC analysts and threat researchers.",
+  "author": "Probe Point Analytics",
+  "authorUrl": "https://github.com/Probe-Point-Analytics-LLC/OSINT-copilot-plugin",
   "isDesktopOnly": false
 }
 

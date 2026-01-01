@@ -1,15 +1,16 @@
 {
-  "name": "vault-ai-remote",
-  "version": "0.1.0",
+  "name": "osint-copilot",
+  "version": "1.0.0",
   "description": "OSINT Copilot for Obsidian - AI-powered Q&A and Report Generation",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
-  "keywords": ["obsidian", "plugin", "ai", "llm", "osint"],
-  "author": "Your Name",
-  "license": "MIT",
+  "keywords": ["obsidian", "plugin", "ai", "llm", "osint", "threat-intelligence", "soc"],
+  "author": "Probe Point Analytics",
+  "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "@types/lodash": "^4.17.7",

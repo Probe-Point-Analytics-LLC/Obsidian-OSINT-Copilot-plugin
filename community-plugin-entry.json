@@ -1,0 +1,8 @@
+{
+  "id": "osint-copilot",
+  "name": "OSINT Copilot",
+  "author": "Probe Point Analytics",
+  "description": "AI-powered OSINT investigation plugin with entity extraction, relationship mapping, dark web investigations, and interactive visualizations for SOC analysts and threat researchers.",
+  "repo": "Probe-Point-Analytics-LLC/OSINT-copilot-plugin"
+}
+
