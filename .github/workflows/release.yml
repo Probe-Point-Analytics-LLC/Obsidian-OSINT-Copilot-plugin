@@ -5,12 +5,17 @@ on:
     tags:
       - "*"
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Use Node.js
         uses: actions/setup-node@v3
@@ -22,14 +27,39 @@ jobs:
           npm install
           npm run build
 
+      - name: Verify build artifacts
+        run: |
+          echo "Checking for required files..."
+          ls -lh main.js manifest.json styles.css
+          echo "✅ All required files present"
+
+      - name: Extract version from manifest
+        id: version
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Plugin version: $VERSION"
+
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          
+          version="${{ steps.version.outputs.version }}"
+
+          echo "🚀 Creating release for tag: $tag"
+          echo "📋 Version from manifest: $version"
+
+          # Verify tag matches manifest version
+          if [ "$tag" != "$version" ]; then
+            echo "⚠️  Warning: Tag ($tag) doesn't match manifest version ($version)"
+          fi
+
           gh release create "$tag" \
-            --title="$tag" \
+            --title="OSINT Copilot v$tag" \
+            --notes="See [RELEASE_NOTES.md](https://github.com/${{ github.repository }}/blob/$tag/RELEASE_NOTES.md) for details." \
             --draft \
             main.js manifest.json styles.css
+
+          echo "✅ Release created successfully!"
 
