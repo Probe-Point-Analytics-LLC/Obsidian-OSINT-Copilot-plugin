@@ -1073,7 +1073,7 @@ export default class VaultAIPlugin extends Plugin {
               const lowerError = errorText.toLowerCase();
               if (lowerError.includes("quota") || lowerError.includes("exhausted")) {
                 throw new Error(
-                  "Report quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
+                  "Corporate Report quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
                 );
               }
               if (lowerError.includes("expired")) {
@@ -1089,7 +1089,7 @@ export default class VaultAIPlugin extends Plugin {
             }
 
             throw new Error(
-              `Report generation request failed (${generateResponse.status}): ${errorText.substring(0, 200)}`
+              `Corporate Report generation request failed (${generateResponse.status}): ${errorText.substring(0, 200)}`
             );
           }
 
@@ -1112,7 +1112,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = initError instanceof Error && this.isTransientNetworkError(initError);
 
           if (isNetworkError && initAttempt < maxInitialRetries) {
-            console.log(`[OSINT Copilot] Report init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
+            console.log(`[OSINT Copilot] Corporate Report init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
             statusCallback?.(`Network interrupted, retrying... (attempt ${initAttempt}/${maxInitialRetries})`);
             await this.sleep(1000 * initAttempt); // Exponential backoff
           } else {
@@ -1121,7 +1121,7 @@ export default class VaultAIPlugin extends Plugin {
         }
       }
 
-      statusCallback?.(`Report generation started (Job ID: ${jobId}). Processing...`);
+      statusCallback?.(`Corporate Report generation started (Job ID: ${jobId}). Processing...`);
 
       // Step 2: Poll for job status with adaptive polling and retry logic
       let attempts = 0;
@@ -1266,7 +1266,7 @@ export default class VaultAIPlugin extends Plugin {
               throw new Error("Backend service temporarily unavailable. Please try again in a few minutes.");
             }
 
-            throw new Error(`Report generation failed: ${backendError}`);
+            throw new Error(`Corporate Report generation failed: ${backendError}`);
           }
         } catch (pollError) {
           // Check if this is a transient network error
@@ -1279,7 +1279,7 @@ export default class VaultAIPlugin extends Plugin {
             const errorType = pollError instanceof Error ? pollError.name : 'Unknown';
             const errorMsg = pollError instanceof Error ? pollError.message : String(pollError);
             console.log(
-              `[OSINT Copilot] Report status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
+              `[OSINT Copilot] Corporate Report status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
               `Type: ${errorType}, Message: ${errorMsg}`
             );
 
@@ -1303,7 +1303,7 @@ export default class VaultAIPlugin extends Plugin {
       // Check if job completed or response is ready (for answers)
       // Note: response_ready case is handled inside the loop and returns early
       if (jobStatus !== "completed") {
-        throw new Error("Report generation timed out. Please try again.");
+        throw new Error("Corporate Report generation timed out. Please try again.");
       }
 
       // Step 3: Download the report with retry logic
@@ -1339,7 +1339,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = downloadError instanceof Error && this.isTransientNetworkError(downloadError);
 
           if (isNetworkError && downloadAttempt < maxDownloadRetries) {
-            console.log(`[OSINT Copilot] Report download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
+            console.log(`[OSINT Copilot] Corporate Report download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
             statusCallback?.(`Download interrupted, retrying... (attempt ${downloadAttempt}/${maxDownloadRetries})`);
             await this.sleep(1000 * downloadAttempt); // Exponential backoff
           } else {
@@ -1354,7 +1354,7 @@ export default class VaultAIPlugin extends Plugin {
         throw new Error("No content received from server");
       }
 
-      statusCallback?.("Report downloaded successfully!");
+      statusCallback?.("Corporate Report downloaded successfully!");
 
       // Sanitize the markdown content
       const sanitizedContent = this.sanitizeMarkdownContent(reportContent);
@@ -1365,7 +1365,7 @@ export default class VaultAIPlugin extends Plugin {
       };
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`Report generation failed: ${error.message}`);
+        throw new Error(`Corporate Report generation failed: ${error.message}`);
       }
       throw error;
     }
@@ -1605,7 +1605,7 @@ export default class VaultAIPlugin extends Plugin {
     const date = new Date().toISOString().split("T")[0];
 
     // Extract entity name from description for meaningful filename
-    // Common patterns: "Tell me about X", "Report on X", "Who is X", "What is X", etc.
+    // Common patterns: "Tell me about X", "Corporate Report on X", "Who is X", "What is X", etc.
     let entityName = description;
     const patterns = [
       /(?:tell me about|report on|who is|what is|investigate|research|find|look up|search for)\s+(.+)/i,
@@ -1628,7 +1628,7 @@ export default class VaultAIPlugin extends Plugin {
       .replace(/\s+/g, "_");
 
     // Create filename: EntityName_Report_YYYY-MM-DD.md
-    const baseFilename = sanitizedEntity ? `${sanitizedEntity}_Report` : "Report";
+    const baseFilename = sanitizedEntity ? `${sanitizedEntity}_Report` : "Corporate Report";
     const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}.md`;
 
     // Ensure Reports folder exists
@@ -2165,7 +2165,7 @@ class ChatView extends ItemView {
     });
     darkWebLabel.htmlFor = "dark-web-mode-toggle";
 
-    // Report Generation Mode Toggle
+    // Corporate Report Generation Mode Toggle
     const reportGenContainer = mainModeGroup.createDiv("vault-ai-report-gen-toggle");
     reportGenContainer.addClass("vault-ai-toggle-container");
 
@@ -2183,7 +2183,7 @@ class ChatView extends ItemView {
         this.darkWebMode = false;
         this.localSearchModeToggle.checked = false;
         this.darkWebToggle.checked = false;
-        new Notice("Report Generation Mode enabled");
+        new Notice("Corporate Report Generation Mode enabled");
       } else {
         // Disable report mode - may enter Entity-Only Mode if entity generation is on
         this.reportGenerationMode = false;
@@ -2194,7 +2194,7 @@ class ChatView extends ItemView {
     });
 
     const reportGenLabel = reportGenContainer.createEl("label", {
-      text: this.reportGenerationMode ? "📄 Report (ON)" : "📄 Report",
+      text: this.reportGenerationMode ? "📄 Corporate Report (ON)" : "📄 Corporate Report",
       cls: this.reportGenerationMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
     });
     reportGenLabel.htmlFor = "report-gen-mode-toggle";
@@ -2338,12 +2338,12 @@ class ChatView extends ItemView {
       if (checkbox) checkbox.checked = this.darkWebMode;
     }
 
-    // Update Report Generation Mode label
+    // Update Corporate Report Generation Mode label
     const reportContainer = this.containerEl.querySelector(".vault-ai-report-gen-toggle");
     if (reportContainer) {
       const label = reportContainer.querySelector("label");
       if (label) {
-        label.textContent = this.reportGenerationMode ? "📄 Report (ON)" : "📄 Report";
+        label.textContent = this.reportGenerationMode ? "📄 Corporate Report (ON)" : "📄 Corporate Report";
         label.className = this.reportGenerationMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
       }
       const checkbox = reportContainer.querySelector("input") as HTMLInputElement;
@@ -2402,7 +2402,7 @@ class ChatView extends ItemView {
           meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
         }
       } else if (conv.reportGenerationMode) {
-        meta.createEl("span", { text: "📄", cls: "vault-ai-conversation-report", title: "Report Generation Mode" });
+        meta.createEl("span", { text: "📄", cls: "vault-ai-conversation-report", title: "Corporate Report Generation Mode" });
         if (conv.entityGenerationMode) {
           meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
         }
@@ -2721,7 +2721,7 @@ class ChatView extends ItemView {
         `;
       }
 
-      // Show "Open Report" button for report generation messages
+      // Show "Open Corporate Report" button for report generation messages
       if (item.role === "assistant" && item.reportFilePath) {
         const reportButtonContainer = messageDiv.createDiv("vault-ai-report-button-container");
         reportButtonContainer.style.cssText = `
@@ -2733,7 +2733,7 @@ class ChatView extends ItemView {
         `;
 
         const reportButton = reportButtonContainer.createEl("button", {
-          text: "📄 Open Report",
+          text: "📄 Open Corporate Report",
           cls: "vault-ai-open-report-btn",
         });
         reportButton.style.cssText = `
@@ -2765,7 +2765,7 @@ class ChatView extends ItemView {
             await this.app.workspace.getLeaf().openFile(file);
             new Notice(`Opened report: ${item.reportFilePath}`);
           } else {
-            new Notice(`Report file not found: ${item.reportFilePath}`);
+            new Notice(`Corporate Report file not found: ${item.reportFilePath}`);
           }
         });
 
@@ -3539,7 +3539,7 @@ class ChatView extends ItemView {
 
       // Update message with success header, file link, and full report content
       let finalContent =
-        `📄 **Report Generated Successfully!**\n\n` +
+        `📄 **Corporate Report Generated Successfully!**\n\n` +
         `**Request:** ${description}\n\n` +
         `**Saved to:** \`${fileName}\`\n\n` +
         `---\n\n` +
@@ -3559,7 +3559,7 @@ class ChatView extends ItemView {
         await this.app.workspace.getLeaf().openFile(file);
       }
 
-      new Notice(`Report saved to ${fileName}`);
+      new Notice(`Corporate Report saved to ${fileName}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
 
@@ -3571,7 +3571,7 @@ class ChatView extends ItemView {
         userMessage = "Backend service temporarily unavailable (SSL/certificate issue)";
         suggestion = "\n\n💡 **Suggestion:** This is a temporary server-side issue. Please try again in a few minutes.";
       } else if (errorMsg.toLowerCase().includes("timeout")) {
-        userMessage = "Report generation timed out";
+        userMessage = "Corporate Report generation timed out";
         suggestion = "\n\n💡 **Suggestion:** The server may be busy. Please try again with a simpler query.";
       } else if (errorMsg.toLowerCase().includes("quota")) {
         suggestion = "\n\n💡 **Suggestion:** Visit https://osint-copilot.com/dashboard/ to check your quota.";
@@ -3584,11 +3584,11 @@ class ChatView extends ItemView {
       }
 
       this.chatHistory[messageIndex].content =
-        `📄 **Report Generation Failed**\n\n` +
+        `📄 **Corporate Report Generation Failed**\n\n` +
         `**Request:** ${description}\n\n` +
         `**Error:** ${userMessage}${suggestion}`;
       this.renderMessages();
-      new Notice(`Report generation failed: ${userMessage}`);
+      new Notice(`Corporate Report generation failed: ${userMessage}`);
     }
   }
 
@@ -4217,9 +4217,9 @@ class VaultAISettingTab extends PluginSettingTab {
       });
     }
 
-    // Report Output Directory
+    // Corporate Report Output Directory
     new Setting(containerEl)
-      .setName("Report Output Directory")
+      .setName("Corporate Report Output Directory")
       .setDesc("Directory where generated reports will be saved")
       .addText((text) =>
         text
