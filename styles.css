@@ -149,7 +149,7 @@
   transition: all 0.3s ease;
 }
 
-/* Main Mode Group (Lookup, Dark Web, Report - mutually exclusive checkboxes) */
+/* Main Mode Group (Local Search, Dark Web, Report - mutually exclusive checkboxes) */
 .vault-ai-main-mode-group {
   display: flex;
   gap: 4px;
@@ -553,7 +553,7 @@
   font-size: 11px;
 }
 
-.vault-ai-conversation-lookup {
+.vault-ai-conversation-local-search {
   font-size: 11px;
 }
 

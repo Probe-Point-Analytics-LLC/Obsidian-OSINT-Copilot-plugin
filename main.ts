@@ -1958,11 +1958,11 @@ class ChatView extends ItemView {
   sidebarContainer!: HTMLDivElement;
   conversationListEl!: HTMLDivElement;
   // Main modes (mutually exclusive - only one can be active, or all can be off for Entity-Only Mode)
-  lookupMode: boolean = true; // Default mode
+  localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
   // Toggle elements
-  lookupModeToggle!: HTMLInputElement;
+  localSearchModeToggle!: HTMLInputElement;
   darkWebToggle!: HTMLInputElement;
   reportGenerationToggle!: HTMLInputElement;
   // Entity generation is independent (can be enabled with any main mode, or alone for Entity-Only Mode)
@@ -2002,8 +2002,8 @@ class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.entityGenerationMode = conversation.entityGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
-      // Lookup mode: true if no other main mode is active (backward compatibility)
-      this.lookupMode = !this.darkWebMode && !this.reportGenerationMode;
+      // Local Search mode: true if no other main mode is active (backward compatibility)
+      this.localSearchMode = !this.darkWebMode && !this.reportGenerationMode;
     }
   }
 
@@ -2042,7 +2042,7 @@ class ChatView extends ItemView {
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
-    this.currentConversation.lookupMode = this.lookupMode;
+    this.currentConversation.localSearchMode = this.localSearchMode;
     this.currentConversation.darkWebMode = this.darkWebMode;
     this.currentConversation.entityGenerationMode = this.entityGenerationMode;
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
@@ -2097,39 +2097,39 @@ class ChatView extends ItemView {
     const mainModeGroup = buttonGroup.createDiv("vault-ai-main-mode-group");
     mainModeGroup.setAttribute("title", "Select one mode, or deselect all for Entity-Only Mode");
 
-    // Lookup Mode Toggle (default mode)
-    const lookupContainer = mainModeGroup.createDiv("vault-ai-lookup-toggle");
-    lookupContainer.addClass("vault-ai-toggle-container");
+    // Local Search Mode Toggle (default mode)
+    const localSearchContainer = mainModeGroup.createDiv("vault-ai-local-search-toggle");
+    localSearchContainer.addClass("vault-ai-toggle-container");
 
-    this.lookupModeToggle = lookupContainer.createEl("input", {
+    this.localSearchModeToggle = localSearchContainer.createEl("input", {
       type: "checkbox",
       cls: "vault-ai-mode-checkbox",
     });
-    this.lookupModeToggle.id = "lookup-mode-toggle";
-    this.lookupModeToggle.checked = this.lookupMode;
-    this.lookupModeToggle.addEventListener("change", () => {
-      if (this.lookupModeToggle.checked) {
-        // Enable lookup mode, disable others (mutual exclusivity)
-        this.lookupMode = true;
+    this.localSearchModeToggle.id = "local-search-mode-toggle";
+    this.localSearchModeToggle.checked = this.localSearchMode;
+    this.localSearchModeToggle.addEventListener("change", () => {
+      if (this.localSearchModeToggle.checked) {
+        // Enable local search mode, disable others (mutual exclusivity)
+        this.localSearchMode = true;
         this.darkWebMode = false;
         this.reportGenerationMode = false;
         this.darkWebToggle.checked = false;
         this.reportGenerationToggle.checked = false;
-        new Notice("Lookup Mode enabled");
+        new Notice("Local Search Mode enabled");
       } else {
-        // Disable lookup mode - may enter Entity-Only Mode if entity generation is on
-        this.lookupMode = false;
+        // Disable local search mode - may enter Entity-Only Mode if entity generation is on
+        this.localSearchMode = false;
         this.checkEntityOnlyMode();
       }
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
     });
 
-    const lookupLabel = lookupContainer.createEl("label", {
-      text: this.lookupMode ? "🔍 Lookup (ON)" : "🔍 Lookup",
-      cls: this.lookupMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
+    const localSearchLabel = localSearchContainer.createEl("label", {
+      text: this.localSearchMode ? "🔍 Local Search (ON)" : "🔍 Local Search",
+      cls: this.localSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
     });
-    lookupLabel.htmlFor = "lookup-mode-toggle";
+    localSearchLabel.htmlFor = "local-search-mode-toggle";
 
     // Dark Web Mode Toggle
     const darkWebContainer = mainModeGroup.createDiv("vault-ai-dark-web-toggle");
@@ -2145,9 +2145,9 @@ class ChatView extends ItemView {
       if (this.darkWebToggle.checked) {
         // Enable dark web mode, disable others (mutual exclusivity)
         this.darkWebMode = true;
-        this.lookupMode = false;
+        this.localSearchMode = false;
         this.reportGenerationMode = false;
-        this.lookupModeToggle.checked = false;
+        this.localSearchModeToggle.checked = false;
         this.reportGenerationToggle.checked = false;
         new Notice("Dark Web Mode enabled");
       } else {
@@ -2179,9 +2179,9 @@ class ChatView extends ItemView {
       if (this.reportGenerationToggle.checked) {
         // Enable report mode, disable others (mutual exclusivity)
         this.reportGenerationMode = true;
-        this.lookupMode = false;
+        this.localSearchMode = false;
         this.darkWebMode = false;
-        this.lookupModeToggle.checked = false;
+        this.localSearchModeToggle.checked = false;
         this.darkWebToggle.checked = false;
         new Notice("Report Generation Mode enabled");
       } else {
@@ -2255,7 +2255,7 @@ class ChatView extends ItemView {
 
   // Check if Entity-Only Mode is active (entity generation ON, all main modes OFF)
   isEntityOnlyMode(): boolean {
-    return this.entityGenerationMode && !this.lookupMode && !this.darkWebMode && !this.reportGenerationMode;
+    return this.entityGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode;
   }
 
   // Show notice when entering Entity-Only Mode
@@ -2314,16 +2314,16 @@ class ChatView extends ItemView {
   }
 
   updateAllModeLabels() {
-    // Update Lookup Mode label
-    const lookupContainer = this.containerEl.querySelector(".vault-ai-lookup-toggle");
-    if (lookupContainer) {
-      const label = lookupContainer.querySelector("label");
+    // Update Local Search Mode label
+    const localSearchContainer = this.containerEl.querySelector(".vault-ai-local-search-toggle");
+    if (localSearchContainer) {
+      const label = localSearchContainer.querySelector("label");
       if (label) {
-        label.textContent = this.lookupMode ? "🔍 Lookup (ON)" : "🔍 Lookup";
-        label.className = this.lookupMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
+        label.textContent = this.localSearchMode ? "🔍 Local Search (ON)" : "🔍 Local Search";
+        label.className = this.localSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
       }
-      const checkbox = lookupContainer.querySelector("input") as HTMLInputElement;
-      if (checkbox) checkbox.checked = this.lookupMode;
+      const checkbox = localSearchContainer.querySelector("input") as HTMLInputElement;
+      if (checkbox) checkbox.checked = this.localSearchMode;
     }
 
     // Update Dark Web Mode label
@@ -2392,7 +2392,7 @@ class ChatView extends ItemView {
       const date = new Date(conv.updatedAt);
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
       // Check if Entity-Only Mode (entity gen ON, all main modes OFF)
-      const isEntityOnly = conv.entityGenerationMode && !conv.lookupMode && !conv.darkWebMode && !conv.reportGenerationMode;
+      const isEntityOnly = conv.entityGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode;
       // Show main mode badge or Entity-Only badge
       if (isEntityOnly) {
         meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entityonly", title: "Entity-Only Mode" });
@@ -2407,7 +2407,7 @@ class ChatView extends ItemView {
           meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
         }
       } else {
-        meta.createEl("span", { text: "🔍", cls: "vault-ai-conversation-lookup", title: "Lookup Mode" });
+        meta.createEl("span", { text: "🔍", cls: "vault-ai-conversation-local-search", title: "Local Search Mode" });
         if (conv.entityGenerationMode) {
           meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
         }
@@ -2467,9 +2467,9 @@ class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.entityGenerationMode = conversation.entityGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
-      // Use lookupMode from conversation, or infer from other modes for backward compatibility
-      this.lookupMode = conversation.lookupMode !== undefined
-        ? conversation.lookupMode
+      // Use localSearchMode from conversation, or infer from other modes for backward compatibility
+      this.localSearchMode = conversation.localSearchMode !== undefined
+        ? conversation.localSearchMode
         : (!this.darkWebMode && !this.reportGenerationMode);
       this.plugin.conversationService.setCurrentConversationId(id);
       this.render();
@@ -2485,8 +2485,8 @@ class ChatView extends ItemView {
     }
     this.currentConversation = null;
     this.chatHistory = [];
-    // Reset mode toggles for new conversation (Lookup Mode is default)
-    this.lookupMode = true;
+    // Reset mode toggles for new conversation (Local Search Mode is default)
+    this.localSearchMode = true;
     this.darkWebMode = false;
     this.entityGenerationMode = false;
     this.reportGenerationMode = false;
@@ -2916,7 +2916,7 @@ class ChatView extends ItemView {
     } else if (this.reportGenerationMode) {
       await this.handleReportGeneration(query);
     } else {
-      // Default: Lookup Mode (normal chat)
+      // Default: Local Search Mode (normal chat)
       await this.handleNormalChat(query);
     }
 
@@ -3178,14 +3178,14 @@ class ChatView extends ItemView {
       const extracted = await this.plugin.extractEntityFromQuery(query);
       const entityMsg =
         extracted.type === "unknown"
-          ? "Entity defined. Starting lookup."
+          ? "Entity defined. Starting local search."
           : extracted.name
-          ? `Entity defined (${extracted.type}: ${extracted.name}). Starting lookup.`
-          : `Entity defined (${extracted.type}). Starting lookup.`;
+          ? `Entity defined (${extracted.type}: ${extracted.name}). Starting local search.`
+          : `Entity defined (${extracted.type}). Starting local search.`;
       this.chatHistory[assistantIndex].content = entityMsg;
       updateProgress("Entity extracted, searching vault...", 30);
 
-      // 2) Local lookup using extracted entity name if available
+      // 2) Local search using extracted entity name if available
       const searchTerm = extracted.name && extracted.name.length > 0 ? extracted.name : query;
       const notes = this.plugin.retrieveNotes(searchTerm);
       if (notes.length === 0) {

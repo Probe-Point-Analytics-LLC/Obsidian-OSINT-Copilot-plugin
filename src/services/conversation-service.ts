@@ -20,7 +20,7 @@ export interface ConversationMetadata {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
-  lookupMode: boolean;
+  localSearchMode: boolean;
   darkWebMode: boolean;
   entityGenerationMode: boolean;
   reportGenerationMode: boolean;
@@ -151,12 +151,17 @@ export class ConversationService {
     const darkWebMode = this.extractYamlValue(frontmatter, 'darkWebMode') === 'true';
     const entityGenerationMode = this.extractYamlValue(frontmatter, 'entityGenerationMode') === 'true';
     const reportGenerationMode = this.extractYamlValue(frontmatter, 'reportGenerationMode') === 'true';
-    // lookupMode defaults to true for backward compatibility (if not specified, assume lookup mode)
-    const lookupModeValue = this.extractYamlValue(frontmatter, 'lookupMode');
-    const lookupMode = lookupModeValue === null ? !darkWebMode && !reportGenerationMode : lookupModeValue === 'true';
+    // localSearchMode defaults to true for backward compatibility (if not specified, assume local search mode)
+    // Also check for legacy 'lookupMode' key for backward compatibility with old conversations
+    let localSearchModeValue = this.extractYamlValue(frontmatter, 'localSearchMode');
+    if (localSearchModeValue === null) {
+      // Fallback to legacy 'lookupMode' key
+      localSearchModeValue = this.extractYamlValue(frontmatter, 'lookupMode');
+    }
+    const localSearchMode = localSearchModeValue === null ? !darkWebMode && !reportGenerationMode : localSearchModeValue === 'true';
     const reportConversationId = this.extractYamlValue(frontmatter, 'reportConversationId');
 
-    return { id, title, createdAt, updatedAt, messageCount, lookupMode, darkWebMode, entityGenerationMode, reportGenerationMode, reportConversationId: reportConversationId || undefined };
+    return { id, title, createdAt, updatedAt, messageCount, localSearchMode, darkWebMode, entityGenerationMode, reportGenerationMode, reportConversationId: reportConversationId || undefined };
   }
 
   private extractYamlValue(yaml: string, key: string): string | null {
@@ -209,15 +214,15 @@ export class ConversationService {
   async createConversation(firstMessage?: string, darkWebMode: boolean = false, entityGenerationMode: boolean = false, reportGenerationMode: boolean = false): Promise<Conversation> {
     const id = this.generateId();
     const now = Date.now();
-    // Infer lookupMode: true if no other main mode is active
-    const lookupMode = !darkWebMode && !reportGenerationMode;
+    // Infer localSearchMode: true if no other main mode is active
+    const localSearchMode = !darkWebMode && !reportGenerationMode;
     const conversation: Conversation = {
       id,
       title: this.generateTitle(firstMessage),
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
-      lookupMode,
+      localSearchMode,
       darkWebMode,
       entityGenerationMode,
       reportGenerationMode,
@@ -295,7 +300,7 @@ export class ConversationService {
       `createdAt: ${conversation.createdAt}`,
       `updatedAt: ${conversation.updatedAt}`,
       `messageCount: ${conversation.messageCount}`,
-      `lookupMode: ${conversation.lookupMode}`,
+      `localSearchMode: ${conversation.localSearchMode}`,
       `darkWebMode: ${conversation.darkWebMode}`,
       `entityGenerationMode: ${conversation.entityGenerationMode || false}`,
       `reportGenerationMode: ${conversation.reportGenerationMode || false}`
