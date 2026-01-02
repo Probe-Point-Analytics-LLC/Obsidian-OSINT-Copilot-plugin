@@ -3823,20 +3823,40 @@ class ChatView extends ItemView {
         consecutiveErrors = 0;
 
         // Update message with progress
-        if (status === "processing (up to 5 mins)") {
-          const progress = statusData.progress || {};
-          const percentComplete = progress.percent_complete || 0;
-          const currentStep = progress.current_step || "Processing...";
-          const enginesSearched = progress.engines_searched || 0;
-          const resultsFound = progress.results_found || 0;
+        // Handle both "processing" and "queued" statuses (API returns these, not "processing (up to 5 mins)")
+        if (status === "processing" || status === "queued") {
+          // Use stage field from API for more accurate progress tracking
+          const stage = statusData.stage || "processing";
+          const searchResultsCount = statusData.search_results_count || 0;
+          const filteredResultsCount = statusData.filtered_results_count || 0;
 
-          // Map API progress to our progress bar format (20-90% range for processing)
-          const displayPercent = 20 + Math.round(percentComplete * 0.7);
-          const progressMessage = `${currentStep} (${enginesSearched} engines, ${resultsFound} results)`;
+          // Map stages to progress percentages and human-readable messages
+          const stageProgress: { [key: string]: { percent: number; message: string } } = {
+            "initializing": { percent: 22, message: "Initializing investigation..." },
+            "refining_query": { percent: 28, message: "Refining search query with AI..." },
+            "searching": { percent: 40, message: `Searching dark web engines...` },
+            "filtering": { percent: 55, message: `Filtering ${searchResultsCount} results...` },
+            "scraping": { percent: 70, message: `Scraping ${filteredResultsCount} relevant sites...` },
+            "generating_summary": { percent: 85, message: "Generating intelligence summary..." },
+          };
+
+          const stageInfo = stageProgress[stage] || { percent: 25, message: "Processing..." };
+          const displayPercent = stageInfo.percent;
+          const progressMessage = stageInfo.message;
+
+          // Build status content with available info
+          let statusContent = `🕵️ Dark web investigation in progress\n\n**Stage:** ${progressMessage}\n`;
+          if (searchResultsCount > 0) {
+            statusContent += `**Search results:** ${searchResultsCount}\n`;
+          }
+          if (filteredResultsCount > 0) {
+            statusContent += `**Filtered results:** ${filteredResultsCount}\n`;
+          }
+          statusContent += `\nPlease wait...`;
 
           this.chatHistory[messageIndex] = {
             role: "assistant",
-            content: `🕵️ Dark web investigation in progress\n\n**Status:** ${currentStep}\n**Progress:** ${percentComplete}%\n**Engines searched:** ${enginesSearched}\n**Results found:** ${resultsFound}\n\nPlease wait...`,
+            content: statusContent,
             jobId: jobId, // Keep Job ID internally for API calls
             status: "processing",
             progress: { message: progressMessage, percent: displayPercent },
