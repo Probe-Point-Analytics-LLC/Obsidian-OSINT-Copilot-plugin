@@ -700,8 +700,12 @@ ${entity.properties.notes || ''}
     private async saveEntityAsNote(entity: Entity): Promise<string> {
         const filename = sanitizeFilename(entity.label);
         const folderPath = normalizePath(`${this.basePath}/${entity.type}`);
+
+        // Ensure the folder exists before creating the file
+        await this.ensureFolderExists(folderPath);
+
         const filePath = normalizePath(`${folderPath}/${filename}.md`);
-        
+
         // Build frontmatter
         const frontmatter = this.buildFrontmatter(entity);
         

@@ -759,8 +759,10 @@ export default class VaultAIPlugin extends Plugin {
     const msg = error.message.toLowerCase();
     const transientPatterns = [
       'network', 'fetch', 'failed to fetch', 'net::err_',
+      'err_network_changed', 'network_changed', // Explicitly handle network change errors
       'connection', 'timeout', 'timed out', 'econnreset',
-      'econnrefused', 'enotfound', 'socket', 'dns'
+      'econnrefused', 'enotfound', 'socket', 'dns',
+      'abort', 'aborted' // Handle aborted requests
     ];
     return transientPatterns.some(pattern => msg.includes(pattern));
   }
@@ -1147,17 +1149,30 @@ export default class VaultAIPlugin extends Plugin {
         statusCallback?.(`Checking report status... (${elapsedSecs}s elapsed)`);
 
         try {
-          const statusResponse = await fetch(`${baseUrl}/api/report-status/${jobId}`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${reportApiKey}`,
-            },
-            mode: 'cors',
-            credentials: 'omit',
-          });
+          // Add timeout to prevent hanging on network issues
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-          if (!statusResponse.ok) {
-            throw new Error(`Failed to check job status: ${statusResponse.status}`);
+          let statusResponse: Response;
+          try {
+            statusResponse = await fetch(`${baseUrl}/api/report-status/${jobId}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${reportApiKey}`,
+              },
+              mode: 'cors',
+              credentials: 'omit',
+              signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!statusResponse.ok) {
+              throw new Error(`Failed to check job status: ${statusResponse.status}`);
+            }
+          } catch (fetchError) {
+            clearTimeout(timeoutId);
+            throw fetchError;
           }
 
           const statusData = await statusResponse.json();
@@ -1259,17 +1274,27 @@ export default class VaultAIPlugin extends Plugin {
 
           if (isNetworkError) {
             consecutiveNetworkErrors++;
-            console.log(`[OSINT Copilot] Report status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`, pollError);
+
+            // Enhanced logging for network errors
+            const errorType = pollError instanceof Error ? pollError.name : 'Unknown';
+            const errorMsg = pollError instanceof Error ? pollError.message : String(pollError);
+            console.log(
+              `[OSINT Copilot] Report status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
+              `Type: ${errorType}, Message: ${errorMsg}`
+            );
 
             if (consecutiveNetworkErrors >= maxConsecutiveNetworkErrors) {
-              throw new Error("Network connection lost. Please check your internet connection and try again.");
+              throw new Error("Network connection lost after multiple retries. Please check your internet connection and try again.");
             }
 
-            // Show retry status to user
-            statusCallback?.(`Network interrupted, retrying... (${Math.round(elapsedMs / 1000)}s elapsed)`);
+            // Show retry status to user with more detail
+            const retryMsg = `Network interrupted (${errorType}), retrying... (${Math.round(elapsedMs / 1000)}s elapsed, attempt ${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors})`;
+            statusCallback?.(retryMsg);
+            console.log(`[OSINT Copilot] ${retryMsg}`);
             // Continue polling - don't throw
           } else {
             // Non-network error, re-throw immediately
+            console.error('[OSINT Copilot] Non-retryable error during status polling:', pollError);
             throw pollError;
           }
         }
