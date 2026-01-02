@@ -3739,6 +3739,7 @@ class ChatView extends ItemView {
     let elapsedMs = 0;
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 5;
+    const maxElapsedMs = 10 * 60 * 1000; // 10 minutes max timeout (dark web searches can take longer)
 
     // Adaptive polling: start fast (3s), gradually increase to max (8s) as job takes longer
     const getPollingInterval = (elapsed: number): number => {
@@ -3748,19 +3749,48 @@ class ChatView extends ItemView {
     };
 
     const poll = async () => {
+      // Check if we've exceeded the maximum elapsed time
+      if (elapsedMs >= maxElapsedMs) {
+        this.pollingIntervals.delete(jobId);
+        console.warn(`[OSINT Copilot] Dark web investigation timed out after ${Math.round(maxElapsedMs / 1000)}s`);
+        this.chatHistory[messageIndex] = {
+          role: "assistant",
+          content: `⏱️ Dark web investigation timed out\n\n**Job ID:** ${jobId}\n\nThe investigation is taking longer than expected (${Math.round(maxElapsedMs / 60000)} minutes).\n\nThe job may still be processing on the server. You can try checking the status later or contact support.`,
+          jobId: jobId,
+          status: "timeout",
+          progress: undefined,
+        };
+        this.renderMessages();
+        return;
+      }
+
       try {
         const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/status/${jobId}`;
-        const response = await fetch(endpoint, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
-          },
-          mode: "cors",
-          credentials: "omit",
-        });
 
-        if (!response.ok) {
-          throw new Error(`Status check failed (${response.status})`);
+        // Add timeout to prevent hanging on network issues
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+        let response: Response;
+        try {
+          response = await fetch(endpoint, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
+            },
+            mode: "cors",
+            credentials: "omit",
+            signal: controller.signal,
+          });
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            throw new Error(`Status check failed (${response.status})`);
+          }
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          throw fetchError;
         }
 
         const statusData = await response.json();
@@ -3822,20 +3852,34 @@ class ChatView extends ItemView {
         }
       } catch (error) {
         consecutiveErrors++;
-        console.error(`Error polling DarkWeb status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
+
+        // Enhanced logging for network errors
+        const errorType = error instanceof Error ? error.name : 'Unknown';
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[OSINT Copilot] Dark web status poll error (${consecutiveErrors}/${maxConsecutiveErrors}):`,
+          `Type: ${errorType}, Message: ${errorMsg}`
+        );
 
         // Continue polling unless too many consecutive errors
         if (consecutiveErrors < maxConsecutiveErrors) {
           const nextInterval = getPollingInterval(elapsedMs);
           elapsedMs += nextInterval;
+
+          // Show retry status to user
+          const elapsedSecs = Math.round(elapsedMs / 1000);
+          const retryMsg = `Network interrupted (${errorType}), retrying... (${elapsedSecs}s elapsed, attempt ${consecutiveErrors}/${maxConsecutiveErrors})`;
+          console.log(`[OSINT Copilot] ${retryMsg}`);
+
           const timeoutId = window.setTimeout(poll, nextInterval);
           this.pollingIntervals.set(jobId, timeoutId);
         } else {
           // Too many errors, stop polling and show error
           this.pollingIntervals.delete(jobId);
+          console.error('[OSINT Copilot] Dark web status polling failed after max retries');
           this.chatHistory[messageIndex] = {
             role: "assistant",
-            content: `❌ Dark web investigation status check failed\n\n**Error:** Network connection lost after ${maxConsecutiveErrors} attempts.\n\nPlease check your connection and try again.`,
+            content: `❌ Dark web investigation status check failed\n\n**Error:** Network connection lost after ${maxConsecutiveErrors} attempts (${errorType}).\n\nPlease check your connection and try again.`,
             jobId: jobId,
             status: "failed",
             progress: undefined,
