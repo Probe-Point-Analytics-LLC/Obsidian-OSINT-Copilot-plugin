@@ -4181,7 +4181,7 @@ class VaultAISettingTab extends PluginSettingTab {
       const response = await fetch("https://api.osint-copilot.com/api/key/info", {
         method: "GET",
         headers: {
-          "Authorization": `Api-Key ${this.plugin.settings.reportApiKey}`,
+          "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
           "Content-Type": "application/json",
         },
       });
