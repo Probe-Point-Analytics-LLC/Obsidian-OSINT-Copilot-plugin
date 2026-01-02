@@ -3786,6 +3786,29 @@ class ChatView extends ItemView {
           clearTimeout(timeoutId);
 
           if (!response.ok) {
+            // Handle 404 - job not found (backend lost job status, likely Redis issue)
+            if (response.status === 404) {
+              this.pollingIntervals.delete(jobId);
+              console.warn(`[OSINT Copilot] Job ${jobId} not found in backend (404). Attempting to fetch results directly...`);
+
+              // Try to fetch results directly from summary endpoint
+              // The job may have completed but status was lost
+              try {
+                await this.fetchDarkWebResults(jobId, messageIndex, query);
+                return; // Success - results fetched
+              } catch (summaryError) {
+                console.error('[OSINT Copilot] Failed to fetch results after 404:', summaryError);
+                this.chatHistory[messageIndex] = {
+                  role: "assistant",
+                  content: `⚠️ Investigation status unavailable\n\n**Job ID:** ${jobId}\n\nThe backend lost track of this investigation (likely due to a Redis connection issue).\n\nThe investigation may have completed, but the results are not accessible. Please try starting a new investigation.`,
+                  jobId: jobId,
+                  status: "failed",
+                  progress: undefined,
+                };
+                this.renderMessages();
+                return;
+              }
+            }
             throw new Error(`Status check failed (${response.status})`);
           }
         } catch (fetchError) {
