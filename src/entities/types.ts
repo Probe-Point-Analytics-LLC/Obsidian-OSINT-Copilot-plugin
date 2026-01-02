@@ -208,6 +208,64 @@ export const ENTITY_CONFIGS: Record<EntityType, EntityConfig> = {
     }
 };
 
+// Entity icon mapping - contextually relevant icons for each entity type
+export const ENTITY_ICONS: Record<string, string> = {
+    // Legacy entity types (using EntityType enum values)
+    [EntityType.Person]: "👤",
+    [EntityType.Event]: "📅",
+    [EntityType.Location]: "📍",
+    [EntityType.Company]: "🏢",
+    [EntityType.Email]: "📧",
+    [EntityType.Phone]: "📞",
+    [EntityType.Username]: "👥",
+    [EntityType.Vehicle]: "🚗",
+    [EntityType.Website]: "🌐",
+    [EntityType.Evidence]: "📋",
+    [EntityType.Image]: "🖼️",
+    [EntityType.Text]: "📝",
+
+    // FTM entity types (only non-duplicate ones)
+    'LegalEntity': "⚖️",
+    'Organization': "🏛️",
+    'Address': "📍",
+    'BankAccount': "🏦",
+    'CryptoWallet': "₿",
+    'UserAccount': "👥",
+    'Document': "📄",
+    'RealEstate': "🏠",
+    'Sanction': "⛔",
+    'Passport': "🛂",
+    'Ownership': "🔗",
+    'Employment': "💼",
+    'Directorship': "👔",
+
+    // Additional common types
+    'Airplane': "✈️",
+    'Asset': "💎",
+    'Audio': "🎵",
+    'Call': "📞",
+    'Contract': "📜",
+    'CourtCase': "⚖️",
+    'Family': "👨‍👩‍👧‍👦",
+    'Folder': "📁",
+    'Identification': "🪪",
+    'Land': "🗺️",
+    'License': "📜",
+    'Meeting': "🤝",
+    'Message': "💬",
+    'Page': "📃",
+    'Payment': "💳",
+    'PlainText': "📝",
+    'PublicBody': "🏛️",
+    'Representation': "🎭",
+    'Succession': "👑",
+    'TaxRoll': "💰",
+    'UnknownLink': "❓",
+    'Vessel': "🚢",
+    'Video': "🎬",
+    'Workbook': "📊"
+};
+
 // Common properties for all entities
 export const COMMON_PROPERTIES = ["notes", "source", "image"];
 
@@ -319,6 +377,131 @@ export function getEntityColor(type: EntityType | string): string {
  */
 export function isFTMSchema(type: string): boolean {
     return ftmSchemaService.hasSchema(type);
+}
+
+/**
+ * Get the icon for an entity type.
+ * Supports both legacy EntityType and FTM schema names.
+ */
+export function getEntityIcon(type: EntityType | string): string {
+    // Check if we have a specific icon for this type
+    if (ENTITY_ICONS[type]) {
+        return ENTITY_ICONS[type];
+    }
+
+    // Try FTM schema service
+    if (ftmSchemaService.hasSchema(type)) {
+        const schema = ftmSchemaService.getSchema(type);
+        // If FTM schema has an icon property, use it (future enhancement)
+        // For now, fall back to default
+    }
+
+    // Default icon for unknown types
+    return "📦";
+}
+
+/**
+ * List of generic entity type names that should not be used as entity labels.
+ * These are reserved type names that don't represent specific entities.
+ */
+const GENERIC_ENTITY_NAMES = new Set([
+    // Legacy entity types
+    'Person', 'Event', 'Location', 'Company', 'Email', 'Phone',
+    'Username', 'Vehicle', 'Website', 'Evidence', 'Image', 'Text',
+
+    // FTM entity types
+    'LegalEntity', 'Organization', 'Address', 'BankAccount', 'CryptoWallet',
+    'UserAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
+    'Ownership', 'Employment', 'Directorship',
+
+    // Additional common generic names
+    'Airplane', 'Asset', 'Audio', 'Call', 'Contract', 'CourtCase',
+    'Family', 'Folder', 'Identification', 'Land', 'License', 'Meeting',
+    'Message', 'Page', 'Payment', 'PlainText', 'PublicBody', 'Representation',
+    'Succession', 'TaxRoll', 'UnknownLink', 'Vessel', 'Video', 'Workbook',
+
+    // Common variations (lowercase, plural, etc.)
+    'person', 'people', 'event', 'events', 'location', 'locations',
+    'company', 'companies', 'organization', 'organizations',
+    'email', 'emails', 'phone', 'phones', 'vehicle', 'vehicles',
+    'website', 'websites', 'document', 'documents', 'address', 'addresses',
+
+    // Very generic terms
+    'Entity', 'entity', 'Item', 'item', 'Object', 'object',
+    'Thing', 'thing', 'Unknown', 'unknown', 'Unnamed', 'unnamed',
+    'New', 'new', 'Untitled', 'untitled', 'Default', 'default'
+]);
+
+/**
+ * Validation result for entity names.
+ */
+export interface EntityNameValidation {
+    isValid: boolean;
+    error?: string;
+}
+
+/**
+ * Validate an entity name to ensure it's not generic.
+ * Returns validation result with error message if invalid.
+ *
+ * @param name - The proposed entity name/label
+ * @param entityType - The type of entity being created
+ * @returns Validation result indicating if the name is acceptable
+ */
+export function validateEntityName(name: string, entityType?: string): EntityNameValidation {
+    // Trim whitespace
+    const trimmedName = name?.trim();
+
+    // Check if name is empty
+    if (!trimmedName) {
+        return {
+            isValid: false,
+            error: 'Entity name cannot be empty'
+        };
+    }
+
+    // Check if name is too short (less than 2 characters)
+    if (trimmedName.length < 2) {
+        return {
+            isValid: false,
+            error: 'Entity name must be at least 2 characters long'
+        };
+    }
+
+    // Check if name is a generic entity type name
+    if (GENERIC_ENTITY_NAMES.has(trimmedName)) {
+        return {
+            isValid: false,
+            error: `"${trimmedName}" is a generic type name. Please provide a specific, unique identifier (e.g., "John Smith" instead of "Person", "Acme Corp" instead of "Company")`
+        };
+    }
+
+    // Check for case-insensitive match with generic names
+    const lowerName = trimmedName.toLowerCase();
+    for (const genericName of GENERIC_ENTITY_NAMES) {
+        if (lowerName === genericName.toLowerCase()) {
+            return {
+                isValid: false,
+                error: `"${trimmedName}" is too generic. Please provide a specific, unique identifier`
+            };
+        }
+    }
+
+    // Check if name is just the entity type with a number (e.g., "Person 1", "Company2")
+    if (entityType) {
+        const typePattern = new RegExp(`^${entityType}\\s*\\d*$`, 'i');
+        if (typePattern.test(trimmedName)) {
+            return {
+                isValid: false,
+                error: `Please provide a specific name instead of "${trimmedName}"`
+            };
+        }
+    }
+
+    // Name is valid
+    return {
+        isValid: true
+    };
 }
 
 /**

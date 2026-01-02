@@ -4,7 +4,7 @@
  */
 
 import { App, Modal, Notice, Setting } from 'obsidian';
-import { Entity, Connection, EntityType, ENTITY_CONFIGS, COMMON_PROPERTIES, getFTMEntityConfig, getAvailableFTMEntityTypes, getAvailableFTMIntervalTypes, FTMEntityConfig } from '../entities/types';
+import { Entity, Connection, EntityType, ENTITY_CONFIGS, COMMON_PROPERTIES, getFTMEntityConfig, getAvailableFTMEntityTypes, getAvailableFTMIntervalTypes, FTMEntityConfig, validateEntityName, getEntityIcon } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { GeocodingService, GeocodingError, GeocodingErrorType } from '../services/geocoding-service';
 import { ftmSchemaService, FTMPropertyDefinition } from '../services/ftm-schema-service';
@@ -425,19 +425,22 @@ export class EntityCreationModal extends Modal {
         const config = ENTITY_CONFIGS[this.entityType];
         const labelField = config.labelField;
 
-        // Validate required field
-        if (!this.properties[labelField] || this.properties[labelField].trim() === '') {
-            new Notice(`Please enter a ${this.formatPropertyName(labelField)}`);
-            return;
-        }
-
-        // Auto-geocode Location entities if coordinates are missing but address info exists
-        if (this.entityType === EntityType.Location) {
-            await this.autoGeocodeIfNeeded();
+        // Only validate that entity name is not generic (if provided)
+        if (this.properties[labelField] && this.properties[labelField].trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField], this.entityType);
+            if (!nameValidation.isValid) {
+                new Notice(nameValidation.error || 'Invalid entity name');
+                return;
+            }
         }
 
         try {
-            const entity = await this.entityManager.createEntity(this.entityType, this.properties);
+            // Skip auto-geocoding for manual creation - user should click the Geocode button explicitly
+            const entity = await this.entityManager.createEntity(
+                this.entityType,
+                this.properties,
+                { skipAutoGeocode: true }
+            );
             new Notice(`Created ${this.entityType}: ${entity.label}`);
 
             if (this.onEntityCreated) {
@@ -554,13 +557,17 @@ export class EntityTypeSelectorModal extends Modal {
 
         for (const type of typesToShow) {
             const config = ENTITY_CONFIGS[type];
-            
+
             const typeBtn = gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
             typeBtn.style.borderLeftColor = config.color;
-            
+
             const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
             icon.style.backgroundColor = config.color;
-            icon.textContent = type.charAt(0);
+            icon.style.fontSize = '20px';
+            icon.style.display = 'flex';
+            icon.style.alignItems = 'center';
+            icon.style.justifyContent = 'center';
+            icon.textContent = getEntityIcon(type);
 
             const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });
             info.createEl('strong', { text: type });
@@ -990,19 +997,7 @@ export class ConnectionQuickModal extends Modal {
             return;
         }
 
-        // Validate required properties
-        const config = getFTMEntityConfig(this.relationship);
-        if (config) {
-            for (const reqProp of config.requiredProperties) {
-                const propDef = config.propertyDefinitions[reqProp];
-                if (propDef && propDef.type !== 'entity') {
-                    if (!this.properties[reqProp] || this.properties[reqProp].toString().trim() === '') {
-                        new Notice(`Please enter ${propDef.label}`);
-                        return;
-                    }
-                }
-            }
-        }
+        // No required field validation - allow creation with partial data
 
         try {
             const connection = await this.entityManager.createConnection(
@@ -1440,18 +1435,17 @@ export class EntityEditModal extends Modal {
         const config = ENTITY_CONFIGS[this.entity.type as EntityType];
         const labelField = config.labelField;
 
-        // Validate required field
-        if (!this.properties[labelField] || this.properties[labelField].trim() === '') {
-            new Notice(`Please enter a ${this.formatPropertyName(labelField)}`);
-            return;
-        }
-
-        // Auto-geocode Location entities if coordinates are missing but address info exists
-        if (this.entity.type === EntityType.Location) {
-            await this.autoGeocodeIfNeeded();
+        // Only validate that entity name is not generic (if provided)
+        if (this.properties[labelField] && this.properties[labelField].trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField], this.entity.type);
+            if (!nameValidation.isValid) {
+                new Notice(nameValidation.error || 'Invalid entity name');
+                return;
+            }
         }
 
         try {
+            // Note: No auto-geocoding for manual editing - user should click the Geocode button explicitly
             const updatedEntity = await this.entityManager.updateEntity(this.entity.id, this.properties);
 
             if (updatedEntity) {
@@ -1729,18 +1723,24 @@ export class FTMEntityCreationModal extends Modal {
         const config = getFTMEntityConfig(this.schemaName);
         if (!config) return;
 
-        // Validate required fields
-        for (const prop of config.requiredProperties) {
-            if (!this.properties[prop] || String(this.properties[prop]).trim() === '') {
-                const propDef = config.propertyDefinitions[prop];
-                new Notice(`Please enter ${propDef?.label || prop}`);
+        // Only validate that entity name is not generic (if provided)
+        const labelField = config.labelField;
+        if (this.properties[labelField] && String(this.properties[labelField]).trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField], this.schemaName);
+            if (!nameValidation.isValid) {
+                new Notice(nameValidation.error || 'Invalid entity name');
                 return;
             }
         }
 
         try {
             // Create entity using FTM schema
-            const entity = await this.entityManager.createFTMEntity(this.schemaName, this.properties);
+            // Skip auto-geocoding for manual creation - user should click the Geocode button explicitly
+            const entity = await this.entityManager.createFTMEntity(
+                this.schemaName,
+                this.properties,
+                { skipAutoGeocode: true }
+            );
             new Notice(`Created ${config.label}: ${entity.label}`);
 
             if (this.onEntityCreated) {
@@ -1867,7 +1867,11 @@ export class FTMEntityTypeSelectorModal extends Modal {
 
             const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
             icon.style.backgroundColor = typeInfo.color;
-            icon.textContent = typeInfo.label.charAt(0);
+            icon.style.fontSize = '20px';
+            icon.style.display = 'flex';
+            icon.style.alignItems = 'center';
+            icon.style.justifyContent = 'center';
+            icon.textContent = getEntityIcon(typeInfo.name);
 
             const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });
             info.createEl('strong', { text: typeInfo.label });
@@ -2336,11 +2340,12 @@ export class FTMEntityEditModal extends Modal {
         const config = getFTMEntityConfig(this.schemaName);
         if (!config) return;
 
-        // Validate required fields
-        for (const prop of config.requiredProperties) {
-            if (!this.properties[prop] || String(this.properties[prop]).trim() === '') {
-                const propDef = config.propertyDefinitions[prop];
-                new Notice(`Please enter ${propDef?.label || prop}`);
+        // Only validate that entity name is not generic (if provided)
+        const labelField = config.labelField;
+        if (this.properties[labelField] && String(this.properties[labelField]).trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField], this.schemaName);
+            if (!nameValidation.isValid) {
+                new Notice(nameValidation.error || 'Invalid entity name');
                 return;
             }
         }
@@ -2893,14 +2898,7 @@ export class FTMIntervalCreationModal extends Modal {
         const config = getFTMEntityConfig(this.intervalType);
         if (!config) return;
 
-        // Validate required properties
-        for (const reqProp of config.requiredProperties) {
-            if (!this.properties[reqProp] || this.properties[reqProp].trim() === '') {
-                const propDef = config.propertyDefinitions[reqProp];
-                new Notice(`Please enter ${propDef?.label || reqProp}`);
-                return;
-            }
-        }
+        // No required field validation - allow creation with partial data
 
         try {
             // For now, we'll create this as a connection with the interval type as the relationship
@@ -3133,18 +3131,7 @@ export class ConnectionEditModal extends Modal {
         const intervalType = this.connection.ftmSchema || this.connection.relationship;
         const config = getFTMEntityConfig(intervalType);
 
-        if (config) {
-            // Validate required properties
-            for (const reqProp of config.requiredProperties) {
-                const propDef = config.propertyDefinitions[reqProp];
-                if (propDef && propDef.type !== 'entity') {
-                    if (!this.properties[reqProp] || this.properties[reqProp].toString().trim() === '') {
-                        new Notice(`Please enter ${propDef.label}`);
-                        return;
-                    }
-                }
-            }
-        }
+        // No required field validation - allow updates with partial data
 
         try {
             // Update the connection

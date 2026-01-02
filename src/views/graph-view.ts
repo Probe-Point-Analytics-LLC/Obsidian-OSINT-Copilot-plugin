@@ -3,7 +3,7 @@
  */
 
 import { App, ItemView, WorkspaceLeaf, Notice, TFile } from 'obsidian';
-import { Entity, Connection, ENTITY_CONFIGS, EntityType } from '../entities/types';
+import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
@@ -1743,34 +1743,39 @@ export class GraphView extends ItemView {
                 selector: 'node',
                 style: {
                     'background-color': 'data(color)',
-                    'label': 'data(label)',
-                    'text-valign': 'bottom',
+                    'label': (ele: any) => {
+                        const icon = ele.data('icon') || '📦';
+                        const label = ele.data('label') || '';
+                        return `${icon}\n${label}`;
+                    },
+                    'text-valign': 'center',
                     'text-halign': 'center',
-                    'text-margin-y': 5,
-                    'font-size': '12px',
+                    'font-size': '16px',
                     'color': '#ffffff',
                     'text-outline-color': '#000000',
-                    'text-outline-width': 1,
-                    'width': 50,
-                    'height': 50,
+                    'text-outline-width': 1.5,
+                    'text-wrap': 'wrap',
+                    'text-max-width': '100px',
+                    'width': 65,
+                    'height': 65,
                     'border-width': 2,
                     'border-color': '#ffffff'
                 }
             },
             {
-                // Location nodes get a special pin-like shape
-                selector: 'node[type = "Location"]',
+                // Location/Address nodes get a special pin-like shape
+                selector: 'node[type = "Location"], node[type = "Address"]',
                 style: {
                     'shape': 'diamond',
-                    'width': 45,
-                    'height': 55,
+                    'width': 70,
+                    'height': 80,
                     'border-width': 3,
                     'border-color': '#ffffff'
                 }
             },
             {
-                // Location nodes with coordinates get a map indicator
-                selector: 'node[type = "Location"].has-coordinates',
+                // Location/Address nodes with coordinates get a map indicator
+                selector: 'node[type = "Location"].has-coordinates, node[type = "Address"].has-coordinates',
                 style: {
                     'border-style': 'double',
                     'border-width': 4
@@ -1875,6 +1880,7 @@ export class GraphView extends ItemView {
                     fullLabel: entityLabel,
                     type: entity.type,
                     color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
+                    icon: getEntityIcon(entity.type),
                     hasCoordinates: hasCoordinates
                 },
                 position: this.getNodePosition(index, entities.length),
@@ -1950,6 +1956,7 @@ export class GraphView extends ItemView {
                     fullLabel: entityLabel,
                     type: entity.type,
                     color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
+                    icon: getEntityIcon(entity.type),
                     hasCoordinates: hasCoordinates
                 },
                 position: position,
@@ -2277,7 +2284,8 @@ export class GraphView extends ItemView {
                 label: this.truncateLabel(entityLabel),
                 fullLabel: entityLabel,
                 type: entity.type,
-                color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B'
+                color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
+                icon: getEntityIcon(entity.type)
             },
             position: { x: 400, y: 300 }
         });
@@ -2654,7 +2662,8 @@ export class GraphView extends ItemView {
                 label: label,
                 fullLabel: entityLabel,
                 type: entity.type,
-                color: config.color
+                color: config.color,
+                icon: getEntityIcon(entity.type)
             },
             position: position
         });
@@ -2681,6 +2690,7 @@ export class GraphView extends ItemView {
         node.data('fullLabel', entityLabel);
         node.data('type', entity.type);
         node.data('color', config.color);
+        node.data('icon', getEntityIcon(entity.type));
     }
 
     /**

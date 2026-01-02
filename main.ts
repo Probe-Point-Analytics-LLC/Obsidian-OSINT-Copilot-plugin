@@ -14,7 +14,7 @@ import {
 } from "obsidian";
 
 // Graph plugin imports
-import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse } from './src/entities/types';
+import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { GraphApiService } from './src/services/api-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
@@ -3051,6 +3051,20 @@ class ChatView extends ItemView {
                 continue;
               }
 
+              // Validate entity name is not generic
+              const config = ENTITY_CONFIGS[entityType];
+              const labelField = config?.labelField;
+              const entityLabel = labelField ? entityData.properties[labelField] : null;
+
+              if (entityLabel) {
+                const nameValidation = validateEntityName(entityLabel, entityType);
+                if (!nameValidation.isValid) {
+                  console.warn(`[EntityOnlyMode] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
+                  operationEntities.push(null);
+                  continue;
+                }
+              }
+
               console.log('[EntityOnlyMode] Creating entity with type:', entityType);
               const entity = await this.plugin.entityManager.createEntity(
                 entityType,
@@ -3395,6 +3409,20 @@ class ChatView extends ItemView {
                 console.warn(`[EntityGeneration] Unknown entity type: ${entityData.type}. Valid types:`, Object.values(EntityType));
                 operationEntities.push(null);
                 continue;
+              }
+
+              // Validate entity name is not generic
+              const config = ENTITY_CONFIGS[entityType];
+              const labelField = config?.labelField;
+              const entityLabel = labelField ? entityData.properties[labelField] : null;
+
+              if (entityLabel) {
+                const nameValidation = validateEntityName(entityLabel, entityType);
+                if (!nameValidation.isValid) {
+                  console.warn(`[EntityGeneration] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
+                  operationEntities.push(null);
+                  continue;
+                }
               }
 
               console.log('[EntityGeneration] Creating entity with type:', entityType);

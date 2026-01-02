@@ -322,13 +322,21 @@ export class EntityManager {
 
     /**
      * Create a new entity and save it as a note.
-     * For Location entities, automatically geocodes to get coordinates if not provided.
+     * @param type - The entity type
+     * @param properties - The entity properties
+     * @param options - Optional settings for entity creation
+     * @param options.skipAutoGeocode - If true, skip automatic geocoding for Location entities (default: false)
      */
-    async createEntity(type: EntityType, properties: Record<string, any>): Promise<Entity> {
+    async createEntity(
+        type: EntityType,
+        properties: Record<string, any>,
+        options?: { skipAutoGeocode?: boolean }
+    ): Promise<Entity> {
         const id = generateId();
 
         // For Location entities, attempt automatic geocoding if coordinates are missing
-        if (type === EntityType.Location) {
+        // Skip if explicitly requested (e.g., for manual entity creation)
+        if (type === EntityType.Location && !options?.skipAutoGeocode) {
             properties = await this.geocodeLocationIfNeeded(properties);
         }
 
@@ -352,8 +360,16 @@ export class EntityManager {
     /**
      * Create a new FTM-compliant entity and save it as a note.
      * Uses FTM schema for property definitions and validation.
+     * @param schemaName - The FTM schema name (e.g., 'Address', 'Person')
+     * @param properties - The entity properties
+     * @param options - Optional settings for entity creation
+     * @param options.skipAutoGeocode - If true, skip automatic geocoding for Address entities (default: false)
      */
-    async createFTMEntity(schemaName: string, properties: Record<string, any>): Promise<Entity> {
+    async createFTMEntity(
+        schemaName: string,
+        properties: Record<string, any>,
+        options?: { skipAutoGeocode?: boolean }
+    ): Promise<Entity> {
         const id = generateId();
         const config = getFTMEntityConfig(schemaName);
 
@@ -362,7 +378,8 @@ export class EntityManager {
         }
 
         // For Address entities, attempt automatic geocoding if coordinates are missing
-        if (schemaName === 'Address') {
+        // Skip if explicitly requested (e.g., for manual entity creation)
+        if (schemaName === 'Address' && !options?.skipAutoGeocode) {
             properties = await this.geocodeAddressIfNeeded(properties);
         }
 
@@ -751,17 +768,32 @@ ${entity.properties.notes || ''}
         ];
 
         const config = ENTITY_CONFIGS[entity.type as EntityType];
-        const allProps = [...config.properties, ...COMMON_PROPERTIES];
-        
-        for (const prop of allProps) {
-            const value = entity.properties[prop];
-            if (value !== undefined && value !== null && value !== '') {
-                if (typeof value === 'string') {
-                    lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
-                } else if (typeof value === 'boolean') {
-                    lines.push(`${prop}: ${value}`);
-                } else {
-                    lines.push(`${prop}: ${value}`);
+        if (!config) {
+            // If no config found, just add all properties
+            for (const [prop, value] of Object.entries(entity.properties)) {
+                if (value !== undefined && value !== null && value !== '') {
+                    if (typeof value === 'string') {
+                        lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
+                    } else if (typeof value === 'boolean') {
+                        lines.push(`${prop}: ${value}`);
+                    } else {
+                        lines.push(`${prop}: ${value}`);
+                    }
+                }
+            }
+        } else {
+            const allProps = [...config.properties, ...COMMON_PROPERTIES];
+
+            for (const prop of allProps) {
+                const value = entity.properties[prop];
+                if (value !== undefined && value !== null && value !== '') {
+                    if (typeof value === 'string') {
+                        lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
+                    } else if (typeof value === 'boolean') {
+                        lines.push(`${prop}: ${value}`);
+                    } else {
+                        lines.push(`${prop}: ${value}`);
+                    }
                 }
             }
         }
@@ -775,14 +807,23 @@ ${entity.properties.notes || ''}
     private buildPropertiesSection(entity: Entity): string {
         const lines: string[] = [];
         const config = ENTITY_CONFIGS[entity.type as EntityType];
-        
-        for (const prop of config.properties) {
-            const value = entity.properties[prop];
-            if (value !== undefined && value !== null && value !== '') {
-                lines.push(`- **${prop}**: ${value}`);
+
+        if (!config) {
+            // If no config found, show all properties
+            for (const [prop, value] of Object.entries(entity.properties)) {
+                if (value !== undefined && value !== null && value !== '') {
+                    lines.push(`- **${prop}**: ${value}`);
+                }
+            }
+        } else {
+            for (const prop of config.properties) {
+                const value = entity.properties[prop];
+                if (value !== undefined && value !== null && value !== '') {
+                    lines.push(`- **${prop}**: ${value}`);
+                }
             }
         }
-        
+
         return lines.length > 0 ? lines.join('\n') : '_No properties set_';
     }
 
@@ -795,10 +836,22 @@ ${entity.properties.notes || ''}
 
         // Update properties
         entity.properties = { ...entity.properties, ...properties };
-        entity.label = getEntityLabel(entity.type, entity.properties);
 
-        // Save updated note
-        await this.saveEntityAsNote(entity);
+        // Update label based on entity type
+        if (entity.ftmSchema) {
+            // For FTM entities, use FTM schema service to get label
+            entity.label = ftmSchemaService.getEntityLabel(entity.ftmSchema, entity.properties);
+        } else {
+            // For legacy entities, use the legacy getEntityLabel function
+            entity.label = getEntityLabel(entity.type, entity.properties);
+        }
+
+        // Save updated note using appropriate method
+        if (entity.ftmSchema) {
+            await this.saveFTMEntityAsNote(entity, entity.ftmSchema);
+        } else {
+            await this.saveEntityAsNote(entity);
+        }
 
         return entity;
     }
