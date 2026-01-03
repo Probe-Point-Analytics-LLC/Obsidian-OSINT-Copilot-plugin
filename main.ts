@@ -1962,11 +1962,8 @@ class ChatView extends ItemView {
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
   osintSearchMode: boolean = false; // OSINT Search mode
-  // Toggle elements
-  localSearchModeToggle!: HTMLInputElement;
-  darkWebToggle!: HTMLInputElement;
-  reportGenerationToggle!: HTMLInputElement;
-  osintSearchToggle!: HTMLInputElement;
+  // Mode dropdown element (replaces individual toggle checkboxes)
+  modeDropdown!: HTMLSelectElement;
   // OSINT Search options
   osintSearchOptionsVisible: boolean = false;
   osintSearchCountry: 'RU' | 'UA' | 'BY' | 'KZ' = 'RU';
@@ -2102,157 +2099,89 @@ class ChatView extends ItemView {
       await this.startNewConversation();
     });
 
-    // === Main Mode Selection (Mutually Exclusive Checkboxes - can all be off for Entity-Only Mode) ===
-    const mainModeGroup = buttonGroup.createDiv("vault-ai-main-mode-group");
-    mainModeGroup.setAttribute("title", "Select one mode, or deselect all for Entity-Only Mode");
+    // === Main Mode Selection Dropdown (Mutually Exclusive - can be "none" for Entity-Only Mode) ===
+    const modeSelectContainer = buttonGroup.createDiv("vault-ai-mode-select-container");
+    modeSelectContainer.setAttribute("title", "Select a mode, or choose 'Entity Only' for entity extraction without AI chat");
 
-    // Local Search Mode Toggle (default mode)
-    const localSearchContainer = mainModeGroup.createDiv("vault-ai-local-search-toggle");
-    localSearchContainer.addClass("vault-ai-toggle-container");
-
-    this.localSearchModeToggle = localSearchContainer.createEl("input", {
-      type: "checkbox",
-      cls: "vault-ai-mode-checkbox",
+    const modeLabel = modeSelectContainer.createEl("label", {
+      text: "Mode:",
+      cls: "vault-ai-mode-select-label",
     });
-    this.localSearchModeToggle.id = "local-search-mode-toggle";
-    this.localSearchModeToggle.checked = this.localSearchMode;
-    this.localSearchModeToggle.addEventListener("change", () => {
-      if (this.localSearchModeToggle.checked) {
-        // Enable local search mode, disable others (mutual exclusivity)
-        this.localSearchMode = true;
-        this.darkWebMode = false;
-        this.reportGenerationMode = false;
-        this.osintSearchMode = false;
-        this.darkWebToggle.checked = false;
-        this.reportGenerationToggle.checked = false;
-        this.osintSearchToggle.checked = false;
-        new Notice("Local Search Mode enabled");
-      } else {
-        // Disable local search mode - may enter Entity-Only Mode if entity generation is on
-        this.localSearchMode = false;
-        this.checkEntityOnlyMode();
+    modeLabel.htmlFor = "vault-ai-mode-dropdown";
+
+    this.modeDropdown = modeSelectContainer.createEl("select", {
+      cls: "vault-ai-mode-dropdown",
+    });
+    this.modeDropdown.id = "vault-ai-mode-dropdown";
+
+    // Add mode options
+    const modeOptions = [
+      { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
+      { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
+      { value: "report", label: "📄 Corporate Report", mode: "reportGenerationMode" },
+      { value: "osint", label: "🔎 OSINT Search", mode: "osintSearchMode" },
+      { value: "none", label: "🏷️ Entity Only", mode: "none" },
+    ];
+
+    for (const option of modeOptions) {
+      const optEl = this.modeDropdown.createEl("option", {
+        text: option.label,
+        value: option.value,
+      });
+      // Set selected based on current mode
+      if (option.value === "local" && this.localSearchMode) optEl.selected = true;
+      else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
+      else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
+      else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
+      else if (option.value === "none" && this.isEntityOnlyMode()) optEl.selected = true;
+    }
+
+    // Handle mode selection
+    this.modeDropdown.addEventListener("change", () => {
+      const selectedValue = this.modeDropdown.value;
+
+      // Reset all modes
+      this.localSearchMode = false;
+      this.darkWebMode = false;
+      this.reportGenerationMode = false;
+      this.osintSearchMode = false;
+
+      // Enable selected mode
+      switch (selectedValue) {
+        case "local":
+          this.localSearchMode = true;
+          new Notice("Local Search Mode enabled");
+          break;
+        case "darkweb":
+          this.darkWebMode = true;
+          new Notice("Dark Web Mode enabled");
+          break;
+        case "report":
+          this.reportGenerationMode = true;
+          new Notice("Corporate Report Mode enabled");
+          break;
+        case "osint":
+          this.osintSearchMode = true;
+          new Notice("OSINT Search Mode enabled");
+          break;
+        case "none":
+          // All modes off - Entity-Only Mode if entity generation is on
+          if (this.entityGenerationMode) {
+            new Notice("Entity-Only Mode enabled - extract entities from your text");
+          } else {
+            // Enable entity generation automatically for Entity Only mode
+            this.entityGenerationMode = true;
+            this.entityGenerationToggle.checked = true;
+            this.updateEntityGenerationLabel();
+            new Notice("Entity-Only Mode enabled - extract entities from your text");
+          }
+          break;
       }
+
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
       this.updateModeDisclaimer();
     });
-
-    const localSearchLabel = localSearchContainer.createEl("label", {
-      text: this.localSearchMode ? "🔍 Local Search (ON)" : "🔍 Local Search",
-      cls: this.localSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
-    });
-    localSearchLabel.htmlFor = "local-search-mode-toggle";
-
-    // Dark Web Mode Toggle
-    const darkWebContainer = mainModeGroup.createDiv("vault-ai-dark-web-toggle");
-    darkWebContainer.addClass("vault-ai-toggle-container");
-
-    this.darkWebToggle = darkWebContainer.createEl("input", {
-      type: "checkbox",
-      cls: "vault-ai-mode-checkbox",
-    });
-    this.darkWebToggle.id = "dark-web-mode-toggle";
-    this.darkWebToggle.checked = this.darkWebMode;
-    this.darkWebToggle.addEventListener("change", () => {
-      if (this.darkWebToggle.checked) {
-        // Enable dark web mode, disable others (mutual exclusivity)
-        this.darkWebMode = true;
-        this.localSearchMode = false;
-        this.reportGenerationMode = false;
-        this.osintSearchMode = false;
-        this.localSearchModeToggle.checked = false;
-        this.reportGenerationToggle.checked = false;
-        this.osintSearchToggle.checked = false;
-        new Notice("Dark Web Mode enabled");
-      } else {
-        // Disable dark web mode - may enter Entity-Only Mode if entity generation is on
-        this.darkWebMode = false;
-        this.checkEntityOnlyMode();
-      }
-      this.updateAllModeLabels();
-      this.updateInputPlaceholder();
-      this.updateModeDisclaimer();
-    });
-
-    const darkWebLabel = darkWebContainer.createEl("label", {
-      text: this.darkWebMode ? "🕵️ Dark Web (ON)" : "🕵️ Dark Web",
-      cls: this.darkWebMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
-    });
-    darkWebLabel.htmlFor = "dark-web-mode-toggle";
-
-    // Corporate Report Generation Mode Toggle
-    const reportGenContainer = mainModeGroup.createDiv("vault-ai-report-gen-toggle");
-    reportGenContainer.addClass("vault-ai-toggle-container");
-
-    this.reportGenerationToggle = reportGenContainer.createEl("input", {
-      type: "checkbox",
-      cls: "vault-ai-mode-checkbox",
-    });
-    this.reportGenerationToggle.id = "report-gen-mode-toggle";
-    this.reportGenerationToggle.checked = this.reportGenerationMode;
-    this.reportGenerationToggle.addEventListener("change", () => {
-      if (this.reportGenerationToggle.checked) {
-        // Enable report mode, disable others (mutual exclusivity)
-        this.reportGenerationMode = true;
-        this.localSearchMode = false;
-        this.darkWebMode = false;
-        this.osintSearchMode = false;
-        this.localSearchModeToggle.checked = false;
-        this.darkWebToggle.checked = false;
-        this.osintSearchToggle.checked = false;
-        new Notice("Corporate Report Generation Mode enabled");
-      } else {
-        // Disable report mode - may enter Entity-Only Mode if entity generation is on
-        this.reportGenerationMode = false;
-        this.checkEntityOnlyMode();
-      }
-      this.updateAllModeLabels();
-      this.updateInputPlaceholder();
-      this.updateModeDisclaimer();
-    });
-
-    const reportGenLabel = reportGenContainer.createEl("label", {
-      text: this.reportGenerationMode ? "📄 Corporate Report (ON)" : "📄 Corporate Report",
-      cls: this.reportGenerationMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
-    });
-    reportGenLabel.htmlFor = "report-gen-mode-toggle";
-
-    // OSINT Search Mode Toggle
-    const osintSearchContainer = mainModeGroup.createDiv("vault-ai-osint-search-toggle");
-    osintSearchContainer.addClass("vault-ai-toggle-container");
-
-    this.osintSearchToggle = osintSearchContainer.createEl("input", {
-      type: "checkbox",
-      cls: "vault-ai-mode-checkbox",
-    });
-    this.osintSearchToggle.id = "osint-search-mode-toggle";
-    this.osintSearchToggle.checked = this.osintSearchMode;
-    this.osintSearchToggle.addEventListener("change", () => {
-      if (this.osintSearchToggle.checked) {
-        // Enable OSINT search mode, disable others (mutual exclusivity)
-        this.osintSearchMode = true;
-        this.localSearchMode = false;
-        this.darkWebMode = false;
-        this.reportGenerationMode = false;
-        this.localSearchModeToggle.checked = false;
-        this.darkWebToggle.checked = false;
-        this.reportGenerationToggle.checked = false;
-        new Notice("OSINT Search Mode enabled");
-      } else {
-        // Disable OSINT search mode - may enter Entity-Only Mode if entity generation is on
-        this.osintSearchMode = false;
-        this.checkEntityOnlyMode();
-      }
-      this.updateAllModeLabels();
-      this.updateInputPlaceholder();
-      this.updateModeDisclaimer();
-    });
-
-    const osintSearchLabel = osintSearchContainer.createEl("label", {
-      text: this.osintSearchMode ? "🔎 OSINT Search (ON)" : "🔎 OSINT Search",
-      cls: this.osintSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
-    });
-    osintSearchLabel.htmlFor = "osint-search-mode-toggle";
 
     // === Entity Generation Toggle (Independent - enables Entity-Only Mode when all main modes are off) ===
     const entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
@@ -2529,52 +2458,19 @@ class ChatView extends ItemView {
   }
 
   updateAllModeLabels() {
-    // Update Local Search Mode label
-    const localSearchContainer = this.containerEl.querySelector(".vault-ai-local-search-toggle");
-    if (localSearchContainer) {
-      const label = localSearchContainer.querySelector("label");
-      if (label) {
-        label.textContent = this.localSearchMode ? "🔍 Local Search (ON)" : "🔍 Local Search";
-        label.className = this.localSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
+    // Update mode dropdown selection
+    if (this.modeDropdown) {
+      if (this.localSearchMode) {
+        this.modeDropdown.value = "local";
+      } else if (this.darkWebMode) {
+        this.modeDropdown.value = "darkweb";
+      } else if (this.reportGenerationMode) {
+        this.modeDropdown.value = "report";
+      } else if (this.osintSearchMode) {
+        this.modeDropdown.value = "osint";
+      } else {
+        this.modeDropdown.value = "none";
       }
-      const checkbox = localSearchContainer.querySelector("input") as HTMLInputElement;
-      if (checkbox) checkbox.checked = this.localSearchMode;
-    }
-
-    // Update Dark Web Mode label
-    const darkWebContainer = this.containerEl.querySelector(".vault-ai-dark-web-toggle");
-    if (darkWebContainer) {
-      const label = darkWebContainer.querySelector("label");
-      if (label) {
-        label.textContent = this.darkWebMode ? "🕵️ Dark Web (ON)" : "🕵️ Dark Web";
-        label.className = this.darkWebMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
-      }
-      const checkbox = darkWebContainer.querySelector("input") as HTMLInputElement;
-      if (checkbox) checkbox.checked = this.darkWebMode;
-    }
-
-    // Update Corporate Report Generation Mode label
-    const reportContainer = this.containerEl.querySelector(".vault-ai-report-gen-toggle");
-    if (reportContainer) {
-      const label = reportContainer.querySelector("label");
-      if (label) {
-        label.textContent = this.reportGenerationMode ? "📄 Corporate Report (ON)" : "📄 Corporate Report";
-        label.className = this.reportGenerationMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
-      }
-      const checkbox = reportContainer.querySelector("input") as HTMLInputElement;
-      if (checkbox) checkbox.checked = this.reportGenerationMode;
-    }
-
-    // Update OSINT Search Mode label
-    const osintSearchContainer = this.containerEl.querySelector(".vault-ai-osint-search-toggle");
-    if (osintSearchContainer) {
-      const label = osintSearchContainer.querySelector("label");
-      if (label) {
-        label.textContent = this.osintSearchMode ? "🔎 OSINT Search (ON)" : "🔎 OSINT Search";
-        label.className = this.osintSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
-      }
-      const checkbox = osintSearchContainer.querySelector("input") as HTMLInputElement;
-      if (checkbox) checkbox.checked = this.osintSearchMode;
     }
 
     // Also update entity generation label (for Entity-Only Mode indicator)

@@ -149,48 +149,43 @@
   transition: all 0.3s ease;
 }
 
-/* Main Mode Group (Local Search, Dark Web, Report - mutually exclusive checkboxes) */
-.vault-ai-main-mode-group {
+/* Mode Select Dropdown Container */
+.vault-ai-mode-select-container {
   display: flex;
-  gap: 4px;
-  padding: 2px;
-  background-color: var(--background-secondary-alt);
-  border-radius: 6px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background-color: var(--background-secondary);
+  border-radius: 4px;
   border: 1px solid var(--background-modifier-border);
 }
 
-.vault-ai-main-mode-group .vault-ai-toggle-container {
-  border: none;
-  background-color: transparent;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.vault-ai-main-mode-group .vault-ai-toggle-container:has(.vault-ai-mode-checkbox:checked) {
-  background-color: var(--interactive-accent);
-}
-
-/* Checkbox styling for main modes */
-.vault-ai-mode-checkbox {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: var(--interactive-accent);
-}
-
-.vault-ai-mode-label {
-  font-size: 0.8em;
+.vault-ai-mode-select-label {
+  font-size: 0.85em;
   font-weight: 500;
-  cursor: pointer;
-  user-select: none;
   color: var(--text-muted);
-  transition: color 0.3s ease;
   white-space: nowrap;
 }
 
-.vault-ai-mode-label.active {
-  color: var(--text-on-accent);
-  font-weight: 600;
+.vault-ai-mode-dropdown {
+  padding: 4px 8px;
+  font-size: 0.85em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.vault-ai-mode-dropdown:hover {
+  border-color: var(--interactive-accent);
+}
+
+.vault-ai-mode-dropdown:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px var(--interactive-accent-hover);
 }
 
 /* Entity Generation Mode Toggle (Independent checkbox) */
@@ -1531,4 +1526,111 @@
 .vault-ai-chat-input textarea {
     position: relative;
     z-index: 2;
+}
+
+/* ============================================
+   RESPONSIVE LAYOUT STYLES
+   ============================================ */
+
+/* Chat header buttons - wrap on smaller screens */
+.vault-ai-chat-header-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Responsive adjustments for smaller windows */
+@media (max-width: 600px) {
+    .vault-ai-chat-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .vault-ai-chat-header-buttons {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .vault-ai-mode-select-container {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .vault-ai-mode-dropdown {
+        min-width: 120px;
+        flex: 1;
+    }
+
+    .vault-ai-toggle-container {
+        padding: 4px 8px;
+    }
+
+    .vault-ai-entity-gen-label {
+        font-size: 0.75em;
+    }
+}
+
+/* Very small screens */
+@media (max-width: 400px) {
+    .vault-ai-chat-view {
+        padding: 5px;
+    }
+
+    .vault-ai-chat-header-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .vault-ai-mode-select-container {
+        width: 100%;
+    }
+
+    .vault-ai-mode-dropdown {
+        width: 100%;
+    }
+
+    .vault-ai-new-chat-btn {
+        width: 100%;
+    }
+
+    .vault-ai-chat-input button {
+        width: 100%;
+    }
+}
+
+/* Ensure chat area fills available space properly */
+.vault-ai-chat-container {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.vault-ai-chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.vault-ai-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 100px;
+}
+
+.vault-ai-chat-input {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vault-ai-chat-input textarea {
+    min-height: 60px;
+    max-height: 200px;
+    resize: vertical;
 }
