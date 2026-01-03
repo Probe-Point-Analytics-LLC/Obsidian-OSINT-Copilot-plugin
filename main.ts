@@ -16,7 +16,7 @@ import {
 // Graph plugin imports
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
-import { GraphApiService } from './src/services/api-service';
+import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity, ProviderResult } from './src/services/api-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
@@ -1961,10 +1961,17 @@ class ChatView extends ItemView {
   localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
+  osintSearchMode: boolean = false; // OSINT Search mode
   // Toggle elements
   localSearchModeToggle!: HTMLInputElement;
   darkWebToggle!: HTMLInputElement;
   reportGenerationToggle!: HTMLInputElement;
+  osintSearchToggle!: HTMLInputElement;
+  // OSINT Search options
+  osintSearchOptionsVisible: boolean = false;
+  osintSearchCountry: 'RU' | 'UA' | 'BY' | 'KZ' = 'RU';
+  osintSearchMaxProviders: number = 3;
+  osintSearchParallel: boolean = true;
   // Entity generation is independent (can be enabled with any main mode, or alone for Entity-Only Mode)
   entityGenerationMode: boolean = false;
   entityGenerationToggle!: HTMLInputElement;
@@ -2002,8 +2009,9 @@ class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.entityGenerationMode = conversation.entityGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
+      this.osintSearchMode = conversation.osintSearchMode || false;
       // Local Search mode: true if no other main mode is active (backward compatibility)
-      this.localSearchMode = !this.darkWebMode && !this.reportGenerationMode;
+      this.localSearchMode = !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
     }
   }
 
@@ -2046,6 +2054,7 @@ class ChatView extends ItemView {
     this.currentConversation.darkWebMode = this.darkWebMode;
     this.currentConversation.entityGenerationMode = this.entityGenerationMode;
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
+    this.currentConversation.osintSearchMode = this.osintSearchMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
   }
@@ -2113,8 +2122,10 @@ class ChatView extends ItemView {
         this.localSearchMode = true;
         this.darkWebMode = false;
         this.reportGenerationMode = false;
+        this.osintSearchMode = false;
         this.darkWebToggle.checked = false;
         this.reportGenerationToggle.checked = false;
+        this.osintSearchToggle.checked = false;
         new Notice("Local Search Mode enabled");
       } else {
         // Disable local search mode - may enter Entity-Only Mode if entity generation is on
@@ -2147,8 +2158,10 @@ class ChatView extends ItemView {
         this.darkWebMode = true;
         this.localSearchMode = false;
         this.reportGenerationMode = false;
+        this.osintSearchMode = false;
         this.localSearchModeToggle.checked = false;
         this.reportGenerationToggle.checked = false;
+        this.osintSearchToggle.checked = false;
         new Notice("Dark Web Mode enabled");
       } else {
         // Disable dark web mode - may enter Entity-Only Mode if entity generation is on
@@ -2181,8 +2194,10 @@ class ChatView extends ItemView {
         this.reportGenerationMode = true;
         this.localSearchMode = false;
         this.darkWebMode = false;
+        this.osintSearchMode = false;
         this.localSearchModeToggle.checked = false;
         this.darkWebToggle.checked = false;
+        this.osintSearchToggle.checked = false;
         new Notice("Corporate Report Generation Mode enabled");
       } else {
         // Disable report mode - may enter Entity-Only Mode if entity generation is on
@@ -2198,6 +2213,42 @@ class ChatView extends ItemView {
       cls: this.reportGenerationMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
     });
     reportGenLabel.htmlFor = "report-gen-mode-toggle";
+
+    // OSINT Search Mode Toggle
+    const osintSearchContainer = mainModeGroup.createDiv("vault-ai-osint-search-toggle");
+    osintSearchContainer.addClass("vault-ai-toggle-container");
+
+    this.osintSearchToggle = osintSearchContainer.createEl("input", {
+      type: "checkbox",
+      cls: "vault-ai-mode-checkbox",
+    });
+    this.osintSearchToggle.id = "osint-search-mode-toggle";
+    this.osintSearchToggle.checked = this.osintSearchMode;
+    this.osintSearchToggle.addEventListener("change", () => {
+      if (this.osintSearchToggle.checked) {
+        // Enable OSINT search mode, disable others (mutual exclusivity)
+        this.osintSearchMode = true;
+        this.localSearchMode = false;
+        this.darkWebMode = false;
+        this.reportGenerationMode = false;
+        this.localSearchModeToggle.checked = false;
+        this.darkWebToggle.checked = false;
+        this.reportGenerationToggle.checked = false;
+        new Notice("OSINT Search Mode enabled");
+      } else {
+        // Disable OSINT search mode - may enter Entity-Only Mode if entity generation is on
+        this.osintSearchMode = false;
+        this.checkEntityOnlyMode();
+      }
+      this.updateAllModeLabels();
+      this.updateInputPlaceholder();
+    });
+
+    const osintSearchLabel = osintSearchContainer.createEl("label", {
+      text: this.osintSearchMode ? "🔎 OSINT Search (ON)" : "🔎 OSINT Search",
+      cls: this.osintSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label",
+    });
+    osintSearchLabel.htmlFor = "osint-search-mode-toggle";
 
     // === Entity Generation Toggle (Independent - enables Entity-Only Mode when all main modes are off) ===
     const entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
@@ -2241,7 +2292,7 @@ class ChatView extends ItemView {
     });
     this.inputEl.rows = 3;
 
-    const sendBtn = inputContainer.createEl("button", { text: "Send" });
+    const sendBtn = inputContainer.createEl("button", { text: this.osintSearchMode ? "Search" : "Send" });
     sendBtn.addEventListener("click", () => this.handleSend());
 
     // Handle Enter key (Shift+Enter for new line)
@@ -2251,11 +2302,87 @@ class ChatView extends ItemView {
         this.handleSend();
       }
     });
+
+    // OSINT Search Options Panel (shown when OSINT Search mode is active)
+    if (this.osintSearchMode) {
+      this.renderOSINTSearchOptions(inputContainer);
+    }
+  }
+
+  /**
+   * Render the OSINT Search options panel.
+   */
+  private renderOSINTSearchOptions(container: HTMLElement) {
+    const optionsPanel = container.createDiv("vault-ai-osint-search-options");
+
+    // Toggle button for options
+    const toggleBtn = optionsPanel.createEl("button", {
+      text: this.osintSearchOptionsVisible ? "⚙️ Hide Options" : "⚙️ Search Options",
+      cls: "vault-ai-osint-options-toggle"
+    });
+    toggleBtn.addEventListener("click", () => {
+      this.osintSearchOptionsVisible = !this.osintSearchOptionsVisible;
+      toggleBtn.textContent = this.osintSearchOptionsVisible ? "⚙️ Hide Options" : "⚙️ Search Options";
+      optionsContent.style.display = this.osintSearchOptionsVisible ? "flex" : "none";
+    });
+
+    // Options content (collapsible)
+    const optionsContent = optionsPanel.createDiv("vault-ai-osint-options-content");
+    optionsContent.style.display = this.osintSearchOptionsVisible ? "flex" : "none";
+
+    // Country selector
+    const countryGroup = optionsContent.createDiv("vault-ai-osint-option-group");
+    countryGroup.createEl("label", { text: "Country:" });
+    const countrySelect = countryGroup.createEl("select", { cls: "vault-ai-osint-country-select" });
+    const countries = [
+      { value: 'RU', label: '🇷🇺 Russia' },
+      { value: 'UA', label: '🇺🇦 Ukraine' },
+      { value: 'BY', label: '🇧🇾 Belarus' },
+      { value: 'KZ', label: '🇰🇿 Kazakhstan' }
+    ];
+    for (const country of countries) {
+      const option = countrySelect.createEl("option", { text: country.label, value: country.value });
+      if (country.value === this.osintSearchCountry) {
+        option.selected = true;
+      }
+    }
+    countrySelect.addEventListener("change", () => {
+      this.osintSearchCountry = countrySelect.value as 'RU' | 'UA' | 'BY' | 'KZ';
+    });
+
+    // Max providers
+    const providersGroup = optionsContent.createDiv("vault-ai-osint-option-group");
+    providersGroup.createEl("label", { text: "Max Providers:" });
+    const providersInput = providersGroup.createEl("input", {
+      type: "number",
+      cls: "vault-ai-osint-providers-input",
+      value: String(this.osintSearchMaxProviders)
+    });
+    providersInput.min = "1";
+    providersInput.max = "10";
+    providersInput.addEventListener("change", () => {
+      const value = parseInt(providersInput.value);
+      if (value >= 1 && value <= 10) {
+        this.osintSearchMaxProviders = value;
+      } else {
+        providersInput.value = String(this.osintSearchMaxProviders);
+      }
+    });
+
+    // Parallel execution
+    const parallelGroup = optionsContent.createDiv("vault-ai-osint-option-group");
+    const parallelLabel = parallelGroup.createEl("label");
+    const parallelCheckbox = parallelLabel.createEl("input", { type: "checkbox" });
+    parallelCheckbox.checked = this.osintSearchParallel;
+    parallelLabel.appendText(" Parallel Search");
+    parallelCheckbox.addEventListener("change", () => {
+      this.osintSearchParallel = parallelCheckbox.checked;
+    });
   }
 
   // Check if Entity-Only Mode is active (entity generation ON, all main modes OFF)
   isEntityOnlyMode(): boolean {
-    return this.entityGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode;
+    return this.entityGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
   }
 
   // Show notice when entering Entity-Only Mode
@@ -2269,6 +2396,8 @@ class ChatView extends ItemView {
   getInputPlaceholder(): string {
     if (this.isEntityOnlyMode()) {
       return "Enter text to extract entities...";
+    } else if (this.osintSearchMode) {
+      return "Enter OSINT search query (e.g., 'Find info about john@example.com')...";
     } else if (this.darkWebMode) {
       return "Enter dark web investigation query...";
     } else if (this.reportGenerationMode) {
@@ -2350,6 +2479,18 @@ class ChatView extends ItemView {
       if (checkbox) checkbox.checked = this.reportGenerationMode;
     }
 
+    // Update OSINT Search Mode label
+    const osintSearchContainer = this.containerEl.querySelector(".vault-ai-osint-search-toggle");
+    if (osintSearchContainer) {
+      const label = osintSearchContainer.querySelector("label");
+      if (label) {
+        label.textContent = this.osintSearchMode ? "🔎 OSINT Search (ON)" : "🔎 OSINT Search";
+        label.className = this.osintSearchMode ? "vault-ai-mode-label active" : "vault-ai-mode-label";
+      }
+      const checkbox = osintSearchContainer.querySelector("input") as HTMLInputElement;
+      if (checkbox) checkbox.checked = this.osintSearchMode;
+    }
+
     // Also update entity generation label (for Entity-Only Mode indicator)
     this.updateEntityGenerationLabel();
   }
@@ -2392,10 +2533,16 @@ class ChatView extends ItemView {
       const date = new Date(conv.updatedAt);
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
       // Check if Entity-Only Mode (entity gen ON, all main modes OFF)
-      const isEntityOnly = conv.entityGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode;
+      const convOsintSearchMode = conv.osintSearchMode || false;
+      const isEntityOnly = conv.entityGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
       // Show main mode badge or Entity-Only badge
       if (isEntityOnly) {
         meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entityonly", title: "Entity-Only Mode" });
+      } else if (convOsintSearchMode) {
+        meta.createEl("span", { text: "🔎", cls: "vault-ai-conversation-osint-search", title: "OSINT Search Mode" });
+        if (conv.entityGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
+        }
       } else if (conv.darkWebMode) {
         meta.createEl("span", { text: "🕵️", cls: "vault-ai-conversation-darkweb", title: "Dark Web Mode" });
         if (conv.entityGenerationMode) {
@@ -2467,10 +2614,11 @@ class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.entityGenerationMode = conversation.entityGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
+      this.osintSearchMode = conversation.osintSearchMode || false;
       // Use localSearchMode from conversation, or infer from other modes for backward compatibility
       this.localSearchMode = conversation.localSearchMode !== undefined
         ? conversation.localSearchMode
-        : (!this.darkWebMode && !this.reportGenerationMode);
+        : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode);
       this.plugin.conversationService.setCurrentConversationId(id);
       this.render();
     } else {
@@ -2490,6 +2638,7 @@ class ChatView extends ItemView {
     this.darkWebMode = false;
     this.entityGenerationMode = false;
     this.reportGenerationMode = false;
+    this.osintSearchMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
     this.render();
     new Notice("Started new conversation");
@@ -2911,6 +3060,8 @@ class ChatView extends ItemView {
     if (this.isEntityOnlyMode()) {
       // Entity-Only Mode: Extract entities from user input without AI chat
       await this.handleEntityOnlyMode(query);
+    } else if (this.osintSearchMode) {
+      await this.handleOSINTSearch(query);
     } else if (this.darkWebMode) {
       await this.handleDarkWebInvestigation(query);
     } else if (this.reportGenerationMode) {
@@ -3618,6 +3769,193 @@ class ChatView extends ItemView {
       this.renderMessages();
       new Notice(`Corporate Report generation failed: ${userMessage}`);
     }
+  }
+
+  /**
+   * Handle OSINT Search Mode: AI-powered multi-provider OSINT search.
+   */
+  async handleOSINTSearch(query: string) {
+    // Add processing placeholder with progress bar
+    const messageIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "🔎 Searching OSINT databases...",
+      progress: { message: "Analyzing query...", percent: 10 },
+    });
+    this.renderMessages();
+
+    // Helper to update progress
+    const updateProgress = (message: string, percent: number) => {
+      this.chatHistory[messageIndex].progress = { message, percent };
+      this.chatHistory[messageIndex].content = `🔎 ${message}`;
+      this.updateProgressBar(messageIndex, { message, percent });
+    };
+
+    try {
+      // Check for API key
+      if (!this.plugin.settings.reportApiKey) {
+        this.chatHistory[messageIndex].progress = undefined;
+        this.chatHistory[messageIndex].content =
+          `🔎 **OSINT Search Failed**\n\n` +
+          `**Error:** License key required for OSINT Search.\n\n` +
+          `Please configure your API key in Settings → OSINT Copilot → API Key.`;
+        this.renderMessages();
+        new Notice("License key required for OSINT Search. Configure in settings.");
+        return;
+      }
+
+      updateProgress("Detecting entities in query...", 20);
+
+      // Build search request
+      const searchRequest: AISearchRequest = {
+        query: query,
+        country: this.osintSearchCountry,
+        max_providers: this.osintSearchMaxProviders,
+        parallel: this.osintSearchParallel
+      };
+
+      // Retry callback for progress updates
+      const onRetry = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => {
+        const delaySeconds = Math.round(nextDelayMs / 1000);
+        let reasonText = 'Network interrupted';
+        if (reason === 'timeout') {
+          reasonText = 'Request timed out';
+        } else if (reason === 'network') {
+          reasonText = 'Network connection lost';
+        } else if (reason.startsWith('server-error')) {
+          reasonText = 'Server temporarily unavailable';
+        } else if (reason === 'rate-limited') {
+          reasonText = 'Rate limited';
+        }
+        updateProgress(`⚠️ ${reasonText}. Retrying in ${delaySeconds}s... (${attempt + 1}/${maxAttempts})`, 40);
+      };
+
+      updateProgress("Searching OSINT databases...", 50);
+
+      // Call the AI search API
+      const result: AISearchResponse = await this.plugin.graphApiService.aiSearch(searchRequest, onRetry);
+
+      updateProgress("Processing results...", 90);
+
+      // Render the search results
+      this.renderOSINTSearchResults(messageIndex, query, result);
+
+    } catch (error) {
+      console.error('[ChatView] OSINT Search error:', error);
+      this.chatHistory[messageIndex].progress = undefined;
+
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      let suggestion = '';
+
+      if (errorMessage.includes('timeout')) {
+        suggestion = '\n\n💡 Try reducing the number of providers or simplifying your query.';
+      } else if (errorMessage.includes('unavailable')) {
+        suggestion = '\n\n💡 The service may be temporarily down. Please try again later.';
+      } else if (errorMessage.includes('Authentication') || errorMessage.includes('API key')) {
+        suggestion = '\n\n💡 Please check your API key in Settings → OSINT Copilot → API Key.';
+      }
+
+      this.chatHistory[messageIndex].content =
+        `🔎 **OSINT Search Failed**\n\n` +
+        `**Query:** ${query}\n\n` +
+        `**Error:** ${errorMessage}${suggestion}`;
+      this.renderMessages();
+      new Notice(`OSINT Search failed: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Render OSINT search results in a structured format.
+   */
+  private renderOSINTSearchResults(messageIndex: number, query: string, result: AISearchResponse) {
+    this.chatHistory[messageIndex].progress = undefined;
+
+    // Build the result content
+    let content = `🔎 **OSINT Search Results**\n\n`;
+    content += `**Query:** ${query}\n`;
+    content += `⏱️ ${(result.execution_time_ms / 1000).toFixed(1)}s | 📊 ${result.total_results} result(s)\n\n`;
+
+    // Detected Entities section
+    if (result.detected_entities && result.detected_entities.length > 0) {
+      content += `---\n\n### 📋 Detected Entities\n\n`;
+      for (const entity of result.detected_entities) {
+        const icon = this.getEntityTypeIcon(entity.type);
+        const confidence = Math.round(entity.confidence * 100);
+        content += `${icon} **${entity.type}:** \`${entity.value}\` (${confidence}% confidence)\n`;
+      }
+      content += '\n';
+    } else {
+      content += `---\n\n### 📋 Detected Entities\n\n`;
+      content += `⚠️ No searchable entities detected in your query.\n`;
+      content += `Try including an email, phone, name, or other identifier.\n\n`;
+    }
+
+    // Selected Providers section
+    if (result.selected_providers && result.selected_providers.length > 0) {
+      content += `---\n\n### 🔌 Selected Providers\n\n`;
+      for (const provider of result.selected_providers) {
+        content += `**${provider.provider}** → ${provider.search_type} search\n`;
+        content += `> ${provider.reason}\n\n`;
+      }
+    }
+
+    // Results section
+    if (result.results && result.results.length > 0) {
+      content += `---\n\n### 📊 Results\n\n`;
+
+      for (const providerResult of result.results) {
+        const statusIcon = providerResult.status === 'success' ? '✅' :
+                          providerResult.status === 'no_results' ? '⚪' : '❌';
+        content += `#### ${statusIcon} ${providerResult.provider} (${providerResult.execution_time_ms}ms)\n\n`;
+
+        if (providerResult.status === 'error') {
+          content += `> ❌ Error: ${providerResult.error_message || 'Unknown error'}\n\n`;
+        } else if (providerResult.status === 'no_results') {
+          content += `> No results found for \`${providerResult.entity}\`\n\n`;
+        } else if (providerResult.data && providerResult.data.length > 0) {
+          // Render each result item
+          for (let i = 0; i < providerResult.data.length; i++) {
+            const item = providerResult.data[i];
+            content += `**Result ${i + 1}:**\n`;
+            content += '```json\n';
+            content += JSON.stringify(item, null, 2);
+            content += '\n```\n\n';
+          }
+        }
+      }
+    } else if (result.detected_entities && result.detected_entities.length > 0) {
+      content += `---\n\n### 📊 Results\n\n`;
+      content += `No results found from any provider.\n\n`;
+    }
+
+    // Explanation section
+    if (result.explanation) {
+      content += `---\n\n### 💡 Explanation\n\n`;
+      content += `${result.explanation}\n`;
+    }
+
+    this.chatHistory[messageIndex].content = content;
+    this.renderMessages();
+  }
+
+  /**
+   * Get icon for entity type in OSINT search results.
+   */
+  private getEntityTypeIcon(entityType: string): string {
+    const icons: Record<string, string> = {
+      'email': '📧',
+      'phone': '📞',
+      'name': '👤',
+      'ip': '🌐',
+      'domain': '🔗',
+      'passport': '🛂',
+      'inn': '💳',
+      'snils': '🆔',
+      'address': '📍',
+      'auto': '🚗',
+      'ogrn': '🏢',
+    };
+    return icons[entityType.toLowerCase()] || '📦';
   }
 
   async handleDarkWebInvestigation(query: string) {

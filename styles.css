@@ -1411,3 +1411,95 @@
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
+
+/* ============================================================================
+   OSINT Search Mode Styles
+   ============================================================================ */
+
+/* OSINT Search toggle in header */
+.vault-ai-osint-search-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* OSINT Search options panel */
+.vault-ai-osint-search-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.vault-ai-osint-options-toggle {
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+    align-self: flex-start;
+}
+
+.vault-ai-osint-options-toggle:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.vault-ai-osint-options-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.vault-ai-osint-option-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.vault-ai-osint-option-group label {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.vault-ai-osint-country-select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.vault-ai-osint-providers-input {
+    width: 50px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    text-align: center;
+}
+
+.vault-ai-osint-option-group input[type="checkbox"] {
+    margin-right: 4px;
+    cursor: pointer;
+}
+
+/* Conversation list OSINT Search badge */
+.vault-ai-conversation-osint-search {
+    font-size: 12px;
+    margin-left: 4px;
+}

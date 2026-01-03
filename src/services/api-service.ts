@@ -16,6 +16,69 @@ export interface ApiHealthResponse {
     version?: string;
 }
 
+// ============================================================================
+// AI Search Types
+// ============================================================================
+
+/**
+ * Request format for AI-powered OSINT search.
+ */
+export interface AISearchRequest {
+    query: string;
+    country?: 'RU' | 'UA' | 'BY' | 'KZ';
+    max_providers?: number;
+    preferred_providers?: string[];
+    parallel?: boolean;
+}
+
+/**
+ * Entity detected from the search query.
+ */
+export interface DetectedEntity {
+    value: string;
+    type: string;
+    confidence: number;
+    normalized_value: string;
+}
+
+/**
+ * Provider selected for the search.
+ */
+export interface SelectedProvider {
+    provider: string;
+    entity: string;
+    entity_type: string;
+    search_type: string;
+    reason: string;
+}
+
+/**
+ * Result from a single provider search.
+ */
+export interface ProviderResult {
+    provider: string;
+    entity: string;
+    entity_type: string;
+    search_type: string;
+    status: 'success' | 'error' | 'no_results';
+    data: Record<string, any>[];
+    error_message?: string;
+    execution_time_ms: number;
+}
+
+/**
+ * Response from the AI search endpoint.
+ */
+export interface AISearchResponse {
+    query: string;
+    detected_entities: DetectedEntity[];
+    selected_providers: SelectedProvider[];
+    results: ProviderResult[];
+    total_results: number;
+    execution_time_ms: number;
+    explanation: string;
+}
+
 /**
  * Configuration for retry behavior.
  */
@@ -511,6 +574,133 @@ export class GraphApiService {
             // Include the original text so caller can preserve it for retry
             originalText: text
         };
+    }
+
+    /**
+     * AI-powered OSINT search that automatically detects entity types,
+     * selects appropriate providers, and aggregates results.
+     *
+     * @param request - Search request with query and options
+     * @param onRetry - Optional callback for retry notifications
+     * @returns AISearchResponse with detected entities and search results
+     */
+    async aiSearch(
+        request: AISearchRequest,
+        onRetry?: RetryCallback
+    ): Promise<AISearchResponse> {
+        // First, try to connect if we haven't checked yet
+        if (!this.isOnline) {
+            await this.checkHealth();
+        }
+
+        if (!this.apiKey) {
+            throw new Error('License key required for OSINT Search. Configure in Settings → OSINT Copilot → API Key.');
+        }
+
+        console.log('[GraphApiService] AI Search request:', request.query.substring(0, 100));
+
+        const { maxRetries } = this.retryConfig;
+        // Use longer timeout for multi-provider search (3 minutes)
+        const searchTimeout = 180000;
+        let lastError: unknown = null;
+        let lastStatusCode: number | undefined;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[GraphApiService] AI Search attempt ${attempt}/${maxRetries}`);
+
+                const response = await this.fetchWithTimeout(
+                    `${this.baseUrl}/api/bot-aggregator/ai-search`,
+                    {
+                        method: 'POST',
+                        headers: this.getHeaders(),
+                        mode: 'cors',
+                        credentials: 'omit',
+                        body: JSON.stringify(request)
+                    },
+                    searchTimeout
+                );
+
+                // Handle non-OK responses
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error(`[GraphApiService] AI Search error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
+                    lastStatusCode = response.status;
+
+                    // Non-retryable client errors (4xx except 429)
+                    if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+                        if (response.status === 401 || response.status === 403) {
+                            throw new Error('Authentication failed. Please check your API key in Settings.');
+                        }
+                        if (response.status === 404) {
+                            throw new Error('OSINT Search endpoint not found. Please check your API configuration.');
+                        }
+                        throw new Error(`API error (${response.status}): ${errorText}`);
+                    }
+
+                    // Retryable errors (5xx, 429)
+                    lastError = new Error(`HTTP ${response.status}: ${errorText}`);
+
+                    if (attempt < maxRetries) {
+                        const delayMs = this.calculateBackoffDelay(attempt);
+                        const reason = this.getErrorReason(lastError, response.status);
+                        console.log(`[GraphApiService] AI Search retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
+
+                        if (onRetry) {
+                            onRetry(attempt, maxRetries, reason, delayMs);
+                        }
+
+                        await new Promise(resolve => setTimeout(resolve, delayMs));
+                        continue;
+                    }
+                } else {
+                    // Success!
+                    const result: AISearchResponse = await response.json();
+                    console.log('[GraphApiService] AI Search successful:', result.total_results, 'results');
+                    return result;
+                }
+            } catch (error) {
+                console.error(`[GraphApiService] AI Search failed (attempt ${attempt}/${maxRetries}):`, error);
+                lastError = error;
+
+                // Don't retry non-retryable errors
+                if (error instanceof Error && (
+                    error.message.includes('Authentication') ||
+                    error.message.includes('API key') ||
+                    error.message.includes('endpoint not found')
+                )) {
+                    throw error;
+                }
+
+                // Check if error is retryable
+                if (this.isRetryableError(error) && attempt < maxRetries) {
+                    const delayMs = this.calculateBackoffDelay(attempt);
+                    const reason = this.getErrorReason(error, lastStatusCode);
+                    console.log(`[GraphApiService] AI Search ${reason} error, retrying in ${Math.round(delayMs)}ms...`);
+
+                    if (onRetry) {
+                        onRetry(attempt, maxRetries, reason, delayMs);
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    continue;
+                }
+            }
+        }
+
+        // All retries exhausted
+        const errorMessage = this.getErrorMessage(lastError, lastStatusCode);
+        console.error('[GraphApiService] AI Search all retries exhausted:', errorMessage);
+
+        if (this.isTimeoutError(lastError)) {
+            throw new Error('Search timed out. Try reducing the number of providers or simplifying your query.');
+        } else if (lastStatusCode === 503) {
+            throw new Error('OSINT Search service is temporarily unavailable. Please try again later.');
+        } else if (lastStatusCode === 504) {
+            throw new Error('Search timed out. Try reducing the number of providers.');
+        }
+
+        throw new Error(`OSINT Search failed after ${maxRetries} attempts: ${errorMessage}`);
     }
 }
 

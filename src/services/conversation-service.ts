@@ -24,6 +24,7 @@ export interface ConversationMetadata {
   darkWebMode: boolean;
   entityGenerationMode: boolean;
   reportGenerationMode: boolean;
+  osintSearchMode?: boolean; // OSINT Search mode
   reportConversationId?: string; // conversation_id для report generation API
 }
 
