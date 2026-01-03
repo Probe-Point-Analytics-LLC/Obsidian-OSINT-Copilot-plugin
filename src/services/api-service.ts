@@ -42,39 +42,16 @@ export interface DetectedEntity {
 }
 
 /**
- * Provider selected for the search.
- */
-export interface SelectedProvider {
-    provider: string;
-    entity: string;
-    entity_type: string;
-    search_type: string;
-    reason: string;
-}
-
-/**
- * Result from a single provider search.
- */
-export interface ProviderResult {
-    provider: string;
-    entity: string;
-    entity_type: string;
-    search_type: string;
-    status: 'success' | 'error' | 'no_results';
-    data: Record<string, any>[];
-    error_message?: string;
-    execution_time_ms: number;
-}
-
-/**
  * Response from the AI search endpoint.
+ * The results array contains raw data objects from the search.
  */
 export interface AISearchResponse {
     query: string;
     detected_entities: DetectedEntity[];
-    selected_providers: SelectedProvider[];
-    results: ProviderResult[];
+    results: Record<string, any>[];
     total_results: number;
+    status: 'success' | 'error' | 'no_results';
+    status_message: string;
     execution_time_ms: number;
     explanation: string;
 }

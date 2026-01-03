@@ -16,7 +16,7 @@ import {
 // Graph plugin imports
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
-import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity, ProviderResult } from './src/services/api-service';
+import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity } from './src/services/api-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
@@ -2134,6 +2134,7 @@ class ChatView extends ItemView {
       }
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
+      this.updateModeDisclaimer();
     });
 
     const localSearchLabel = localSearchContainer.createEl("label", {
@@ -2170,6 +2171,7 @@ class ChatView extends ItemView {
       }
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
+      this.updateModeDisclaimer();
     });
 
     const darkWebLabel = darkWebContainer.createEl("label", {
@@ -2206,6 +2208,7 @@ class ChatView extends ItemView {
       }
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
+      this.updateModeDisclaimer();
     });
 
     const reportGenLabel = reportGenContainer.createEl("label", {
@@ -2242,6 +2245,7 @@ class ChatView extends ItemView {
       }
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
+      this.updateModeDisclaimer();
     });
 
     const osintSearchLabel = osintSearchContainer.createEl("label", {
@@ -2265,6 +2269,7 @@ class ChatView extends ItemView {
       this.entityGenerationMode = this.entityGenerationToggle.checked;
       this.updateEntityGenerationLabel();
       this.updateInputPlaceholder();
+      this.updateModeDisclaimer();
       if (this.isEntityOnlyMode()) {
         new Notice("Entity-Only Mode enabled - extract entities from your text");
       } else if (this.entityGenerationMode) {
@@ -2287,6 +2292,13 @@ class ChatView extends ItemView {
     // Input area
     const inputContainer = chatArea.createDiv("vault-ai-chat-input");
 
+    // Mode disclaimer (shows what the current mode will do)
+    const modeDisclaimer = this.getModeDisclaimer();
+    if (modeDisclaimer) {
+      const disclaimerEl = inputContainer.createDiv("vault-ai-mode-disclaimer");
+      disclaimerEl.innerHTML = modeDisclaimer;
+    }
+
     this.inputEl = inputContainer.createEl("textarea", {
       placeholder: this.getInputPlaceholder(),
     });
@@ -2307,6 +2319,46 @@ class ChatView extends ItemView {
     if (this.osintSearchMode) {
       this.renderOSINTSearchOptions(inputContainer);
     }
+  }
+
+  /**
+   * Get the mode disclaimer text based on current mode settings.
+   * Returns HTML string or null if no disclaimer needed.
+   */
+  private getModeDisclaimer(): string | null {
+    if (this.isEntityOnlyMode()) {
+      return "🏷️ <strong>Entity-Only Mode:</strong> Your text will be analyzed to extract and create entities (people, companies, locations, etc.) without AI chat.";
+    }
+
+    if (this.osintSearchMode) {
+      if (this.entityGenerationMode) {
+        return "🔎 <strong>OSINT Search + Entities:</strong> Search OSINT databases and automatically create entities from the results.";
+      }
+      return "🔎 <strong>OSINT Search:</strong> Search multiple OSINT databases for information about people, emails, phones, and more.";
+    }
+
+    if (this.darkWebMode) {
+      if (this.entityGenerationMode) {
+        return "🕵️ <strong>Dark Web + Entities:</strong> Investigate dark web sources and automatically create entities from findings.";
+      }
+      return "🕵️ <strong>Dark Web:</strong> Search dark web sources for leaked data and threat intelligence.";
+    }
+
+    if (this.reportGenerationMode) {
+      if (this.entityGenerationMode) {
+        return "📄 <strong>Corporate Report + Entities:</strong> Generate comprehensive reports and automatically create entities from the content.";
+      }
+      return "📄 <strong>Corporate Report:</strong> Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags";
+    }
+
+    if (this.localSearchMode) {
+      if (this.entityGenerationMode) {
+        return "🔍 <strong>Local Search + Entities:</strong> Search your vault and automatically create entities from AI responses.";
+      }
+      return null; // Default mode, no disclaimer needed
+    }
+
+    return null;
   }
 
   /**
@@ -2411,6 +2463,40 @@ class ChatView extends ItemView {
   updateInputPlaceholder() {
     if (this.inputEl) {
       this.inputEl.placeholder = this.getInputPlaceholder();
+    }
+  }
+
+  // Update the mode disclaimer banner dynamically
+  updateModeDisclaimer() {
+    const inputContainer = this.containerEl.querySelector(".vault-ai-chat-input");
+    if (!inputContainer) return;
+
+    // Find existing disclaimer element
+    let disclaimerEl = inputContainer.querySelector(".vault-ai-mode-disclaimer") as HTMLElement | null;
+    const newDisclaimer = this.getModeDisclaimer();
+
+    if (newDisclaimer) {
+      if (disclaimerEl) {
+        // Update existing disclaimer
+        disclaimerEl.innerHTML = newDisclaimer;
+      } else {
+        // Create new disclaimer element (insert at the beginning of input container)
+        disclaimerEl = document.createElement("div");
+        disclaimerEl.className = "vault-ai-mode-disclaimer";
+        disclaimerEl.innerHTML = newDisclaimer;
+        inputContainer.insertBefore(disclaimerEl, inputContainer.firstChild);
+      }
+    } else {
+      // Remove disclaimer if no longer needed
+      if (disclaimerEl) {
+        disclaimerEl.remove();
+      }
+    }
+
+    // Also update the send button text based on mode
+    const sendBtn = inputContainer.querySelector("button");
+    if (sendBtn) {
+      sendBtn.textContent = this.osintSearchMode ? "Search" : "Send";
     }
   }
 
@@ -3835,10 +3921,27 @@ class ChatView extends ItemView {
       // Call the AI search API
       const result: AISearchResponse = await this.plugin.graphApiService.aiSearch(searchRequest, onRetry);
 
-      updateProgress("Processing results...", 90);
+      updateProgress("Processing results...", 80);
 
-      // Render the search results
-      this.renderOSINTSearchResults(messageIndex, query, result);
+      // Render the search results and get the content for entity extraction
+      const searchResultsContent = this.renderOSINTSearchResults(messageIndex, query, result);
+
+      // Entity Generation Mode: Extract and create entities from search results
+      if (this.entityGenerationMode && result.results && result.results.length > 0) {
+        try {
+          // Convert search results to text for entity extraction
+          const resultsText = this.formatOSINTResultsForEntityExtraction(query, result);
+          await this.processEntityGeneration(messageIndex, resultsText, query, searchResultsContent);
+        } catch (entityError) {
+          // Log error but don't fail the whole operation - search results are already displayed
+          console.error('[ChatView] Entity extraction from OSINT results failed:', entityError);
+          const errorMsg = entityError instanceof Error ? entityError.message : String(entityError);
+          this.chatHistory[messageIndex].content = searchResultsContent +
+            `\n\n⚠️ Entity extraction failed: ${errorMsg}`;
+          this.chatHistory[messageIndex].progress = undefined;
+          this.renderMessages();
+        }
+      }
 
     } catch (error) {
       console.error('[ChatView] OSINT Search error:', error);
@@ -3866,8 +3969,9 @@ class ChatView extends ItemView {
 
   /**
    * Render OSINT search results in a structured format.
+   * Returns the content string for use in entity extraction.
    */
-  private renderOSINTSearchResults(messageIndex: number, query: string, result: AISearchResponse) {
+  private renderOSINTSearchResults(messageIndex: number, query: string, result: AISearchResponse): string {
     this.chatHistory[messageIndex].progress = undefined;
 
     // Build the result content
@@ -3890,42 +3994,21 @@ class ChatView extends ItemView {
       content += `Try including an email, phone, name, or other identifier.\n\n`;
     }
 
-    // Selected Providers section
-    if (result.selected_providers && result.selected_providers.length > 0) {
-      content += `---\n\n### 🔌 Selected Providers\n\n`;
-      for (const provider of result.selected_providers) {
-        content += `**${provider.provider}** → ${provider.search_type} search\n`;
-        content += `> ${provider.reason}\n\n`;
-      }
-    }
-
     // Results section
     if (result.results && result.results.length > 0) {
       content += `---\n\n### 📊 Results\n\n`;
 
-      for (const providerResult of result.results) {
-        const statusIcon = providerResult.status === 'success' ? '✅' :
-                          providerResult.status === 'no_results' ? '⚪' : '❌';
-        content += `#### ${statusIcon} ${providerResult.provider} (${providerResult.execution_time_ms}ms)\n\n`;
-
-        if (providerResult.status === 'error') {
-          content += `> ❌ Error: ${providerResult.error_message || 'Unknown error'}\n\n`;
-        } else if (providerResult.status === 'no_results') {
-          content += `> No results found for \`${providerResult.entity}\`\n\n`;
-        } else if (providerResult.data && providerResult.data.length > 0) {
-          // Render each result item
-          for (let i = 0; i < providerResult.data.length; i++) {
-            const item = providerResult.data[i];
-            content += `**Result ${i + 1}:**\n`;
-            content += '```json\n';
-            content += JSON.stringify(item, null, 2);
-            content += '\n```\n\n';
-          }
-        }
+      // Render each result item from the results array
+      for (let i = 0; i < result.results.length; i++) {
+        const item = result.results[i];
+        content += `**Result ${i + 1}:**\n`;
+        content += '```json\n';
+        content += JSON.stringify(item, null, 2);
+        content += '\n```\n\n';
       }
     } else if (result.detected_entities && result.detected_entities.length > 0) {
       content += `---\n\n### 📊 Results\n\n`;
-      content += `No results found from any provider.\n\n`;
+      content += `No results found.\n\n`;
     }
 
     // Explanation section
@@ -3936,6 +4019,42 @@ class ChatView extends ItemView {
 
     this.chatHistory[messageIndex].content = content;
     this.renderMessages();
+    return content;
+  }
+
+  /**
+   * Format OSINT search results for entity extraction.
+   * Converts the JSON results into a text format suitable for the AI entity extraction.
+   */
+  private formatOSINTResultsForEntityExtraction(query: string, result: AISearchResponse): string {
+    let text = `OSINT Search Results for query: "${query}"\n\n`;
+
+    // Include detected entities from the search
+    if (result.detected_entities && result.detected_entities.length > 0) {
+      text += "Detected search entities:\n";
+      for (const entity of result.detected_entities) {
+        text += `- ${entity.type}: ${entity.value}\n`;
+      }
+      text += "\n";
+    }
+
+    // Include the raw results data
+    if (result.results && result.results.length > 0) {
+      text += `Found ${result.total_results} results:\n\n`;
+      for (let i = 0; i < result.results.length; i++) {
+        const item = result.results[i];
+        text += `Result ${i + 1}:\n`;
+        text += JSON.stringify(item, null, 2);
+        text += "\n\n";
+      }
+    }
+
+    // Include the explanation
+    if (result.explanation) {
+      text += `\nExplanation: ${result.explanation}\n`;
+    }
+
+    return text;
   }
 
   /**

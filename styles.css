@@ -1503,3 +1503,32 @@
     font-size: 12px;
     margin-left: 4px;
 }
+
+/* Mode disclaimer banner */
+.vault-ai-mode-disclaimer {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.vault-ai-mode-disclaimer strong {
+    color: var(--text-normal);
+}
+
+/* Ensure textarea is always clickable and on top */
+.vault-ai-chat-input textarea {
+    position: relative;
+    z-index: 2;
+}
