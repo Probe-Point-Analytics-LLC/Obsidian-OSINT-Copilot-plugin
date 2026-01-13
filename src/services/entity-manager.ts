@@ -565,7 +565,7 @@ ${entity.properties.notes || ''}
         const hasLongitude = properties.longitude !== undefined && properties.longitude !== null && properties.longitude !== '';
 
         if (hasLatitude && hasLongitude) {
-            console.log('[EntityManager] Location already has coordinates:', properties.latitude, properties.longitude);
+            console.debug('[EntityManager] Location already has coordinates:', properties.latitude, properties.longitude);
             return properties;
         }
 
@@ -577,12 +577,12 @@ ${entity.properties.notes || ''}
 
         // Need at least one field to geocode
         if (!address && !city && !state && !country) {
-            console.log('[EntityManager] No address fields available for geocoding');
+            console.debug('[EntityManager] No address fields available for geocoding');
             return properties;
         }
 
         try {
-            console.log('[EntityManager] Attempting to geocode location:', { address, city, state, country });
+            console.debug('[EntityManager] Attempting to geocode location:', { address, city, state, country });
             const result = await geocodingService.geocodeAddressWithRetry(address, city, state, country);
 
             // Update properties with geocoded coordinates
@@ -606,7 +606,7 @@ ${entity.properties.notes || ''}
                 updatedProperties.postal_code = result.postalCode;
             }
 
-            console.log('[EntityManager] Geocoding successful:', result.latitude, result.longitude, `(${result.confidence} confidence)`);
+            console.debug('[EntityManager] Geocoding successful:', result.latitude, result.longitude, `(${result.confidence} confidence)`);
             new Notice(`📍 Location geocoded: ${result.displayName.substring(0, 50)}...`);
 
             return updatedProperties;
@@ -649,7 +649,7 @@ ${entity.properties.notes || ''}
         // Check if already has coordinates
         const hasCoords = entity.properties.latitude && entity.properties.longitude;
         if (hasCoords) {
-            console.log('[EntityManager] Entity already has coordinates');
+            console.debug('[EntityManager] Entity already has coordinates');
             new Notice('📍 location already has coordinates.');
             return true;
         }
@@ -662,10 +662,10 @@ ${entity.properties.notes || ''}
                 // Update the entity
                 entity.properties = updatedProperties;
                 await this.saveEntityAsNote(entity);
-                console.log('[EntityManager] Geocoding retry successful for:', entity.label);
+                console.debug('[EntityManager] Geocoding retry successful for:', entity.label);
                 return true;
             } else {
-                console.log('[EntityManager] Geocoding retry did not find coordinates');
+                console.debug('[EntityManager] Geocoding retry did not find coordinates');
                 return false;
             }
         } catch (error) {
@@ -1486,10 +1486,10 @@ ${this.buildConnectionPropertiesSection(connection)}
      */
     getEntitiesByType(type: EntityType): Entity[] {
         const entities = Array.from(this.entities.values()).filter(e => e.type === type);
-        console.log(`[EntityManager] getEntitiesByType(${type}): found ${entities.length} entities`);
+        console.debug(`[EntityManager] getEntitiesByType(${type}): found ${entities.length} entities`);
         if (type === EntityType.Location) {
             entities.forEach(e => {
-                console.log(`[EntityManager] Location entity: ${e.label}, lat: ${e.properties.latitude}, lng: ${e.properties.longitude}`);
+                console.debug(`[EntityManager] Location entity: ${e.label}, lat: ${e.properties.latitude}, lng: ${e.properties.longitude}`);
             });
         }
         return entities;

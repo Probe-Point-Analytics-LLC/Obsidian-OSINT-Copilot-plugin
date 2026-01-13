@@ -491,7 +491,7 @@ export class EntityCreationModal extends Modal {
             return; // Already has coordinates or no address to geocode
         }
 
-        console.log('[EntityCreationModal] Auto-geocoding location...');
+        console.debug('[EntityCreationModal] Auto-geocoding location...');
         this.setGeocodeStatus('loading', 'Auto-geocoding address...');
 
         try {
@@ -534,7 +534,7 @@ export class EntityCreationModal extends Modal {
 
             const coordsStr = GeocodingService.formatCoordinates(result.latitude, result.longitude);
             this.setGeocodeStatus('success', `✓ Auto-geocoded: ${coordsStr}`);
-            console.log('[EntityCreationModal] Auto-geocoded successfully:', coordsStr);
+            console.debug('[EntityCreationModal] Auto-geocoded successfully:', coordsStr);
 
         } catch (error) {
             console.warn('[EntityCreationModal] Auto-geocoding failed:', error);
@@ -1501,7 +1501,7 @@ export class EntityEditModal extends Modal {
             return; // Already has coordinates or no address to geocode
         }
 
-        console.log('[EntityEditModal] Auto-geocoding location...');
+        console.debug('[EntityEditModal] Auto-geocoding location...');
         this.setGeocodeStatus('loading', 'Auto-geocoding address...');
 
         try {
@@ -1544,7 +1544,7 @@ export class EntityEditModal extends Modal {
 
             const coordsStr = GeocodingService.formatCoordinates(result.latitude, result.longitude);
             this.setGeocodeStatus('success', `✓ Auto-geocoded: ${coordsStr}`);
-            console.log('[EntityEditModal] Auto-geocoded successfully:', coordsStr);
+            console.debug('[EntityEditModal] Auto-geocoded successfully:', coordsStr);
 
         } catch (error) {
             console.warn('[EntityEditModal] Auto-geocoding failed:', error);

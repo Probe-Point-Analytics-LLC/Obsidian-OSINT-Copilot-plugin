@@ -152,7 +152,7 @@ export class GeocodingService {
                 const delayMs = GeocodingService.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
                 const delaySeconds = Math.round(delayMs / 1000);
 
-                console.log(`[GeocodingService] Retry attempt ${attempt + 1}/${GeocodingService.MAX_RETRIES} after ${delaySeconds}s`);
+                console.debug(`[GeocodingService] Retry attempt ${attempt + 1}/${GeocodingService.MAX_RETRIES} after ${delaySeconds}s`);
 
                 // Notify caller of retry
                 if (onRetry) {
@@ -253,7 +253,7 @@ export class GeocodingService {
         // Try each fallback query
         for (const query of fallbackQueries) {
             try {
-                console.log(`[GeocodingService] Trying ${query.description}: ${query.components.join(', ')}`);
+                console.debug(`[GeocodingService] Trying ${query.description}: ${query.components.join(', ')}`);
 
                 const result = await this.geocodeAddress(
                     query.components[0],
@@ -264,7 +264,7 @@ export class GeocodingService {
 
                 // Success! Log which fallback worked
                 if (query.description !== 'full address' && query.description !== 'original query') {
-                    console.log(`[GeocodingService] ✓ Geocoded using ${query.description} fallback`);
+                    console.debug(`[GeocodingService] ✓ Geocoded using ${query.description} fallback`);
                 }
 
                 return result;
@@ -279,7 +279,7 @@ export class GeocodingService {
                     }
 
                     // NotFound is expected for some fallback attempts, continue to next
-                    console.log(`[GeocodingService] ${query.description} not found, trying next fallback...`);
+                    console.debug(`[GeocodingService] ${query.description} not found, trying next fallback...`);
                 } else {
                     throw error;
                 }
@@ -323,7 +323,7 @@ export class GeocodingService {
         await this.enforceRateLimit();
 
         const query = queryParts.join(', ');
-        console.log('[GeocodingService] Geocoding address:', query);
+        console.debug('[GeocodingService] Geocoding address:', query);
 
         try {
             const url = `${GeocodingService.NOMINATIM_URL}?` + new URLSearchParams({
@@ -372,7 +372,7 @@ export class GeocodingService {
             }
 
             const result = results[0];
-            console.log('[GeocodingService] Geocoding result:', result);
+            console.debug('[GeocodingService] Geocoding result:', result);
 
             // Determine confidence based on importance score
             let confidence: 'high' | 'medium' | 'low' = 'medium';
@@ -423,7 +423,7 @@ export class GeocodingService {
         
         if (timeSinceLastRequest < GeocodingService.MIN_REQUEST_INTERVAL) {
             const waitTime = GeocodingService.MIN_REQUEST_INTERVAL - timeSinceLastRequest;
-            console.log(`[GeocodingService] Rate limiting: waiting ${waitTime}ms`);
+            console.debug(`[GeocodingService] Rate limiting: waiting ${waitTime}ms`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }

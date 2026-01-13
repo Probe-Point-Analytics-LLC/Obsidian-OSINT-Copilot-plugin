@@ -1,4 +1,4 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment */
+
 /**
  * Custom Graph View using Cytoscape.js for interactive graph visualization.
  */
@@ -11,18 +11,61 @@ import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition }
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 
 // Cytoscape types (simplified for bundling)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const cytoscape: any;
-
-interface NodeSingular {
-    id(): string;
-    position(): { x: number; y: number };
-    renderedPosition(): { x: number; y: number };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    data(key?: string): any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    layout(options: any): any;
+interface CytoscapeEvent {
+    target: NodeSingular | CytoscapeCore;
+    originalEvent: MouseEvent;
 }
+
+interface Layout {
+    run(): void;
+}
+
+interface Collection {
+    length: number;
+    remove(): void;
+    id(): string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data(key?: string, value?: any): any;
+    position(pos?: { x: number; y: number }): { x: number; y: number };
+    renderedPosition(): { x: number; y: number };
+    addClass(cls: string): void;
+    removeClass(cls: string): void;
+    select(): void;
+    unselect(): void;
+    layout(options: Record<string, unknown>): Layout;
+    style(name: string, value?: unknown): unknown;
+    forEach(callback: (ele: NodeSingular, i: number, eles: Collection) => void): void;
+    filter(callback: (ele: NodeSingular, i: number, eles: Collection) => boolean): Collection;
+    map<T>(callback: (ele: NodeSingular, i: number, eles: Collection) => T): T[];
+}
+
+interface NodeSingular extends Collection {
+    // inherits
+}
+
+interface CytoscapeCore {
+    container(element: HTMLElement | null): void;
+    style(style: unknown[]): void;
+    layout(options: Record<string, unknown>): Layout;
+    minZoom(zoom: number): void;
+    maxZoom(zoom: number): void;
+    boxSelectionEnabled(enabled: boolean): void;
+    userPanningEnabled(enabled: boolean): void;
+    add(ele: unknown | unknown[]): void;
+    elements(): Collection;
+    nodes(): Collection;
+    edges(): Collection;
+    getElementById(id: string): Collection;
+    fit(): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    on(events: string, selector: string, handler: (evt: any) => void): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    on(events: string, handler: (evt: any) => void): void;
+    destroy(): void;
+    animate(options: Record<string, unknown>, duration?: { duration: number }): void;
+}
+
+declare const cytoscape: (options?: Record<string, unknown>) => CytoscapeCore;
 
 export const GRAPH_VIEW_TYPE = 'graph_copilot-graph-view';
 
@@ -31,11 +74,11 @@ const NODE_POSITIONS_FILE = '.osint-copilot/graph-positions.json';
 
 export class GraphView extends ItemView {
     private entityManager: EntityManager;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private cy: any = null;
+    private cy: CytoscapeCore | null = null;
     private container: HTMLElement | null = null;
     private onEntityClick: ((entityId: string) => void) | null = null;
     private onShowOnMap: ((entityId: string) => void) | null = null;
+    private _keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
     // Connection mode state
     private connectionMode: boolean = false;
@@ -134,9 +177,10 @@ export class GraphView extends ItemView {
             },
             onNodePositionChange: (positions: Map<string, NodePosition>) => {
                 // Update node positions in graph
-                if (this.cy) {
+                const cy = this.cy;
+                if (cy) {
                     positions.forEach((pos, nodeId) => {
-                        const node = this.cy.getElementById(nodeId);
+                        const node = cy.getElementById(nodeId);
                         if (node.length > 0) {
                             node.position(pos);
                         }
@@ -168,11 +212,13 @@ export class GraphView extends ItemView {
 
         // Create graph container
         this.container = container.createDiv({ cls: 'graph_copilot-graph-canvas' });
-        this.container.style.width = '100%';
-        this.container.style.height = '100%';
-        this.container.style.position = 'absolute';
-        this.container.style.top = '0';
-        this.container.style.left = '0';
+        this.container.setCssProps({
+            width: '100%',
+            height: '100%',
+            position: 'absolute',
+            top: '0',
+            left: '0'
+        });
 
         // Create toolbar
         const toolbar = container.createDiv({ cls: 'graph_copilot-graph-toolbar' });
@@ -180,9 +226,9 @@ export class GraphView extends ItemView {
 
         try {
             // Load Cytoscape and initialize
-            console.log('[GraphView] Loading Cytoscape.js...');
+            console.debug('[GraphView] Loading Cytoscape.js...');
             await this.loadCytoscape();
-            console.log('[GraphView] Cytoscape.js loaded successfully');
+            console.debug('[GraphView] Cytoscape.js loaded successfully');
 
             if (typeof cytoscape === 'undefined') {
                 throw new Error('Cytoscape failed to load - typeof cytoscape is undefined');
@@ -190,7 +236,7 @@ export class GraphView extends ItemView {
 
 
             this.initializeGraph();
-            console.log('[GraphView] Graph initialized');
+            console.debug('[GraphView] Graph initialized');
 
             // Load saved node positions from persistent storage
             await this.loadSavedPositions();
@@ -198,29 +244,29 @@ export class GraphView extends ItemView {
             // Load entities from disk and refresh the graph
             // This ensures persistence across Obsidian restarts
             await this.refreshWithSavedPositions();
-            console.log('[GraphView] Graph refreshed with entities');
+            console.debug('[GraphView] Graph refreshed with entities');
         } catch (error) {
             console.error('[GraphView] Failed to initialize graph:', error);
 
             // Show error message to user
             const errorDiv = container.createDiv({ cls: 'graph_copilot-error' });
-            errorDiv.style.cssText = `
-                padding: 20px;
-                text-align: center;
-                color: var(--text-error);
-            `;
+            errorDiv.setCssProps({
+                padding: '20px',
+                'text-align': 'center',
+                color: 'var(--text-error)'
+            });
 
             const errorTitle = errorDiv.createEl('h3', { text: 'Failed to load graph' });
-            errorTitle.style.cssText = 'color: var(--text-error); margin-bottom: 10px;';
+            errorTitle.setCssProps({ color: 'var(--text-error)', 'margin-bottom': '10px' });
 
             const errorMsg = errorDiv.createEl('p', {
                 text: error instanceof Error ? error.message : String(error)
             });
-            errorMsg.style.cssText = 'margin-bottom: 15px;';
+            errorMsg.setCssProps({ 'margin-bottom': '15px' });
 
             // Common issues and solutions
             const solutions = errorDiv.createDiv();
-            solutions.style.cssText = 'text-align: left; max-width: 600px; margin: 0 auto;';
+            solutions.setCssProps({ 'text-align': 'left', 'max-width': '600px', margin: '0 auto' });
             solutions.innerHTML = `
                 <p><strong>Possible causes:</strong></p>
                 <ul>
@@ -249,8 +295,8 @@ export class GraphView extends ItemView {
 
     async onClose(): Promise<void> {
         // Clean up keyboard handler
-        if ((this as unknown as { _keyHandler: (e: KeyboardEvent) => void })._keyHandler) {
-            document.removeEventListener('keydown', (this as unknown as { _keyHandler: (e: KeyboardEvent) => void })._keyHandler);
+        if (this._keyHandler) {
+            document.removeEventListener('keydown', this._keyHandler);
         }
 
         if (this.cy) {
@@ -265,7 +311,7 @@ export class GraphView extends ItemView {
     private async loadCytoscape(): Promise<void> {
         // Check if already loaded
         if (typeof cytoscape !== 'undefined') {
-            console.log('[GraphView] Cytoscape.js already loaded');
+            console.debug('[GraphView] Cytoscape.js already loaded');
             return;
         }
 
@@ -284,7 +330,7 @@ export class GraphView extends ItemView {
                 if (typeof cytoscape === 'undefined') {
                     reject(new Error('Cytoscape script loaded but cytoscape object is undefined. Possible CSP or script execution issue.'));
                 } else {
-                    console.log('[GraphView] Cytoscape.js loaded from CDN');
+                    console.debug('[GraphView] Cytoscape.js loaded from CDN');
                     resolve();
                 }
             };
@@ -303,19 +349,19 @@ export class GraphView extends ItemView {
      * Create the toolbar with controls.
      */
     private createToolbar(toolbar: HTMLElement): void {
-        toolbar.style.cssText = `
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 100;
-            display: flex;
-            gap: 5px;
-            background: var(--background-secondary);
-            padding: 5px;
-            border-radius: 5px;
-            flex-wrap: wrap;
-            align-items: center;
-        `;
+        toolbar.setCssProps({
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            'z-index': '100',
+            display: 'flex',
+            gap: '5px',
+            background: 'var(--background-secondary)',
+            padding: '5px',
+            'border-radius': '5px',
+            'flex-wrap': 'wrap',
+            'align-items': 'center'
+        });
 
         // Add Entity button
         const addBtn = toolbar.createEl('button', { text: '+ add entity' });
@@ -339,23 +385,23 @@ export class GraphView extends ItemView {
         // Clear Selection button (hidden by default)
         this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ clear selection' });
         this.clearSelectionBtn.addClass('graph_copilot-clear-selection-btn');
-        this.clearSelectionBtn.style.display = 'none';
+        this.clearSelectionBtn.setCssProps({ display: 'none' });
         this.clearSelectionBtn.onclick = () => this.clearSelection();
 
         // Delete Selected button (hidden by default)
         this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 delete selected' });
         this.deleteSelectedBtn.addClass('graph_copilot-delete-selected-btn');
-        this.deleteSelectedBtn.style.display = 'none';
+        this.deleteSelectedBtn.setCssProps({ display: 'none' });
         this.deleteSelectedBtn.onclick = () => this.showDeleteConfirmation();
 
         // Selection count indicator
         this.selectionCountEl = toolbar.createDiv({ cls: 'graph_copilot-selection-count' });
-        this.selectionCountEl.style.cssText = `
-            padding: 4px 8px;
-            font-size: 12px;
-            color: var(--text-muted);
-            display: none;
-        `;
+        this.selectionCountEl.setCssProps({
+            padding: '4px 8px',
+            'font-size': '12px',
+            color: 'var(--text-muted)',
+            display: 'none'
+        });
 
         // Separator
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
@@ -412,18 +458,18 @@ export class GraphView extends ItemView {
                     new Notice('Graph refreshed successfully');
 
                     // Brief visual feedback - flash the button
-                    refreshBtn.style.backgroundColor = 'var(--interactive-success)';
+                    refreshBtn.setCssProps({ 'background-color': 'var(--interactive-success)' });
                     setTimeout(() => {
-                        refreshBtn.style.backgroundColor = '';
+                        refreshBtn.setCssProps({ 'background-color': '' });
                     }, 300);
                 } catch (error) {
                     console.error('[GraphView] Manual refresh failed:', error);
                     new Notice('Failed to refresh graph. Check console for details.');
 
                     // Flash error color
-                    refreshBtn.style.backgroundColor = 'var(--interactive-error)';
+                    refreshBtn.setCssProps({ 'background-color': 'var(--interactive-error)' });
                     setTimeout(() => {
-                        refreshBtn.style.backgroundColor = '';
+                        refreshBtn.setCssProps({ 'background-color': '' });
                     }, 300);
                 } finally {
                     refreshBtn.disabled = false;
@@ -438,7 +484,7 @@ export class GraphView extends ItemView {
 
         // Status indicator for connection mode
         this.statusIndicator = toolbar.createDiv({ cls: 'graph_copilot-connection-status' });
-        this.statusIndicator.style.display = 'none';
+        this.statusIndicator.setCssProps({ display: 'none' });
     }
 
     /**
@@ -466,7 +512,7 @@ export class GraphView extends ItemView {
         }
 
         if (this.statusIndicator) {
-            this.statusIndicator.style.display = 'block';
+            this.statusIndicator.setCssProps({ display: 'block' });
             this.statusIndicator.textContent = 'Click source node...';
             this.statusIndicator.addClass('graph_copilot-connection-status-active');
         }
@@ -492,7 +538,7 @@ export class GraphView extends ItemView {
         }
 
         if (this.statusIndicator) {
-            this.statusIndicator.style.display = 'none';
+            this.statusIndicator.setCssProps({ display: 'none' });
             this.statusIndicator.removeClass('graph_copilot-connection-status-active');
         }
 
@@ -693,9 +739,8 @@ export class GraphView extends ItemView {
         });
 
         // Event handlers - Single click selects, double-click opens
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('tap', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('tap', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             const entityId = node.id();
             const nodeLabel = node.data('fullLabel') || node.data('label');
             const originalEvent = evt.originalEvent;
@@ -720,9 +765,8 @@ export class GraphView extends ItemView {
         });
 
         // Double-click on node opens the entity note
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('dbltap', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('dbltap', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             const entityId = node.id();
 
             // Don't open if in connection mode
@@ -736,9 +780,8 @@ export class GraphView extends ItemView {
         });
 
         // Click on edge for selection
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('tap', 'edge', (evt: any) => {
-            const edge = evt.target;
+        this.cy.on('tap', 'edge', (evt: CytoscapeEvent) => {
+            const edge = evt.target as NodeSingular;
             const connectionId = edge.id();
             const originalEvent = evt.originalEvent;
 
@@ -756,9 +799,8 @@ export class GraphView extends ItemView {
         });
 
         // Right-click context menu for nodes
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('cxttap', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('cxttap', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             const entityId = node.id();
             const entityType = node.data('type');
             const nodeLabel = node.data('fullLabel') || node.data('label');
@@ -768,9 +810,8 @@ export class GraphView extends ItemView {
         });
 
         // Right-click context menu for edges (relationships)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('cxttap', 'edge', (evt: any) => {
-            const edge = evt.target;
+        this.cy.on('cxttap', 'edge', (evt: CytoscapeEvent) => {
+            const edge = evt.target as NodeSingular;
             const connectionId = edge.id();
             const relationship = edge.data('label');
             const sourceId = edge.data('source');
@@ -781,9 +822,8 @@ export class GraphView extends ItemView {
         });
 
         // Track node position changes for undo/redo and persist to storage
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('dragfree', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('dragfree', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             const nodeId = node.id();
             const newPos = node.position();
             const oldPos = this.nodePositionsCache.get(nodeId);
@@ -803,10 +843,8 @@ export class GraphView extends ItemView {
             void this.savePositionsDebounced();
         });
 
-        // Tooltip on hover - show map icon for Location entities
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('mouseover', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('mouseover', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             const entityType = node.data('type');
             node.style('border-width', 4);
 
@@ -816,16 +854,14 @@ export class GraphView extends ItemView {
             }
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('mouseout', 'node', (evt: any) => {
-            const node = evt.target;
+        this.cy.on('mouseout', 'node', (evt: CytoscapeEvent) => {
+            const node = evt.target as NodeSingular;
             node.style('border-width', 2);
             this.hideLocationTooltip();
         });
 
         // Click on background to cancel connection mode or clear selection
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('tap', (evt: any) => {
+        this.cy.on('tap', (evt: CytoscapeEvent) => {
             if (evt.target === this.cy) {
                 if (this.connectionMode) {
                     // Clicked on background, cancel connection mode
@@ -840,11 +876,10 @@ export class GraphView extends ItemView {
 
         // Box selection event - fires when elements are selected via box selection
         // The 'boxselect' event fires on each element that gets selected
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('boxselect', 'node', (evt: any) => {
+        this.cy.on('boxselect', 'node', (evt: CytoscapeEvent) => {
             if (!this.boxSelectMode) return;
 
-            const node = evt.target;
+            const node = evt.target as NodeSingular;
             const nodeId = node.id();
 
             if (!this.selectedNodes.has(nodeId)) {
@@ -853,11 +888,10 @@ export class GraphView extends ItemView {
             }
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('boxselect', 'edge', (evt: any) => {
+        this.cy.on('boxselect', 'edge', (evt: CytoscapeEvent) => {
             if (!this.boxSelectMode) return;
 
-            const edge = evt.target;
+            const edge = evt.target as NodeSingular;
             const edgeId = edge.id();
 
             if (!this.selectedEdges.has(edgeId)) {
@@ -866,13 +900,11 @@ export class GraphView extends ItemView {
             }
         });
 
-        // When box selection ends, update the UI and clear Cytoscape's native selection
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.on('boxend', (evt: any) => {
+        this.cy.on('boxend', () => {
             if (!this.boxSelectMode) return;
 
             // Clear Cytoscape's native selection (we use our own visual styling)
-            this.cy.elements().unselect();
+            this.cy?.elements().unselect();
 
             // Update the UI to show the Delete Selected button
             // Use setTimeout to ensure all 'boxselect' events have been processed first
@@ -955,8 +987,7 @@ export class GraphView extends ItemView {
         document.addEventListener('keydown', keyHandler);
 
         // Store reference for cleanup
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (this as any)._keyHandler = keyHandler;
+        this._keyHandler = keyHandler;
     }
 
     /**
@@ -1006,15 +1037,13 @@ export class GraphView extends ItemView {
         if (!this.cy) return;
 
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.nodes().forEach((node: any) => {
+        this.cy.nodes().forEach((node: NodeSingular) => {
             const entityId = node.id();
             this.selectedNodes.add(entityId);
             node.addClass('multi-selected');
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.cy.edges().forEach((edge: any) => {
+        this.cy.edges().forEach((edge: NodeSingular) => {
             const connectionId = edge.id();
             this.selectedEdges.add(connectionId);
             edge.addClass('multi-selected');
@@ -1029,10 +1058,8 @@ export class GraphView extends ItemView {
      * Clear all selections (nodes and edges).
      */
     private clearSelection(): void {
-        if (!this.cy) return;
-
-        this.cy.nodes().removeClass('multi-selected');
-        this.cy.edges().removeClass('multi-selected');
+        this.cy?.nodes().removeClass('multi-selected');
+        this.cy?.edges().removeClass('multi-selected');
         this.selectedNodes.clear();
         this.selectedEdges.clear();
         this.updateSelectionUI();
@@ -1052,24 +1079,25 @@ export class GraphView extends ItemView {
                 if (nodeCount > 0) parts.push(`${nodeCount} ${nodeCount === 1 ? 'entity' : 'entities'}`);
                 if (edgeCount > 0) parts.push(`${edgeCount} ${edgeCount === 1 ? 'relationship' : 'relationships'}`);
                 this.selectionCountEl.textContent = parts.join(', ');
-                this.selectionCountEl.style.display = 'block';
+                this.selectionCountEl.setCssProps({ display: 'block' });
             } else {
-                this.selectionCountEl.style.display = 'none';
+                this.selectionCountEl.setCssProps({ display: 'none' });
             }
         }
 
         if (this.deleteSelectedBtn) {
             if (totalCount > 0) {
                 this.deleteSelectedBtn.textContent = `🗑 Delete Selected (${totalCount})`;
-                this.deleteSelectedBtn.style.display = 'block';
+                this.deleteSelectedBtn.setCssProps({ display: 'block' });
+                this.deleteSelectedBtn.ariaLabel = `Delete ${totalCount} selected items`;
             } else {
                 this.deleteSelectedBtn.textContent = '🗑 delete selected';
-                this.deleteSelectedBtn.style.display = 'none';
+                this.deleteSelectedBtn.setCssProps({ display: 'none' });
             }
         }
 
         if (this.clearSelectionBtn) {
-            this.clearSelectionBtn.style.display = totalCount > 0 ? 'block' : 'none';
+            this.clearSelectionBtn.setCssProps({ display: totalCount > 0 ? 'block' : 'none' });
         }
     }
 
@@ -1108,30 +1136,30 @@ export class GraphView extends ItemView {
         // Create confirmation modal
         const modal = document.createElement('div');
         modal.className = 'graph_copilot-delete-modal';
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-        `;
+        modal.setCssProps({
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            right: '0',
+            bottom: '0',
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            'z-index': '10000'
+        });
 
         const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 8px;
-            padding: 20px;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-        `;
+        dialog.setCssProps({
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '8px',
+            padding: '20px',
+            'max-width': '500px',
+            'max-height': '80vh',
+            'overflow-y': 'auto',
+            'box-shadow': '0 4px 20px rgba(0, 0, 0, 0.3)'
+        });
 
         // Build title
         const titleParts: string[] = [];
@@ -1140,7 +1168,7 @@ export class GraphView extends ItemView {
 
         const title = document.createElement('h3');
         title.textContent = `Delete ${titleParts.join(' and ')}?`;
-        title.style.cssText = 'margin: 0 0 15px 0; color: var(--text-normal);';
+        title.setCssProps({ margin: '0 0 15px 0', color: 'var(--text-normal)' });
         dialog.appendChild(title);
 
         const warning = document.createElement('p');
@@ -1149,17 +1177,17 @@ export class GraphView extends ItemView {
         } else {
             warning.textContent = '⚠️ the following items will be deleted:';
         }
-        warning.style.cssText = 'margin: 0 0 15px 0; color: var(--text-warning);';
+        warning.setCssProps({ margin: '0 0 15px 0', color: 'var(--text-warning)' });
         dialog.appendChild(warning);
 
         const itemList = document.createElement('ul');
-        itemList.style.cssText = `
-            margin: 0 0 20px 0;
-            padding-left: 20px;
-            max-height: 200px;
-            overflow-y: auto;
-            color: var(--text-muted);
-        `;
+        itemList.setCssProps({
+            margin: '0 0 20px 0',
+            'padding-left': '20px',
+            'max-height': '200px',
+            'overflow-y': 'auto',
+            color: 'var(--text-muted)'
+        });
 
         // Add entities first
         entityNames.forEach(name => {
@@ -1172,31 +1200,31 @@ export class GraphView extends ItemView {
         relationshipNames.forEach(name => {
             const li = document.createElement('li');
             li.textContent = name;
-            li.style.fontSize = '0.9em';
+            li.setCssProps({ 'font-size': '0.9em' });
             itemList.appendChild(li);
         });
 
         dialog.appendChild(itemList);
 
         const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+        buttonContainer.setCssProps({ display: 'flex', gap: '10px', 'justify-content': 'flex-end' });
 
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = 'Cancel';
-        cancelBtn.style.cssText = 'padding: 8px 16px;';
+        cancelBtn.setCssProps({ padding: '8px 16px' });
         cancelBtn.onclick = () => modal.remove();
         buttonContainer.appendChild(cancelBtn);
 
         const deleteBtn = document.createElement('button');
         deleteBtn.textContent = `Delete ${titleParts.join(' and ')}`;
-        deleteBtn.style.cssText = `
-            padding: 8px 16px;
-            background: var(--text-error);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
+        deleteBtn.setCssProps({
+            padding: '8px 16px',
+            background: 'var(--text-error)',
+            color: 'white',
+            border: 'none',
+            'border-radius': '4px',
+            cursor: 'pointer'
+        });
         deleteBtn.onclick = async () => {
             modal.remove();
             await this.deleteSelectedItems();
@@ -1301,58 +1329,60 @@ export class GraphView extends ItemView {
         // Create confirmation modal
         const modal = document.createElement('div');
         modal.className = 'graph_copilot-delete-modal';
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-        `;
+        modal.setCssProps({
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            right: '0',
+            bottom: '0',
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            'z-index': '10000'
+        });
 
         const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 8px;
-            padding: 20px;
-            max-width: 400px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-        `;
+        dialog.setCssProps({
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '8px',
+            padding: '20px',
+            'max-width': '400px',
+            'box-shadow': '0 4px 20px rgba(0, 0, 0, 0.3)'
+        });
 
         const title = document.createElement('h3');
         title.textContent = 'Delete entity?';
-        title.style.cssText = 'margin: 0 0 15px 0; color: var(--text-normal);';
+        title.setCssProps({ margin: '0 0 15px 0', color: 'var(--text-normal)' });
         dialog.appendChild(title);
 
         const warning = document.createElement('p');
-        warning.innerHTML = `⚠️ This action cannot be undone. The entity <strong>"${label}"</strong> and its markdown file will be permanently deleted.`;
-        warning.style.cssText = 'margin: 0 0 20px 0; color: var(--text-warning);';
+        warning.createSpan({ text: '⚠️ This action cannot be undone. The entity ' });
+        warning.createEl('strong', { text: `"${label}"` });
+        warning.createSpan({ text: ' and its markdown file will be permanently deleted.' });
+        warning.setCssProps({ margin: '0 0 20px 0', color: 'var(--text-warning)' });
         dialog.appendChild(warning);
 
         const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+        buttonContainer.setCssProps({ display: 'flex', gap: '10px', 'justify-content': 'flex-end' });
 
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = 'Cancel';
-        cancelBtn.style.cssText = 'padding: 8px 16px;';
+        cancelBtn.setCssProps({ padding: '8px 16px' });
         cancelBtn.onclick = () => modal.remove();
         buttonContainer.appendChild(cancelBtn);
 
         const deleteBtn = document.createElement('button');
         deleteBtn.textContent = 'Delete';
-        deleteBtn.style.cssText = `
-            padding: 8px 16px;
-            background: var(--text-error);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
+        deleteBtn.setCssProps({
+            padding: '8px 16px',
+            background: 'var(--text-error)',
+            color: 'white',
+            border: 'none',
+            'border-radius': '4px',
+            cursor: 'pointer'
+        });
         deleteBtn.onclick = async () => {
             modal.remove();
             try {
@@ -1404,18 +1434,18 @@ export class GraphView extends ItemView {
 
         const menu = document.createElement('div');
         menu.className = 'graph_copilot-context-menu';
-        menu.style.cssText = `
-            position: fixed;
-            left: ${event.clientX}px;
-            top: ${event.clientY}px;
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 6px;
-            padding: 4px 0;
-            min-width: 150px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 1000;
-        `;
+        menu.setCssProps({
+            position: 'fixed',
+            left: `${event.clientX}px`,
+            top: `${event.clientY}px`,
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '6px',
+            padding: '4px 0',
+            'min-width': '150px',
+            'box-shadow': '0 2px 10px rgba(0,0,0,0.2)',
+            'z-index': '1000'
+        });
 
         // Open Note option
         const openNoteItem = this.createMenuItem('📄 Open Note', () => {
@@ -1510,7 +1540,7 @@ export class GraphView extends ItemView {
 
         // Separator
         const separator = document.createElement('div');
-        separator.style.cssText = 'height: 1px; background: var(--background-modifier-border); margin: 4px 0;';
+        separator.setCssProps({ height: '1px', background: 'var(--background-modifier-border)', margin: '4px 0' });
         menu.appendChild(separator);
 
         // Connect to... option
@@ -1523,7 +1553,7 @@ export class GraphView extends ItemView {
 
         // Separator before delete options
         const separator2 = document.createElement('div');
-        separator2.style.cssText = 'height: 1px; background: var(--background-modifier-border); margin: 4px 0;';
+        separator2.setCssProps({ height: '1px', background: 'var(--background-modifier-border)', margin: '4px 0' });
         menu.appendChild(separator2);
 
         // Delete selected (if there are multiple selections including this entity)
@@ -1533,7 +1563,7 @@ export class GraphView extends ItemView {
                 menu.remove();
                 this.showDeleteConfirmation();
             });
-            deleteSelectedItem.style.color = 'var(--text-error)';
+            deleteSelectedItem.setCssProps({ color: 'var(--text-error)' });
             menu.appendChild(deleteSelectedItem);
         }
 
@@ -1542,7 +1572,7 @@ export class GraphView extends ItemView {
             menu.remove();
             this.showSingleDeleteConfirmation(entityId, label);
         });
-        deleteItem.style.color = 'var(--text-error)';
+        deleteItem.setCssProps({ color: 'var(--text-error)' });
         menu.appendChild(deleteItem);
 
         document.body.appendChild(menu);
@@ -1563,13 +1593,13 @@ export class GraphView extends ItemView {
     private createMenuItem(text: string, onClick: () => void): HTMLElement {
         const item = document.createElement('div');
         item.textContent = text;
-        item.style.cssText = `
-            padding: 6px 12px;
-            cursor: pointer;
-            font-size: 13px;
-        `;
-        item.onmouseenter = () => item.style.background = 'var(--background-modifier-hover)';
-        item.onmouseleave = () => item.style.background = 'transparent';
+        item.setCssProps({
+            padding: '6px 12px',
+            cursor: 'pointer',
+            'font-size': '13px'
+        });
+        item.onmouseenter = () => item.setCssProps({ background: 'var(--background-modifier-hover)' });
+        item.onmouseleave = () => item.setCssProps({ background: 'transparent' });
         item.onclick = onClick;
         return item;
     }
@@ -1589,29 +1619,33 @@ export class GraphView extends ItemView {
 
         const menu = document.createElement('div');
         menu.className = 'graph_copilot-context-menu';
-        menu.style.cssText = `
-            position: fixed;
-            left: ${event.clientX}px;
-            top: ${event.clientY}px;
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 6px;
-            padding: 4px 0;
-            min-width: 180px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 1000;
-        `;
+        menu.setCssProps({
+            position: 'fixed',
+            left: `${event.clientX}px`,
+            top: `${event.clientY}px`,
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '6px',
+            padding: '4px 0',
+            'min-width': '180px',
+            'box-shadow': '0 2px 10px rgba(0,0,0,0.2)',
+            'z-index': '1000'
+        });
 
         // Header showing relationship info
         const header = document.createElement('div');
-        header.style.cssText = `
-            padding: 6px 12px;
-            font-size: 11px;
-            color: var(--text-muted);
-            border-bottom: 1px solid var(--background-modifier-border);
-            margin-bottom: 4px;
-        `;
-        header.innerHTML = `<strong>${sourceLabel}</strong> → <strong>${targetLabel}</strong><br><em>${relationship}</em>`;
+        header.setCssProps({
+            padding: '6px 12px',
+            'font-size': '11px',
+            color: 'var(--text-muted)',
+            'border-bottom': '1px solid var(--background-modifier-border)',
+            'margin-bottom': '4px'
+        });
+        header.createEl('strong', { text: sourceLabel });
+        header.createSpan({ text: ' → ' });
+        header.createEl('strong', { text: targetLabel });
+        header.createEl('br');
+        header.createEl('em', { text: relationship });
         menu.appendChild(header);
 
         // Edit Connection option
@@ -1653,7 +1687,7 @@ export class GraphView extends ItemView {
                 menu.remove();
                 this.showDeleteConfirmation();
             });
-            deleteSelectedItem.style.color = 'var(--text-error)';
+            deleteSelectedItem.setCssProps({ color: 'var(--text-error)' });
             menu.appendChild(deleteSelectedItem);
         }
 
@@ -1662,7 +1696,7 @@ export class GraphView extends ItemView {
             menu.remove();
             await this.deleteRelationship(connectionId, relationship, sourceLabel, targetLabel);
         });
-        deleteItem.style.color = 'var(--text-error)';
+        deleteItem.setCssProps({ color: 'var(--text-error)' });
         menu.appendChild(deleteItem);
 
         document.body.appendChild(menu);
@@ -1725,35 +1759,40 @@ export class GraphView extends ItemView {
         const lat = parseFloat(entity.properties.latitude as string);
         const lng = parseFloat(entity.properties.longitude as string);
 
-        tooltip.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 4px;">📍 ${entity.label}</div>
-            <div style="font-size: 11px; color: var(--text-muted);">
-                ${entity.properties.address || ''}<br>
-                Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}
-            </div>
-            <div style="font-size: 10px; color: var(--text-accent); margin-top: 4px;">
-                Right-click → Show on Map
-            </div>
-        `;
+        const titleDiv = tooltip.createDiv();
+        titleDiv.setCssProps({ 'font-weight': 'bold', 'margin-bottom': '4px' });
+        titleDiv.setText(`📍 ${entity.label}`);
 
-        tooltip.style.cssText = `
-            position: fixed;
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 6px;
-            padding: 8px 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            z-index: 1000;
-            max-width: 250px;
-            pointer-events: none;
-        `;
+        const infoDiv = tooltip.createDiv();
+        infoDiv.setCssProps({ 'font-size': '11px', color: 'var(--text-muted)' });
+        infoDiv.setText((entity.properties.address as string) || '');
+        infoDiv.createEl('br');
+        infoDiv.createSpan({ text: `Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}` });
+
+        const hintDiv = tooltip.createDiv();
+        hintDiv.setCssProps({ 'font-size': '10px', color: 'var(--text-accent)', 'margin-top': '4px' });
+        hintDiv.setText('Right-click → show on map');
+
+        tooltip.setCssProps({
+            position: 'fixed',
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '6px',
+            padding: '8px 12px',
+            'box-shadow': '0 2px 8px rgba(0,0,0,0.15)',
+            'z-index': '1000',
+            'max-width': '250px',
+            'pointer-events': 'none'
+        });
 
         // Position tooltip near the node
         const renderedPos = node.renderedPosition();
         const containerRect = this.container?.getBoundingClientRect();
         if (containerRect) {
-            tooltip.style.left = `${containerRect.left + renderedPos.x + 30}px`;
-            tooltip.style.top = `${containerRect.top + renderedPos.y - 20}px`;
+            tooltip.setCssProps({
+                left: `${containerRect.left + renderedPos.x + 30}px`,
+                top: `${containerRect.top + renderedPos.y - 20}px`
+            });
         }
 
         document.body.appendChild(tooltip);
@@ -1770,8 +1809,7 @@ export class GraphView extends ItemView {
     /**
      * Get Cytoscape style configuration.
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private getGraphStyle(): any[] {
+    private getGraphStyle(): unknown[] {
         return [
             {
                 selector: 'node',
@@ -1956,7 +1994,7 @@ export class GraphView extends ItemView {
     async refreshWithSavedPositions(): Promise<void> {
         if (!this.cy) return;
 
-        console.log(`[GraphView] refreshWithSavedPositions called, cache has ${this.nodePositionsCache.size} positions`);
+        console.debug(`[GraphView] refreshWithSavedPositions called, cache has ${this.nodePositionsCache.size} positions`);
 
         // Reload entities from disk to ensure we have the latest data
         try {
@@ -1966,7 +2004,7 @@ export class GraphView extends ItemView {
         }
 
         const { entities, connections } = this.entityManager.getGraphData();
-        console.log(`[GraphView] Found ${entities.length} entities and ${connections.length} connections`);
+        console.debug(`[GraphView] Found ${entities.length} entities and ${connections.length} connections`);
 
         // Clear existing elements
         this.cy.elements().remove();
@@ -2011,12 +2049,12 @@ export class GraphView extends ItemView {
             };
         });
 
-        console.log(`[GraphView] Nodes with saved positions: ${nodesWithSavedPositions.length}, nodes needing layout: ${nodesNeedingLayout.length}`);
+        console.debug(`[GraphView] Nodes with saved positions: ${nodesWithSavedPositions.length}, nodes needing layout: ${nodesNeedingLayout.length}`);
         if (nodesNeedingLayout.length > 0 && nodesNeedingLayout.length <= 5) {
-            console.log(`[GraphView] Nodes needing layout:`, nodesNeedingLayout);
+            console.debug(`[GraphView] Nodes needing layout:`, nodesNeedingLayout);
         }
         if (nodesWithSavedPositions.length > 0 && nodesWithSavedPositions.length <= 5) {
-            console.log(`[GraphView] Nodes with saved positions:`, nodesWithSavedPositions);
+            console.debug(`[GraphView] Nodes with saved positions:`, nodesWithSavedPositions);
         }
 
         // Build a set of valid entity IDs for edge validation
@@ -2078,11 +2116,13 @@ export class GraphView extends ItemView {
             this.runLayout();
             // Save positions after layout
             setTimeout(() => {
-                this.cy.nodes().forEach((node: NodeSingular) => {
-                    const pos = node.position();
-                    this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
-                });
-                this.savePositionsDebounced();
+                if (this.cy) {
+                    this.cy.nodes().forEach((node: NodeSingular) => {
+                        const pos = node.position();
+                        this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
+                    });
+                    this.savePositionsDebounced();
+                }
             }, 600);
         }
 
@@ -2104,12 +2144,14 @@ export class GraphView extends ItemView {
 
         // Save new positions after layout completes
         setTimeout(() => {
-            this.cy.nodes().forEach((node: NodeSingular) => {
-                const pos = node.position();
-                this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
-            });
-            this.savePositions();
-            new Notice('Graph rearranged');
+            if (this.cy) {
+                this.cy.nodes().forEach((node: NodeSingular) => {
+                    const pos = node.position();
+                    this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
+                });
+                this.savePositions();
+                new Notice('Graph rearranged');
+            }
         }, 600);
     }
 
@@ -2120,32 +2162,32 @@ export class GraphView extends ItemView {
         return new Promise((resolve) => {
             const modal = document.createElement('div');
             modal.className = 'modal-container';
-            modal.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 1000;
-            `;
+            modal.setCssProps({
+                position: 'fixed',
+                top: '0',
+                left: '0',
+                width: '100%',
+                height: '100%',
+                background: 'rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                'align-items': 'center',
+                'justify-content': 'center',
+                'z-index': '1000'
+            });
 
             const dialog = document.createElement('div');
             dialog.className = 'modal';
-            dialog.style.cssText = `
-                background: var(--background-primary);
-                border-radius: 8px;
-                padding: 20px;
-                max-width: 400px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            `;
+            dialog.setCssProps({
+                background: 'var(--background-primary)',
+                'border-radius': '8px',
+                padding: '20px',
+                'max-width': '400px',
+                'box-shadow': '0 4px 20px rgba(0, 0, 0, 0.3)'
+            });
 
             const title = document.createElement('h3');
             title.textContent = 'Rearrange graph?';
-            title.style.marginTop = '0';
+            title.setCssProps({ 'margin-top': '0' });
             dialog.appendChild(title);
 
             const message = document.createElement('p');
@@ -2153,7 +2195,7 @@ export class GraphView extends ItemView {
             dialog.appendChild(message);
 
             const buttonContainer = document.createElement('div');
-            buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;';
+            buttonContainer.setCssProps({ display: 'flex', 'justify-content': 'flex-end', gap: '10px', 'margin-top': '20px' });
 
             const cancelBtn = document.createElement('button');
             cancelBtn.textContent = 'Cancel';
@@ -2166,7 +2208,7 @@ export class GraphView extends ItemView {
             const confirmBtn = document.createElement('button');
             confirmBtn.textContent = 'Rearrange';
             confirmBtn.className = 'mod-cta';
-            confirmBtn.style.cssText = 'background: var(--interactive-accent); color: var(--text-on-accent);';
+            confirmBtn.setCssProps({ background: 'var(--interactive-accent)', color: 'var(--text-on-accent)' });
             confirmBtn.onclick = () => {
                 modal.remove();
                 resolve(true);
@@ -2214,7 +2256,7 @@ export class GraphView extends ItemView {
      */
     private async loadSavedPositions(): Promise<void> {
         try {
-            console.log(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE}`);
+            console.debug(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE} `);
             const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
             if (file instanceof TFile) {
                 const content = await this.app.vault.read(file);
@@ -2223,14 +2265,14 @@ export class GraphView extends ItemView {
                 for (const [nodeId, pos] of Object.entries(positions)) {
                     this.nodePositionsCache.set(nodeId, pos);
                 }
-                console.log(`[GraphView] Loaded ${this.nodePositionsCache.size} saved node positions:`,
+                console.debug(`[GraphView] Loaded ${this.nodePositionsCache.size} saved node positions: `,
                     Array.from(this.nodePositionsCache.entries()).slice(0, 3));
             } else {
-                console.log('[GraphView] Positions file not found');
+                console.debug('[GraphView] Positions file not found');
             }
         } catch (error) {
             // File doesn't exist or is invalid - start fresh
-            console.log('[GraphView] No saved positions found, starting fresh:', error);
+            console.debug('[GraphView] No saved positions found, starting fresh:', error);
         }
     }
 
@@ -2245,7 +2287,7 @@ export class GraphView extends ItemView {
             }
 
             const content = JSON.stringify(positions, null, 2);
-            console.log(`[GraphView] Saving ${Object.keys(positions).length} positions to ${NODE_POSITIONS_FILE}`);
+            console.debug(`[GraphView] Saving ${Object.keys(positions).length} positions to ${NODE_POSITIONS_FILE} `);
 
             // Ensure directory exists first
             const dir = NODE_POSITIONS_FILE.substring(0, NODE_POSITIONS_FILE.lastIndexOf('/'));
@@ -2263,12 +2305,12 @@ export class GraphView extends ItemView {
 
             if (file instanceof TFile) {
                 await this.app.vault.modify(file, content);
-                console.log('[GraphView] Positions saved successfully (modified existing file)');
+                console.debug('[GraphView] Positions saved successfully (modified existing file)');
             } else {
                 // File doesn't exist, try to create it
                 try {
                     await this.app.vault.create(NODE_POSITIONS_FILE, content);
-                    console.log('[GraphView] Positions saved successfully (created new file)');
+                    console.debug('[GraphView] Positions saved successfully (created new file)');
                 } catch (createError: unknown) {
                     // If file was created between our check and create (race condition),
                     // try to modify it instead
@@ -2277,7 +2319,7 @@ export class GraphView extends ItemView {
                         const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
                         if (existingFile instanceof TFile) {
                             await this.app.vault.modify(existingFile, content);
-                            console.log('[GraphView] Positions saved successfully (modified after race condition)');
+                            console.debug('[GraphView] Positions saved successfully (modified after race condition)');
                         }
                     } else {
                         throw createError;
@@ -2298,7 +2340,7 @@ export class GraphView extends ItemView {
      * Simple debounce helper.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private debounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
+    private debounce<T extends (...args: any[]) => void>(fn: T, delay: number): T {
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         return ((...args: Parameters<T>) => {
             if (timeoutId) clearTimeout(timeoutId);
@@ -2412,7 +2454,7 @@ export class GraphView extends ItemView {
         const success = await this.historyManager.undo();
 
         if (success) {
-            new Notice(`Undo: ${description}`);
+            new Notice(`Undo: ${description} `);
         } else {
             new Notice('Undo failed');
         }
@@ -2431,7 +2473,7 @@ export class GraphView extends ItemView {
         const success = await this.historyManager.redo();
 
         if (success) {
-            new Notice(`Redo: ${description}`);
+            new Notice(`Redo: ${description} `);
         } else {
             new Notice('Redo failed');
         }
@@ -2445,14 +2487,14 @@ export class GraphView extends ItemView {
         if (this.undoBtn) {
             this.undoBtn.disabled = !this.historyManager.canUndo();
             const undoDesc = this.historyManager.getLastUndoDescription();
-            this.undoBtn.title = undoDesc ? `Undo: ${undoDesc}` : 'Nothing to undo';
+            this.undoBtn.title = undoDesc ? `Undo: ${undoDesc} ` : 'Nothing to undo';
         }
 
         // Update redo button
         if (this.redoBtn) {
             this.redoBtn.disabled = !this.historyManager.canRedo();
             const redoDesc = this.historyManager.getLastRedoDescription();
-            this.redoBtn.title = redoDesc ? `Redo: ${redoDesc}` : 'Nothing to redo';
+            this.redoBtn.title = redoDesc ? `Redo: ${redoDesc} ` : 'Nothing to redo';
         }
 
         // Update history panel if visible
@@ -2482,43 +2524,43 @@ export class GraphView extends ItemView {
 
         this.historyPanel = document.createElement('div');
         this.historyPanel.className = 'graph_copilot-history-panel';
-        this.historyPanel.style.cssText = `
-            position: absolute;
-            top: 60px;
-            right: 10px;
-            width: 280px;
-            max-height: 400px;
-            background: var(--background-primary);
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 99;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        `;
+        this.historyPanel.setCssProps({
+            position: 'absolute',
+            top: '60px',
+            right: '10px',
+            width: '280px',
+            'max-height': '400px',
+            background: 'var(--background-primary)',
+            border: '1px solid var(--background-modifier-border)',
+            'border-radius': '8px',
+            'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
+            'z-index': '99',
+            overflow: 'hidden',
+            display: 'flex',
+            'flex-direction': 'column'
+        });
 
         // Header
         const header = document.createElement('div');
-        header.style.cssText = `
-            padding: 10px 12px;
-            font-weight: bold;
-            border-bottom: 1px solid var(--background-modifier-border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        `;
+        header.setCssProps({
+            padding: '10px 12px',
+            'font-weight': 'bold',
+            'border-bottom': '1px solid var(--background-modifier-border)',
+            display: 'flex',
+            'justify-content': 'space-between',
+            'align-items': 'center'
+        });
         header.innerHTML = '<span>📜 Edit History</span>';
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '✕';
-        closeBtn.style.cssText = `
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-            color: var(--text-muted);
-        `;
+        closeBtn.setCssProps({
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            'font-size': '14px',
+            color: 'var(--text-muted)'
+        });
         closeBtn.onclick = () => this.hideHistoryPanel();
         header.appendChild(closeBtn);
         this.historyPanel.appendChild(header);
@@ -2526,11 +2568,11 @@ export class GraphView extends ItemView {
         // Content container
         const content = document.createElement('div');
         content.className = 'graph_copilot-history-content';
-        content.style.cssText = `
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px;
-        `;
+        content.setCssProps({
+            flex: '1',
+            'overflow-y': 'auto',
+            padding: '8px'
+        });
         this.historyPanel.appendChild(content);
 
         this.container?.parentElement?.appendChild(this.historyPanel);
@@ -2565,12 +2607,12 @@ export class GraphView extends ItemView {
 
         if (undoStack.length === 0 && redoStack.length === 0) {
             const emptyMsg = document.createElement('div');
-            emptyMsg.style.cssText = `
-                text-align: center;
-                color: var(--text-muted);
-                padding: 20px;
-                font-size: 13px;
-            `;
+            emptyMsg.setCssProps({
+                'text-align': 'center',
+                color: 'var(--text-muted)',
+                padding: '20px',
+                'font-size': '13px'
+            });
             emptyMsg.textContent = 'No history yet';
             content.appendChild(emptyMsg);
             return;
@@ -2579,12 +2621,12 @@ export class GraphView extends ItemView {
         // Show redo stack (future actions) - reversed order
         if (redoStack.length > 0) {
             const redoHeader = document.createElement('div');
-            redoHeader.style.cssText = `
-                font-size: 11px;
-                color: var(--text-muted);
-                padding: 4px 8px;
-                text-transform: uppercase;
-            `;
+            redoHeader.setCssProps({
+                'font-size': '11px',
+                color: 'var(--text-muted)',
+                padding: '4px 8px',
+                'text-transform': 'uppercase'
+            });
             redoHeader.textContent = 'Redo stack';
             content.appendChild(redoHeader);
 
@@ -2596,27 +2638,27 @@ export class GraphView extends ItemView {
 
         // Current position marker
         const currentMarker = document.createElement('div');
-        currentMarker.style.cssText = `
-            padding: 6px 8px;
-            background: var(--interactive-accent);
-            color: var(--text-on-accent);
-            border-radius: 4px;
-            font-size: 12px;
-            text-align: center;
-            margin: 4px 0;
-        `;
+        currentMarker.setCssProps({
+            padding: '6px 8px',
+            background: 'var(--interactive-accent)',
+            color: 'var(--text-on-accent)',
+            'border-radius': '4px',
+            'font-size': '12px',
+            'text-align': 'center',
+            margin: '4px 0'
+        });
         currentMarker.textContent = '▶ current state';
         content.appendChild(currentMarker);
 
         // Show undo stack (past actions) - reversed order (most recent first)
         if (undoStack.length > 0) {
             const undoHeader = document.createElement('div');
-            undoHeader.style.cssText = `
-                font-size: 11px;
-                color: var(--text-muted);
-                padding: 4px 8px;
-                text-transform: uppercase;
-            `;
+            undoHeader.setCssProps({
+                'font-size': '11px',
+                color: 'var(--text-muted)',
+                padding: '4px 8px',
+                'text-transform': 'uppercase'
+            });
             undoHeader.textContent = 'Undo stack';
             content.appendChild(undoHeader);
 
@@ -2632,28 +2674,31 @@ export class GraphView extends ItemView {
      */
     private createHistoryItem(entry: HistoryEntry, type: 'undo' | 'redo', index: number): HTMLElement {
         const item = document.createElement('div');
-        item.style.cssText = `
-            padding: 8px;
-            margin: 2px 0;
-            background: var(--background-secondary);
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            opacity: ${type === 'redo' ? '0.6' : '1'};
-        `;
+        item.setCssProps({
+            padding: '8px',
+            margin: '2px 0',
+            background: 'var(--background-secondary)',
+            'border-radius': '4px',
+            cursor: 'pointer',
+            'font-size': '12px',
+            opacity: type === 'redo' ? '0.6' : '1'
+        });
 
         const icon = this.getHistoryIcon(entry.type);
         const time = this.formatTime(entry.timestamp);
 
-        item.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span>${icon} ${entry.description}</span>
-                <span style="font-size: 10px; color: var(--text-muted);">${time}</span>
-            </div>
-        `;
+        const contentDiv = item.createDiv();
+        contentDiv.setCssProps({ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' });
 
-        item.onmouseenter = () => item.style.background = 'var(--background-modifier-hover)';
-        item.onmouseleave = () => item.style.background = 'var(--background-secondary)';
+        const leftSpan = contentDiv.createSpan();
+        leftSpan.setText(`${icon} ${entry.description}`);
+
+        const rightSpan = contentDiv.createSpan();
+        rightSpan.setCssProps({ 'font-size': '10px', color: 'var(--text-muted)' });
+        rightSpan.setText(time);
+
+        item.onmouseenter = () => item.setCssProps({ background: 'var(--background-modifier-hover)' });
+        item.onmouseleave = () => item.setCssProps({ background: 'var(--background-secondary)' });
 
         item.onclick = async () => {
             if (type === 'undo') {
@@ -2834,7 +2879,7 @@ export class GraphView extends ItemView {
                 state,
                 country,
                 (attempt, maxAttempts, delaySeconds) => {
-                    new Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+                    new Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
                 }
             );
 
@@ -2866,11 +2911,11 @@ export class GraphView extends ItemView {
                 this.updateEntityInGraph(updatedEntity);
             }
 
-            new Notice(`✓ Geocoded: ${result.displayName}\nLat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)}\nConfidence: ${result.confidence}`);
+            new Notice(`✓ Geocoded: ${result.displayName} \nLat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)} \nConfidence: ${result.confidence} `);
 
         } catch (error) {
             if (error instanceof GeocodingError) {
-                new Notice(`Geocoding failed: ${error.message}`);
+                new Notice(`Geocoding failed: ${error.message} `);
             } else {
                 console.error('[GraphView] Geocoding error:', error);
                 new Notice('Failed to geocode address. Please try again.');

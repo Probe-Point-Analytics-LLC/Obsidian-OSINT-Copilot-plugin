@@ -1,4 +1,4 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment */
+
 import {
   App,
   Editor,
@@ -139,7 +139,7 @@ export default class VaultAIPlugin extends Plugin {
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
     try {
       await this.conversationService.initialize();
-      console.log('OSINTCopilot: Conversation service initialized');
+      console.debug('OSINTCopilot: Conversation service initialized');
     } catch (error) {
       console.warn('OSINTCopilot: Conversation service initialization had issues:', error);
     }
@@ -151,7 +151,7 @@ export default class VaultAIPlugin extends Plugin {
       // Initialize local entity storage (non-blocking on errors)
       try {
         await this.entityManager.initialize();
-        console.log('OSINTCopilot: Local entity storage initialized');
+        console.debug('OSINTCopilot: Local entity storage initialized');
       } catch (error) {
         // Log but don't block - entity manager can still work for basic operations
         console.warn('OSINTCopilot: Entity storage initialization had issues:', error);
@@ -161,13 +161,13 @@ export default class VaultAIPlugin extends Plugin {
       // This sets the online status for the API service
       this.graphApiService.checkHealth().then(health => {
         if (health) {
-          console.log('OSINTCopilot: Graph API connected', health);
+          console.debug('OSINTCopilot: Graph API connected', health);
         } else {
-          console.log('OSINTCopilot: Graph API unavailable - running in local-only mode');
+          console.debug('OSINTCopilot: Graph API unavailable - running in local-only mode');
         }
       }).catch(error => {
         // Silently handle connection errors - API is optional
-        console.log('OSINTCopilot: Graph API unavailable - running in local-only mode');
+        console.debug('OSINTCopilot: Graph API unavailable - running in local-only mode');
       });
     }
 
@@ -181,7 +181,7 @@ export default class VaultAIPlugin extends Plugin {
     this.registerView(
       GRAPH_VIEW_TYPE,
       (leaf) => {
-        console.log('[VaultAIPlugin] Creating GraphView instance');
+        console.debug('[VaultAIPlugin] Creating GraphView instance');
         if (!this.settings.enableGraphFeatures) {
           console.warn('[VaultAIPlugin] Graph features are disabled in settings');
         }
@@ -433,7 +433,7 @@ export default class VaultAIPlugin extends Plugin {
       return;
     }
 
-    console.log('[VaultAIPlugin] Opening graph view, forceNew:', forceNew);
+    console.debug('[VaultAIPlugin] Opening graph view, forceNew:', forceNew);
     const existing = this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE);
 
     // If not forcing new and one exists, reveal it
@@ -479,7 +479,7 @@ export default class VaultAIPlugin extends Plugin {
     if (existing.length > 0) {
       const graphView = existing[0].view as GraphView;
       if (graphView && typeof graphView.refreshWithSavedPositions === 'function') {
-        console.log('[OSINT Copilot] Refreshing graph view with new entities...');
+        console.debug('[OSINT Copilot] Refreshing graph view with new entities...');
         await graphView.refreshWithSavedPositions();
         new Notice('Graph view updated with new entities');
       }
@@ -505,7 +505,7 @@ export default class VaultAIPlugin extends Plugin {
     } else {
       // Graph is not open - open it if auto-open is enabled
       if (this.settings.autoOpenGraphOnEntityCreation) {
-        console.log('[OSINT Copilot] Auto-opening graph view with new entities...');
+        console.debug('[OSINT Copilot] Auto-opening graph view with new entities...');
         await this.openGraphView();
         new Notice('Graph view opened with new entities');
       }
@@ -898,7 +898,7 @@ export default class VaultAIPlugin extends Plugin {
         // Don't retry on the last attempt
         if (attempt < maxRetries) {
           const delayMs = getRetryDelay(attempt);
-          console.log(`[OSINT Copilot] Network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
+          console.debug(`[OSINT Copilot] Network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
 
           // Notify caller about retry
           if (onRetry) {
@@ -1067,9 +1067,9 @@ export default class VaultAIPlugin extends Plugin {
           // Include conversation_id only if we have a saved one
           if (savedConversationId) {
             requestBody.conversation_id = savedConversationId;
-            console.log('[OSINT Copilot] Sending request with existing conversation_id:', savedConversationId);
+            console.debug('[OSINT Copilot] Sending request with existing conversation_id:', savedConversationId);
           } else {
-            console.log('[OSINT Copilot] Sending first request (no conversation_id)');
+            console.debug('[OSINT Copilot] Sending first request (no conversation_id)');
           }
 
           const generateResponse: RequestUrlResponse = await requestUrl({
@@ -1122,7 +1122,7 @@ export default class VaultAIPlugin extends Plugin {
           // This will be saved to the conversation file when saveConversation() is called
           if (generateData.conversation_id && currentConversation) {
             currentConversation.reportConversationId = generateData.conversation_id;
-            console.log('[OSINT Copilot] Updated conversation with reportConversationId:', generateData.conversation_id);
+            console.debug('[OSINT Copilot] Updated conversation with reportConversationId:', generateData.conversation_id);
           }
 
           break; // Success, exit retry loop
@@ -1130,7 +1130,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = initError instanceof Error && this.isTransientNetworkError(initError);
 
           if (isNetworkError && initAttempt < maxInitialRetries) {
-            console.log(`[OSINT Copilot] Companies&People init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
+            console.debug(`[OSINT Copilot] Companies&People init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
             statusCallback?.(`Network interrupted, retrying... (attempt ${initAttempt}/${maxInitialRetries})`);
             await this.sleep(1000 * initAttempt); // Exponential backoff
           } else {
@@ -1284,7 +1284,7 @@ export default class VaultAIPlugin extends Plugin {
             // Enhanced logging for network errors
             const errorType = pollError instanceof Error ? pollError.name : 'Unknown';
             const errorMsg = pollError instanceof Error ? pollError.message : String(pollError);
-            console.log(
+            console.debug(
               `[OSINT Copilot] Companies&People status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
               `Type: ${errorType}, Message: ${errorMsg}`
             );
@@ -1296,7 +1296,7 @@ export default class VaultAIPlugin extends Plugin {
             // Show retry status to user with more detail
             const retryMsg = `Network interrupted (${errorType}), retrying... (${Math.round(elapsedMs / 1000)}s elapsed, attempt ${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors})`;
             statusCallback?.(retryMsg);
-            console.log(`[OSINT Copilot] ${retryMsg}`);
+            console.debug(`[OSINT Copilot] ${retryMsg}`);
             // Continue polling - don't throw
           } else {
             // Non-network error, re-throw immediately
@@ -1345,7 +1345,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = downloadError instanceof Error && this.isTransientNetworkError(downloadError);
 
           if (isNetworkError && downloadAttempt < maxDownloadRetries) {
-            console.log(`[OSINT Copilot] Companies&People download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
+            console.debug(`[OSINT Copilot] Companies&People download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
             statusCallback?.(`Download interrupted, retrying... (attempt ${downloadAttempt}/${maxDownloadRetries})`);
             await this.sleep(1000 * downloadAttempt); // Exponential backoff
           } else {
@@ -1469,14 +1469,14 @@ export default class VaultAIPlugin extends Plugin {
       const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL); // Use OpenAI model for entity extraction
 
       // Debug logging
-      //console.log("[extractEntityFromQuery] Raw response:", text);
+      //console.debug("[extractEntityFromQuery] Raw response:", text);
 
       // Try strict JSON parse
       const match = text.trim();
       let obj: unknown = null;
       try {
         obj = JSON.parse(match);
-        //console.log("[extractEntityFromQuery] Parsed JSON:", obj);
+        //console.debug("[extractEntityFromQuery] Parsed JSON:", obj);
       } catch (parseError) {
         //console.warn("[extractEntityFromQuery] JSON parse failed, trying regex:", parseError);
         // Best-effort: find JSON substring
@@ -1484,7 +1484,7 @@ export default class VaultAIPlugin extends Plugin {
         if (m) {
           try {
             obj = JSON.parse(m[0]);
-            //console.log("[extractEntityFromQuery] Parsed JSON from regex:", obj);
+            //console.debug("[extractEntityFromQuery] Parsed JSON from regex:", obj);
           } catch (e) {
             //console.error("[extractEntityFromQuery] Regex parse also failed:", e);
           }
@@ -1505,7 +1505,7 @@ export default class VaultAIPlugin extends Plugin {
           ? data.name.trim()
           : null;
 
-      console.log("[extractEntityFromQuery] Extracted:", { name: nameVal, type });
+      console.debug("[extractEntityFromQuery] Extracted:", { name: nameVal, type });
       return { name: nameVal, type };
     } catch (error) {
       console.error("[extractEntityFromQuery] Error:", error);
@@ -1558,7 +1558,7 @@ export default class VaultAIPlugin extends Plugin {
 
           for (const field of contentFields) {
             if (data[field] && typeof data[field] === 'string') {
-              console.log(`[OSINT Copilot] Extracted markdown from JSON field: ${field}`);
+              console.debug(`[OSINT Copilot] Extracted markdown from JSON field: ${field}`);
               return data[field];
             }
           }
@@ -1567,7 +1567,7 @@ export default class VaultAIPlugin extends Plugin {
           if (data.report && typeof data.report === 'object') {
             for (const field of contentFields) {
               if (data.report[field] && typeof data.report[field] === 'string') {
-                console.log(`[OSINT Copilot] Extracted markdown from JSON field: report.${field}`);
+                console.debug(`[OSINT Copilot] Extracted markdown from JSON field: report.${field}`);
                 return data.report[field];
               }
             }
@@ -1576,7 +1576,7 @@ export default class VaultAIPlugin extends Plugin {
           // Last resort: if there's only one string field, use it
           const stringFields = Object.entries(data).filter(([_, v]) => typeof v === 'string' && v.length > 100);
           if (stringFields.length === 1) {
-            console.log(`[OSINT Copilot] Extracted markdown from single string field: ${stringFields[0][0]}`);
+            console.debug(`[OSINT Copilot] Extracted markdown from single string field: ${stringFields[0][0]}`);
             return stringFields[0][1] as string;
           }
 
@@ -1585,7 +1585,7 @@ export default class VaultAIPlugin extends Plugin {
         }
       } catch (parseError) {
         // Not valid JSON, treat as plain text
-        console.log('[OSINT Copilot] Response is not valid JSON, treating as plain markdown');
+        console.debug('[OSINT Copilot] Response is not valid JSON, treating as plain markdown');
       }
     }
 
@@ -1668,7 +1668,7 @@ export default class VaultAIPlugin extends Plugin {
     // Create new file - guaranteed to be unique
     await this.app.vault.create(finalFileName, content);
 
-    console.log(`[OSINT Copilot] Report saved to: ${finalFileName}`);
+    console.debug(`[OSINT Copilot] Report saved to: ${finalFileName}`);
     return finalFileName;
   }
 
@@ -1717,7 +1717,7 @@ export default class VaultAIPlugin extends Plugin {
     // Create new file - guaranteed to be unique
     await this.app.vault.create(finalFileName, content);
 
-    console.log(`[OSINT Copilot] Dark web report saved to: ${finalFileName}`);
+    console.debug(`[OSINT Copilot] Dark web report saved to: ${finalFileName}`);
     return finalFileName;
   }
 
@@ -1811,11 +1811,11 @@ class AskModal extends Modal {
 
     // Answer container
     this.answerContainer = contentEl.createDiv("vault-ai-answer");
-    this.answerContainer.style.display = "none";
+    this.answerContainer.setCssProps({ display: 'none' });
 
     // Notes list container
     this.notesContainer = contentEl.createDiv("vault-ai-notes-list");
-    this.notesContainer.style.display = "none";
+    this.notesContainer.setCssProps({ display: 'none' });
   }
 
   async handleAsk() {
@@ -1825,8 +1825,9 @@ class AskModal extends Modal {
       return;
     }
 
-    this.answerContainer.innerHTML = "<p>Thinking...</p>";
-    this.answerContainer.style.display = "block";
+    this.answerContainer.empty();
+    this.answerContainer.createEl("p", { text: "Thinking..." });
+    this.answerContainer.setCssProps({ display: 'block' });
 
     try {
       const result = await this.plugin.askVault(query);
@@ -1862,11 +1863,12 @@ class AskModal extends Modal {
           });
         }
 
-        this.notesContainer.style.display = "block";
+        this.notesContainer.setCssProps({ display: 'block' });
       }
     } catch (error) {
-      this.answerContainer.innerHTML = `<p style="color: var(--text-error);">Error: ${error instanceof Error ? error.message : String(error)
-        }</p>`;
+      this.answerContainer.empty();
+      const errorP = this.answerContainer.createEl("p", { text: `Error: ${error instanceof Error ? error.message : String(error)}` });
+      errorP.setCssProps({ color: 'var(--text-error)' });
     }
   }
 
@@ -1904,9 +1906,11 @@ class RenameConversationModal extends Modal {
       value: this.currentTitle,
       cls: "vault-ai-rename-input"
     });
-    this.inputEl.style.width = "100%";
-    this.inputEl.style.marginTop = "8px";
-    this.inputEl.style.padding = "8px";
+    this.inputEl.setCssProps({
+      width: "100%",
+      "margin-top": "8px",
+      padding: "8px"
+    });
 
     // Handle Enter key
     this.inputEl.addEventListener("keydown", (e) => {
@@ -1919,10 +1923,12 @@ class RenameConversationModal extends Modal {
     });
 
     const buttonContainer = contentEl.createDiv({ cls: "vault-ai-rename-buttons" });
-    buttonContainer.style.marginTop = "16px";
-    buttonContainer.style.display = "flex";
-    buttonContainer.style.justifyContent = "flex-end";
-    buttonContainer.style.gap = "8px";
+    buttonContainer.setCssProps({
+      "margin-top": "16px",
+      display: "flex",
+      "justify-content": "flex-end",
+      gap: "8px"
+    });
 
     const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
     cancelBtn.addEventListener("click", () => this.close());
@@ -2899,37 +2905,37 @@ class ChatView extends ItemView {
       // Show "Open Companies&People" button for report generation messages
       if (item.role === "assistant" && item.reportFilePath) {
         const reportButtonContainer = messageDiv.createDiv("vault-ai-report-button-container");
-        reportButtonContainer.style.cssText = `
-          margin-top: 12px;
-          padding: 10px;
-          background: var(--background-secondary);
-          border-radius: 6px;
-          border-left: 3px solid var(--interactive-accent);
-        `;
+        reportButtonContainer.setCssProps({
+          "margin-top": "12px",
+          padding: "10px",
+          background: "var(--background-secondary)",
+          "border-radius": "6px",
+          "border-left": "3px solid var(--interactive-accent)"
+        });
 
         const reportButton = reportButtonContainer.createEl("button", {
           text: "📄 open companies&people",
           cls: "vault-ai-open-report-btn",
         });
-        reportButton.style.cssText = `
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 500;
-          background: var(--interactive-accent);
-          color: var(--text-on-accent);
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          transition: opacity 0.2s;
-        `;
+        reportButton.setCssProps({
+          padding: "8px 16px",
+          "font-size": "13px",
+          "font-weight": "500",
+          background: "var(--interactive-accent)",
+          color: "var(--text-on-accent)",
+          border: "none",
+          "border-radius": "4px",
+          cursor: "pointer",
+          transition: "opacity 0.2s"
+        });
         reportButton.title = `Open report: ${item.reportFilePath}`;
 
         // Add hover effect
         reportButton.addEventListener("mouseenter", () => {
-          reportButton.style.opacity = "0.8";
+          reportButton.setCssProps({ opacity: "0.8" });
         });
         reportButton.addEventListener("mouseleave", () => {
-          reportButton.style.opacity = "1";
+          reportButton.setCssProps({ opacity: "1" });
         });
 
         // Add click handler to open the report
@@ -3191,11 +3197,11 @@ class ChatView extends ItemView {
       let entitiesProcessed = 0;
 
       // Debug: Log the full operations array
-      console.log('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
+      console.debug('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
 
       for (const operation of result.operations) {
         // Debug: Log each operation
-        console.log('[GraphOnlyMode] Processing operation:', {
+        console.debug('[GraphOnlyMode] Processing operation:', {
           action: operation.action,
           hasEntities: !!operation.entities,
           entitiesCount: operation.entities?.length || 0,
@@ -3214,7 +3220,7 @@ class ChatView extends ItemView {
             updateProgress(`Creating entity ${entitiesProcessed}/${totalEntities}...`, entityProgress);
 
             // Debug: Log entity data
-            console.log('[EntityOnlyMode] Processing entity:', {
+            console.debug('[EntityOnlyMode] Processing entity:', {
               type: entityData.type,
               properties: entityData.properties
             });
@@ -3242,12 +3248,12 @@ class ChatView extends ItemView {
                 }
               }
 
-              console.log('[GraphOnlyMode] Creating entity with type:', entityType);
+              console.debug('[GraphOnlyMode] Creating entity with type:', entityType);
               const entity = await this.plugin.entityManager.createEntity(
                 entityType,
                 entityData.properties
               );
-              console.log('[GraphOnlyMode] Entity created successfully:', {
+              console.debug('[GraphOnlyMode] Entity created successfully:', {
                 id: entity.id,
                 type: entity.type,
                 label: entity.label,
@@ -3551,11 +3557,11 @@ class ChatView extends ItemView {
       let processedEntities = 0;
 
       // Debug: Log the full operations array
-      console.log('[GraphGeneration] Processing operations:', JSON.stringify(result.operations, null, 2));
+      console.debug('[GraphGeneration] Processing operations:', JSON.stringify(result.operations, null, 2));
 
       for (const operation of result.operations) {
         // Debug: Log each operation
-        console.log('[GraphGeneration] Processing operation:', {
+        console.debug('[GraphGeneration] Processing operation:', {
           action: operation.action,
           hasEntities: !!operation.entities,
           entitiesCount: operation.entities?.length || 0,
@@ -3574,7 +3580,7 @@ class ChatView extends ItemView {
             updateProgress(`Creating entity ${processedEntities}/${totalEntities}...`, entityProgress);
 
             // Debug: Log entity data
-            console.log('[GraphGeneration] Processing entity:', {
+            console.debug('[GraphGeneration] Processing entity:', {
               type: entityData.type,
               properties: entityData.properties
             });
@@ -3602,12 +3608,12 @@ class ChatView extends ItemView {
                 }
               }
 
-              console.log('[GraphGeneration] Creating entity with type:', entityType);
+              console.debug('[GraphGeneration] Creating entity with type:', entityType);
               const entity = await this.plugin.entityManager.createEntity(
                 entityType,
                 entityData.properties
               );
-              console.log('[GraphGeneration] Entity created successfully:', {
+              console.debug('[GraphGeneration] Entity created successfully:', {
                 id: entity.id,
                 type: entity.type,
                 label: entity.label,
@@ -4094,7 +4100,7 @@ class ChatView extends ItemView {
         }
 
         updateProgress("Investigation started, searching dark web engines...", 20);
-        console.log(`[OSINT Copilot] Dark web investigation started with Job ID: ${jobId}`);
+        console.debug(`[OSINT Copilot] Dark web investigation started with Job ID: ${jobId}`);
 
         // Update message and start polling (Job ID stored internally but not shown to user)
         this.chatHistory[messageIndex] = {
@@ -4122,7 +4128,7 @@ class ChatView extends ItemView {
         // Don't retry on the last attempt
         if (attempt < maxRetries) {
           const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.log(`[OSINT Copilot] DarkWeb API network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
+          console.debug(`[OSINT Copilot] DarkWeb API network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
 
           updateProgress(`Network error. Retrying... (${attempt}/${maxRetries})`, 8);
           // Show retry status to user
@@ -4325,7 +4331,7 @@ class ChatView extends ItemView {
           // Show retry status to user
           const elapsedSecs = Math.round(elapsedMs / 1000);
           const retryMsg = `Network interrupted (${errorType}), retrying... (${elapsedSecs}s elapsed, attempt ${consecutiveErrors}/${maxConsecutiveErrors})`;
-          console.log(`[OSINT Copilot] ${retryMsg}`);
+          console.debug(`[OSINT Copilot] ${retryMsg}`);
 
           const timeoutId = window.setTimeout(poll, nextInterval);
           this.pollingIntervals.set(jobId, timeoutId);
@@ -4369,7 +4375,7 @@ class ChatView extends ItemView {
       }
 
       const summary = response.json;
-      console.log(`[OSINT Copilot] Dark web investigation completed. Job ID: ${jobId}`);
+      console.debug(`[OSINT Copilot] Dark web investigation completed. Job ID: ${jobId}`);
 
       // Format the results as markdown for both display and saving
       let reportContent = `# Dark Web Investigation: ${query}\n\n`;
@@ -4503,7 +4509,7 @@ class VaultAISettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
         text.inputEl.rows = 4;
-        text.inputEl.style.width = "100%";
+        text.inputEl.setCssProps({ width: "100%" });
       });
 
     new Setting(containerEl).setName("Backend API").setHeading();
@@ -4513,11 +4519,16 @@ class VaultAISettingTab extends PluginSettingTab {
       .setName("Account dashboard")
       .setDesc("View your API usage, quota, and manage your subscription");
 
-    dashboardSetting.controlEl.createEl("a", {
+    const linkEl = dashboardSetting.controlEl.createEl("a", {
       text: "Open dashboard →",
       href: "https://osint-copilot.com/dashboard/",
       cls: "external-link",
-    }).style.cssText = "color: var(--interactive-accent); text-decoration: none; font-weight: 500;";
+    });
+    linkEl.setCssProps({
+      color: "var(--interactive-accent)",
+      "text-decoration": "none",
+      "font-weight": "500"
+    });
 
     // License Key
     new Setting(containerEl)
@@ -4539,7 +4550,12 @@ class VaultAISettingTab extends PluginSettingTab {
     // License Key Info Display (if key is configured)
     if (this.plugin.settings.reportApiKey) {
       const apiInfoContainer = containerEl.createDiv("api-info-container");
-      apiInfoContainer.style.cssText = "margin: 10px 0; padding: 15px; background: var(--background-secondary); border-radius: 5px;";
+      apiInfoContainer.setCssProps({
+        margin: "10px 0",
+        padding: "15px",
+        background: "var(--background-secondary)",
+        "border-radius": "5px"
+      });
 
       const loadingEl = apiInfoContainer.createEl("p", {
         text: "Loading license key information...",
@@ -4552,7 +4568,12 @@ class VaultAISettingTab extends PluginSettingTab {
 
         if (info) {
           const infoGrid = apiInfoContainer.createDiv();
-          infoGrid.style.cssText = "display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.9em;";
+          infoGrid.setCssProps({
+            display: "grid",
+            "grid-template-columns": "1fr 1fr",
+            gap: "10px",
+            "font-size": "0.9em"
+          });
 
           // Safe values
           const quota = info.remaining_quota ?? 0;
@@ -4569,10 +4590,9 @@ class VaultAISettingTab extends PluginSettingTab {
           quotaDiv.createEl("strong", { text: "Remaining quota: " });
           const quotaSpan = quotaDiv.createSpan({ text: `${quota} reports` });
           if (quota <= 0) {
-            quotaSpan.style.color = "var(--text-error)";
-            quotaSpan.style.fontWeight = "bold";
+            quotaSpan.setCssProps({ color: "var(--text-error)", "font-weight": "bold" });
           } else if (quota <= 5) {
-            quotaSpan.style.color = "var(--text-warning)";
+            quotaSpan.setCssProps({ color: "var(--text-warning)" });
           }
 
           // Status
@@ -4581,7 +4601,7 @@ class VaultAISettingTab extends PluginSettingTab {
           const statusSpan = statusDiv.createSpan({
             text: isActive ? "Active" : "Inactive"
           });
-          statusSpan.style.color = isActive ? "var(--text-success)" : "var(--text-error)";
+          statusSpan.setCssProps({ color: isActive ? "var(--text-success)" : "var(--text-error)" });
 
           // Expiry
           const expiryDiv = infoGrid.createDiv();
@@ -4599,43 +4619,76 @@ class VaultAISettingTab extends PluginSettingTab {
               text: "🎁 trial account",
               cls: "setting-item-description",
             });
-            trialBadge.style.cssText = "margin-top: 10px; color: var(--text-warning); font-weight: 500;";
+            trialBadge.setCssProps({
+              "margin-top": "10px",
+              color: "var(--text-warning)",
+              "font-weight": "500"
+            });
           }
 
           // Quota exhaustion warning
           if (quota <= 0) {
             const quotaWarning = apiInfoContainer.createDiv();
-            quotaWarning.style.cssText = "margin-top: 15px; padding: 12px; background: var(--background-modifier-error); border-radius: 5px; border-left: 4px solid var(--text-error);";
-            quotaWarning.createEl("p", {
+            quotaWarning.setCssProps({
+              "margin-top": "15px",
+              padding: "12px",
+              background: "var(--background-modifier-error)",
+              "border-radius": "5px",
+              "border-left": "4px solid var(--text-error)"
+            });
+            const text1 = quotaWarning.createEl("p", {
               text: "⚠️ quota exhausted",
-            }).style.cssText = "margin: 0 0 8px 0; font-weight: bold; color: var(--text-error);";
-            quotaWarning.createEl("p", {
+            });
+            text1.setCssProps({
+              margin: "0 0 8px 0",
+              "font-weight": "bold",
+              color: "var(--text-error)"
+            });
+
+            const text2 = quotaWarning.createEl("p", {
               text: "You have no remaining report credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews.",
-            }).style.cssText = "margin: 0 0 10px 0; font-size: 0.9em;";
+            });
+            text2.setCssProps({ margin: "0 0 10px 0", "font-size": "0.9em" });
             const upgradeLink = quotaWarning.createEl("a", {
               text: "Upgrade your plan →",
               href: "https://osint-copilot.com/dashboard/",
             });
-            upgradeLink.style.cssText = "color: var(--interactive-accent); font-weight: 500; text-decoration: none;";
+            upgradeLink.setCssProps({
+              color: "var(--interactive-accent)",
+              "font-weight": "500",
+              "text-decoration": "none"
+            });
           } else if (quota <= 5) {
             const lowQuotaWarning = apiInfoContainer.createDiv();
-            lowQuotaWarning.style.cssText = "margin-top: 15px; padding: 10px; background: var(--background-modifier-warning); border-radius: 5px;";
-            lowQuotaWarning.createEl("p", {
+            lowQuotaWarning.setCssProps({
+              "margin-top": "15px",
+              padding: "10px",
+              background: "var(--background-modifier-warning)",
+              "border-radius": "5px"
+            });
+            const p = lowQuotaWarning.createEl("p", {
               text: `⚠️ Low quota: Only ${quota} report credits remaining.`,
-            }).style.cssText = "margin: 0; font-size: 0.9em; color: var(--text-warning);";
+            });
+            p.setCssProps({
+              margin: "0",
+              "font-size": "0.9em",
+              color: "var(--text-warning)"
+            });
           }
         } else {
-          apiInfoContainer.createEl("p", {
+          const errP = apiInfoContainer.createEl("p", {
             text: "⚠️ could not load license key information. Please check your license key.",
             cls: "setting-item-description",
-          }).style.color = "var(--text-error)";
+          });
+          errP.setCssProps({ color: "var(--text-error)" });
         }
       }).catch(() => {
         loadingEl.remove();
-        apiInfoContainer.createEl("p", {
+        const errP2 = apiInfoContainer.createEl("p", {
           text: "⚠️ failed to connect to API. Please check your internet connection.",
           cls: "setting-item-description",
-        }).style.color = "var(--text-error)";
+        });
+        errP2.setCssProps({ color: "var(--text-error)" });
       });
     }
 
@@ -4669,10 +4722,11 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
-    containerEl.createEl("p", {
+    const noteP = containerEl.createEl("p", {
       text: "ℹ️ note: AI entity generation requires an active API connection. All other features (manual entity creation, editing, connections, map view) work locally without the API.",
       cls: "setting-item-description",
-    }).style.color = "var(--text-muted)";
+    });
+    noteP.setCssProps({ color: "var(--text-muted)" });
 
     new Setting(containerEl).setName("Graph view").setHeading();
 

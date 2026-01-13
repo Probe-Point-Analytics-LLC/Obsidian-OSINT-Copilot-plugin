@@ -1,4 +1,4 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment */
+
 /**
  * Map View for visualizing Location entities using Leaflet.
  */
@@ -209,8 +209,10 @@ export class MapView extends ItemView {
         this.container = container.createDiv({ cls: 'graph_copilot-map-canvas' });
         this.container.id = 'graph_copilot-map-' + Date.now();
         this.container.id = 'graph_copilot-map-' + Date.now();
-        this.container.style.setProperty('width', '100%');
-        this.container.style.setProperty('height', 'calc(100% - 50px)');
+        this.container.setCssProps({
+            width: '100%',
+            height: 'calc(100% - 50px)'
+        });
 
         // Load Leaflet and initialize
         await this.loadLeaflet();
@@ -269,11 +271,13 @@ export class MapView extends ItemView {
      * Create the toolbar.
      */
     private createToolbar(toolbar: HTMLElement): void {
-        toolbar.style.setProperty('display', 'flex');
-        toolbar.style.setProperty('gap', '10px');
-        toolbar.style.setProperty('padding', '10px');
-        toolbar.style.setProperty('background', 'var(--background-secondary)');
-        toolbar.style.setProperty('border-bottom', '1px solid var(--background-modifier-border)');
+        toolbar.setCssProps({
+            display: 'flex',
+            gap: '10px',
+            padding: '10px',
+            background: 'var(--background-secondary)',
+            'border-bottom': '1px solid var(--background-modifier-border)'
+        });
 
         // Add Location button
         const addBtn = toolbar.createEl('button', { text: '+ add location' });
@@ -300,9 +304,11 @@ export class MapView extends ItemView {
             text: 'Map shows all location entities with coordinates',
             cls: 'graph_copilot-map-info'
         });
-        infoSpan.style.setProperty('margin-left', 'auto');
-        infoSpan.style.setProperty('color', 'var(--text-muted)');
-        infoSpan.style.setProperty('font-size', '12px');
+        infoSpan.setCssProps({
+            'margin-left': 'auto',
+            color: 'var(--text-muted)',
+            'font-size': '12px'
+        });
     }
 
     /**
@@ -358,7 +364,7 @@ export class MapView extends ItemView {
 
         // Try primary layer first, with error handling for fallbacks
         osmLayer.on('tileerror', () => {
-            console.log('OSM tiles failed, trying fallback...');
+            console.debug('OSM tiles failed, trying fallback...');
             if (!this.map.hasLayer(cartoLayer)) {
                 osmLayer.remove();
                 cartoLayer.addTo(this.map);
@@ -382,13 +388,13 @@ export class MapView extends ItemView {
                 // Use actual tiles as icons
                 if (layerName === 'Satellite') {
                     // Esri Satellite tile (rich green/terrain)
-                    container.style.setProperty('background-image', 'url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8")');
+                    container.setCssProps({ 'background-image': 'url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8")' });
                 } else if (layerName === 'Carto Light') {
                     // Carto Light tile (clean/grey)
-                    container.style.setProperty('background-image', 'url("https://a.basemaps.cartocdn.com/light_all/5/15/12.png")');
+                    container.setCssProps({ 'background-image': 'url("https://a.basemaps.cartocdn.com/light_all/5/15/12.png")' });
                 } else {
                     // Default OSM tile (standard map colors)
-                    container.style.setProperty('background-image', 'url("https://tile.openstreetmap.org/5/16/10.png")');
+                    container.setCssProps({ 'background-image': 'url("https://tile.openstreetmap.org/5/16/10.png")' });
                 }
             }
         };
@@ -443,13 +449,13 @@ export class MapView extends ItemView {
      * Refresh the map with current data.
      */
     async refresh(): Promise<void> {
-        console.log('[MapView] refresh() called, map exists:', !!this.map);
+        console.debug('[MapView] refresh() called, map exists:', !!this.map);
         if (!this.map) return;
 
         // Reload entities from notes to ensure we have the latest data
         try {
             await this.entityManager.loadEntitiesFromNotes();
-            console.log('[MapView] Entities reloaded from notes');
+            console.debug('[MapView] Entities reloaded from notes');
         } catch (error) {
             console.error('[MapView] Failed to reload entities:', error);
         }
@@ -462,18 +468,18 @@ export class MapView extends ItemView {
         const locationEntities = this.entityManager.getEntitiesByType(EntityType.Location);
         const addressEntities = this.entityManager.getAllEntities().filter(e => e.type === 'Address');
         const entities = [...locationEntities, ...addressEntities];
-        console.log('[MapView] Found Location and Address entities:', entities.length, entities);
+        console.debug('[MapView] Found Location and Address entities:', entities.length, entities);
 
         const locations = this.parseLocations(entities);
-        console.log('[MapView] Parsed locations with coordinates:', locations.length, locations);
+        console.debug('[MapView] Parsed locations with coordinates:', locations.length, locations);
 
         // Add markers
         locations.forEach(location => {
-            console.log('[MapView] Adding marker for:', location.label, 'at', location.lat, location.lng);
+            console.debug('[MapView] Adding marker for:', location.label, 'at', location.lat, location.lng);
             this.addMarker(location);
         });
 
-        console.log('[MapView] Total markers added:', this.markers.size);
+        console.debug('[MapView] Total markers added:', this.markers.size);
 
         // Fit bounds if we have markers
         if (locations.length > 0) {
@@ -488,10 +494,10 @@ export class MapView extends ItemView {
         const locations: MapLocation[] = [];
 
         for (const entity of entities) {
-            console.log('[MapView] Parsing entity:', entity.label, 'properties:', entity.properties);
+            console.debug('[MapView] Parsing entity:', entity.label, 'properties:', entity.properties);
             const lat = this.parseCoordinate(entity.properties.latitude as string | number | undefined);
             const lng = this.parseCoordinate(entity.properties.longitude as string | number | undefined);
-            console.log('[MapView] Parsed coordinates - lat:', lat, 'lng:', lng);
+            console.debug('[MapView] Parsed coordinates - lat:', lat, 'lng:', lng);
 
             if (lat !== null && lng !== null) {
                 // Handle both Location and Address entity types
@@ -509,7 +515,7 @@ export class MapView extends ItemView {
                     country: entity.properties.country as string
                 });
             } else {
-                console.log('[MapView] Skipping entity - missing coordinates');
+                console.debug('[MapView] Skipping entity - missing coordinates');
             }
         }
 
@@ -521,13 +527,13 @@ export class MapView extends ItemView {
      */
     private parseCoordinate(value: string | number | undefined): number | null {
         if (value === undefined || value === null || value === '') {
-            console.log('[MapView] parseCoordinate: value is empty/undefined:', value);
+            console.debug('[MapView] parseCoordinate: value is empty/undefined:', value);
             return null;
         }
 
         const num = typeof value === 'number' ? value : parseFloat(value);
         if (isNaN(num)) {
-            console.log('[MapView] parseCoordinate: value is NaN:', value);
+            console.debug('[MapView] parseCoordinate: value is NaN:', value);
             return null;
         }
 
@@ -726,15 +732,15 @@ export class MapView extends ItemView {
      * Focus on a specific location.
      */
     focusLocation(entityId: string): void {
-        console.log('[MapView] focusLocation called for:', entityId);
-        console.log('[MapView] Available markers:', Array.from(this.markers.keys()));
+        console.debug('[MapView] focusLocation called for:', entityId);
+        console.debug('[MapView] Available markers:', Array.from(this.markers.keys()));
         const marker = this.markers.get(entityId);
         if (marker && this.map) {
-            console.log('[MapView] Found marker, focusing...');
+            console.debug('[MapView] Found marker, focusing...');
             this.map.setView(marker.getLatLng(), 15);
             marker.openPopup();
         } else {
-            console.log('[MapView] Marker not found for entity:', entityId);
+            console.debug('[MapView] Marker not found for entity:', entityId);
         }
     }
 
@@ -806,21 +812,23 @@ class GeolocateMissingModal extends Modal {
 
         // Create a list of locations
         const listContainer = contentEl.createDiv({ cls: 'geolocate-list' });
-        listContainer.style.cssText = `
-            max-height: 400px;
-            overflow-y: auto;
-            margin: 20px 0;
-        `;
+        listContainer.setCssProps({
+            'max-height': '400px',
+            'overflow-y': 'auto',
+            margin: '20px 0'
+        });
 
         this.locations.forEach(entity => {
             const item = listContainer.createDiv({ cls: 'geolocate-item' });
-            item.style.setProperty('padding', '10px');
-            item.style.setProperty('margin', '5px 0');
-            item.style.setProperty('border', '1px solid var(--background-modifier-border)');
-            item.style.setProperty('border-radius', '4px');
-            item.style.setProperty('display', 'flex');
-            item.style.setProperty('justify-content', 'space-between');
-            item.style.setProperty('align-items', 'center');
+            item.setCssProps({
+                padding: '10px',
+                margin: '5px 0',
+                border: '1px solid var(--background-modifier-border)',
+                'border-radius': '4px',
+                display: 'flex',
+                'justify-content': 'space-between',
+                'align-items': 'center'
+            });
 
             const info = item.createDiv();
             info.createEl('strong', { text: entity.label });
@@ -843,7 +851,12 @@ class GeolocateMissingModal extends Modal {
 
         // Buttons
         const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
-        buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;';
+        buttonContainer.setCssProps({
+            display: 'flex',
+            'justify-content': 'flex-end',
+            gap: '10px',
+            'margin-top': '20px'
+        });
 
         const geolocateAllBtn = buttonContainer.createEl('button', { text: 'Geolocate all' });
         geolocateAllBtn.onclick = async () => {
@@ -902,12 +915,12 @@ class GeolocateMissingModal extends Modal {
 
             // Update UI
             btn.textContent = '✓ done';
-            btn.style.setProperty('color', 'var(--text-success)');
-            item.style.setProperty('border-color', 'var(--text-success)');
+            btn.setCssProps({ color: 'var(--text-success)' });
+            item.setCssProps({ 'border-color': 'var(--text-success)' });
 
         } catch (error) {
             btn.textContent = '✗ failed';
-            btn.style.setProperty('color', 'var(--text-error)');
+            btn.setCssProps({ color: 'var(--text-error)' });
             if (error instanceof GeocodingError) {
                 new Notice(`Failed to geocode ${entity.label}: ${error.message}`);
             } else {
