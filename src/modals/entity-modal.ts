@@ -1,3 +1,4 @@
+/* eslint-disable obsidianmd/no-static-styles-assignment */
 /**
  * Entity Creation Modal - allows users to create entities with a form UI.
  * Now supports both legacy EntityType and FTM schema format.

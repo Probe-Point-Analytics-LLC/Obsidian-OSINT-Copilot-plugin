@@ -1,3 +1,4 @@
+/* eslint-disable obsidianmd/no-static-styles-assignment */
 /**
  * Custom Graph View using Cytoscape.js for interactive graph visualization.
  */
@@ -17,7 +18,9 @@ interface NodeSingular {
     id(): string;
     position(): { x: number; y: number };
     renderedPosition(): { x: number; y: number };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data(key?: string): any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     layout(options: any): any;
 }
 
@@ -1767,6 +1770,7 @@ export class GraphView extends ItemView {
     /**
      * Get Cytoscape style configuration.
      */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private getGraphStyle(): any[] {
         return [
             {
@@ -2186,7 +2190,7 @@ export class GraphView extends ItemView {
     /**
      * Truncate label for display.
      */
-    private truncateLabel(label: any, maxLength: number = 20): string {
+    private truncateLabel(label: unknown, maxLength: number = 20): string {
         // Ensure label is a string
         const strLabel = label != null ? String(label) : '';
         if (strLabel.length <= maxLength) return strLabel;
@@ -2265,10 +2269,11 @@ export class GraphView extends ItemView {
                 try {
                     await this.app.vault.create(NODE_POSITIONS_FILE, content);
                     console.log('[GraphView] Positions saved successfully (created new file)');
-                } catch (createError: any) {
+                } catch (createError: unknown) {
                     // If file was created between our check and create (race condition),
                     // try to modify it instead
-                    if (createError.message?.includes('already exists')) {
+                    const errorMessage = (createError as Error).message;
+                    if (errorMessage?.includes('already exists')) {
                         const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
                         if (existingFile instanceof TFile) {
                             await this.app.vault.modify(existingFile, content);
