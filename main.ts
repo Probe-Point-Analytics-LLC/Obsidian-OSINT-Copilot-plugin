@@ -209,24 +209,24 @@ export default class VaultAIPlugin extends Plugin {
     // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
     const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt: MouseEvent) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
-      this.openChatView(forceNew);
+      void this.openChatView(forceNew);
     });
 
     // Graph features icons (Entity Graph, Timeline, Map) - shown when graph features are enabled
     if (this.settings.enableGraphFeatures) {
       const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        this.openGraphView(forceNew);
+        void this.openGraphView(forceNew);
       });
 
       const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        this.openTimelineView(forceNew);
+        void this.openTimelineView(forceNew);
       });
 
       const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        this.openMapView(forceNew);
+        void this.openMapView(forceNew);
       });
     }
 
@@ -263,49 +263,49 @@ export default class VaultAIPlugin extends Plugin {
     this.addCommand({
       id: "open-chat-view",
       name: "Open chat",
-      callback: () => { this.openChatView(); },
+      callback: () => { void this.openChatView(); },
     });
 
     this.addCommand({
       id: "open-chat-view-new-pane",
       name: "Open chat in new pane",
-      callback: () => { this.openChatView(true); },
+      callback: () => { void this.openChatView(true); },
     });
 
     this.addCommand({
       id: "open-graph-view",
       name: "Open entity graph",
-      callback: () => { this.openGraphView(); },
+      callback: () => { void this.openGraphView(); },
     });
 
     this.addCommand({
       id: "open-graph-view-new-pane",
       name: "Open entity graph in new pane",
-      callback: () => { this.openGraphView(true); },
+      callback: () => { void this.openGraphView(true); },
     });
 
     this.addCommand({
       id: "open-timeline-view",
       name: "Open timeline",
-      callback: () => { this.openTimelineView(); },
+      callback: () => { void this.openTimelineView(); },
     });
 
     this.addCommand({
       id: "open-timeline-view-new-pane",
       name: "Open timeline in new pane",
-      callback: () => { this.openTimelineView(true); },
+      callback: () => { void this.openTimelineView(true); },
     });
 
     this.addCommand({
       id: "open-map-view",
       name: "Open location map",
-      callback: () => { this.openMapView(); },
+      callback: () => { void this.openMapView(); },
     });
 
     this.addCommand({
       id: "open-map-view-new-pane",
       name: "Open location map in new pane",
-      callback: () => { this.openMapView(true); },
+      callback: () => { void this.openMapView(true); },
     });
 
     // Utility commands
@@ -319,7 +319,7 @@ export default class VaultAIPlugin extends Plugin {
       id: "reindex-vault",
       name: "Reindex vault",
       callback: () => {
-        this.buildIndex().then(() => {
+        void this.buildIndex().then(() => {
           new Notice("Vault reindexed successfully.");
         });
       },
@@ -329,7 +329,7 @@ export default class VaultAIPlugin extends Plugin {
       id: "reload-entities",
       name: "Reload entities from notes",
       callback: () => {
-        this.entityManager.loadEntitiesFromNotes().then(() => {
+        void this.entityManager.loadEntitiesFromNotes().then(() => {
           new Notice("Entities reloaded from notes.");
         });
       },
@@ -438,7 +438,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // If not forcing new and one exists, reveal it
     if (!forceNew && existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      void this.app.workspace.revealLeaf(existing[0]);
       return existing[0];
     }
 
@@ -447,7 +447,7 @@ export default class VaultAIPlugin extends Plugin {
 
     if (leaf) {
       void leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
+      void this.app.workspace.revealLeaf(leaf);
       return leaf;
     }
     return null;
@@ -522,7 +522,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // If not forcing new and one exists, reveal it
     if (!forceNew && existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
@@ -531,7 +531,7 @@ export default class VaultAIPlugin extends Plugin {
 
     if (leaf) {
       void leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
+      void this.app.workspace.revealLeaf(leaf);
     }
   }
 
@@ -545,7 +545,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // If not forcing new and one exists, reveal it
     if (!forceNew && existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
@@ -554,7 +554,7 @@ export default class VaultAIPlugin extends Plugin {
 
     if (leaf) {
       void leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
-      this.app.workspace.revealLeaf(leaf);
+      void this.app.workspace.revealLeaf(leaf);
     }
   }
 
@@ -594,7 +594,7 @@ export default class VaultAIPlugin extends Plugin {
         const mapView = mapLeaves[0].view as MapView;
         if (mapView && typeof mapView.focusLocation === 'function') {
           // Refresh the map first to ensure the marker exists
-          mapView.refresh();
+          void mapView.refresh();
           // Then focus on the location
           setTimeout(() => {
             mapView.focusLocation(entityId);
@@ -1756,7 +1756,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // If not forcing new and one exists, reveal it
     if (!forceNew && existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]);
+      await this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
@@ -1768,7 +1768,7 @@ export default class VaultAIPlugin extends Plugin {
         type: CHAT_VIEW_TYPE,
         active: true,
       });
-      this.app.workspace.revealLeaf(leaf);
+      await this.app.workspace.revealLeaf(leaf);
     }
   }
 
@@ -1842,7 +1842,7 @@ class AskModal extends Modal {
         text: "Copy answer",
       });
       copyButton.addEventListener("click", () => {
-        navigator.clipboard.writeText(result.answer);
+        void navigator.clipboard.writeText(result.answer);
         new Notice("Answer copied to clipboard.");
       });
 
@@ -2031,7 +2031,7 @@ class ChatView extends ItemView {
 
   async onOpen() {
     await this.loadMostRecentConversation();
-    this.render();
+    await this.render();
   }
 
   async loadMostRecentConversation() {
@@ -2106,7 +2106,7 @@ class ChatView extends ItemView {
     this.renderConversationList();
   }
 
-  render() {
+  async render() {
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("vault-ai-chat-view");
@@ -2266,7 +2266,7 @@ class ChatView extends ItemView {
 
     // Messages container
     this.messagesContainer = chatArea.createDiv("vault-ai-chat-messages");
-    this.renderMessages();
+    await this.renderMessages();
 
     // Input area
     const inputContainer = chatArea.createDiv("vault-ai-chat-input");
@@ -2284,7 +2284,7 @@ class ChatView extends ItemView {
     this.inputEl.rows = 3;
 
     const sendBtn = inputContainer.createEl("button", { text: this.osintSearchMode ? "Search" : "Send" });
-    sendBtn.addEventListener("click", () => this.handleSend());
+    sendBtn.addEventListener("click", () => void this.handleSend());
 
     // Handle Enter key (Shift+Enter for new line)
     this.inputEl.addEventListener("keydown", (e) => {
@@ -2594,7 +2594,7 @@ class ChatView extends ItemView {
 
       // Click to load conversation
       convContent.addEventListener("click", () => {
-        this.loadConversation(conv.id);
+        void this.loadConversation(conv.id);
       });
 
       // Actions (delete, rename)
@@ -2605,7 +2605,7 @@ class ChatView extends ItemView {
       renameBtn.title = "Rename";
       renameBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.renameConversation(conv.id, conv.title);
+        void this.renameConversation(conv.id, conv.title);
       });
 
       const deleteBtn = actions.createEl("button", { cls: "vault-ai-conv-action-btn" });
@@ -2613,7 +2613,7 @@ class ChatView extends ItemView {
       deleteBtn.title = "Delete";
       deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.deleteConversation(conv.id);
+        void this.deleteConversation(conv.id);
       });
     }
   }
@@ -2652,7 +2652,7 @@ class ChatView extends ItemView {
         ? conversation.localSearchMode
         : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode);
       this.plugin.conversationService.setCurrentConversationId(id);
-      void this.render();
+      await this.render();
     } else {
       new Notice("Failed to load conversation");
     }
@@ -2672,7 +2672,7 @@ class ChatView extends ItemView {
     this.reportGenerationMode = false;
     this.osintSearchMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
-    this.render();
+    await this.render();
     new Notice("Started new conversation");
   }
 
@@ -2690,7 +2690,7 @@ class ChatView extends ItemView {
 
     // Always refresh the UI (the service already updated its internal list)
     this.renderConversationList();
-    this.renderMessages();
+    await this.renderMessages();
 
     if (success) {
       new Notice("Conversation deleted");
@@ -3119,7 +3119,7 @@ class ChatView extends ItemView {
       content: "🏷️ Extracting entities from your text...",
       progress: { message: "Analyzing text...", percent: 10 },
     });
-    this.renderMessages();
+    await this.renderMessages();
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
@@ -3167,7 +3167,7 @@ class ChatView extends ItemView {
           `🏷️ **Graph Generation Failed**\n\n` +
           `**Input:** ${inputText.substring(0, 100)}${inputText.length > 100 ? '...' : ''}\n\n` +
           `**Error:** ${result.error || 'Unknown error'}`;
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -3177,7 +3177,7 @@ class ChatView extends ItemView {
           `🏷️ **Graph Generation Complete**\n\n` +
           `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n` +
           `No entities detected in the provided text.`;
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -3319,7 +3319,7 @@ class ChatView extends ItemView {
       // Clear progress bar and show final result
       this.chatHistory[messageIndex].progress = undefined;
       this.chatHistory[messageIndex].content = resultContent;
-      this.renderMessages();
+      await this.renderMessages();
 
       if (createdEntities.length > 0) {
         const noticeMsg = connectionsCreated > 0
@@ -3335,7 +3335,7 @@ class ChatView extends ItemView {
         `🏷️ **Graph Generation Failed**\n\n` +
         `**Input:** ${inputText.substring(0, 100)}${inputText.length > 100 ? '...' : ''}\n\n` +
         `**Error:** ${errorMsg}`;
-      this.renderMessages();
+      await this.renderMessages();
       new Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
@@ -3348,7 +3348,7 @@ class ChatView extends ItemView {
       progress: { message: "Analyzing query...", percent: 10 },
     });
     const assistantIndex = this.chatHistory.length - 1;
-    this.renderMessages();
+    await this.renderMessages();
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
@@ -3390,7 +3390,7 @@ class ChatView extends ItemView {
         this.chatHistory[assistantIndex].content =
           entityMsg + "\n\nNo relevant notes found.";
         this.chatHistory[assistantIndex].notes = [];
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -3402,7 +3402,7 @@ class ChatView extends ItemView {
         `\n\nFound ${notes.length} relevant notes. Selecting key excerpts...\nDrafting the answer...\n\n`;
       this.chatHistory[assistantIndex].content = baseStatusText;
       this.chatHistory[assistantIndex].notes = notes;
-      this.renderMessages();
+      await this.renderMessages();
 
       updateProgress("Generating response...", 55);
 
@@ -3415,7 +3415,7 @@ class ChatView extends ItemView {
       const onRetry = (attempt: number, maxAttempts: number) => {
         updateProgress(`Network interrupted. Retrying... (${attempt}/${maxAttempts})`, streamProgress);
         this.chatHistory[assistantIndex].content = baseStatusText + `⚠️ Network interrupted. Retrying... (${attempt}/${maxAttempts})`;
-        this.renderMessages();
+        void this.renderMessages();
         // Reset streamed content for retry
         streamed = "";
       };
@@ -3434,7 +3434,7 @@ class ChatView extends ItemView {
           } else {
             // Fallback: update history and re-render
             this.chatHistory[assistantIndex].content = baseStatusText + streamed;
-            this.renderMessages();
+            void this.renderMessages();
           }
         },
         notes,
@@ -3448,7 +3448,7 @@ class ChatView extends ItemView {
       this.chatHistory[assistantIndex].content = finalContent;
       this.chatHistory[assistantIndex].notes = finalNotes;
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-      this.renderMessages();
+      await this.renderMessages();
 
       // Graph Generation Mode: Extract and create entities from the AI response
       if (this.graphGenerationMode) {
@@ -3458,7 +3458,7 @@ class ChatView extends ItemView {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[assistantIndex].content = `Error: ${errorMsg}\n\n💡 Tip: Your message was saved. You can try sending it again.`;
-      this.renderMessages();
+      await this.renderMessages();
 
       // Restore the query to the input field so user can retry
       this.inputEl.value = query;
@@ -3486,7 +3486,7 @@ class ChatView extends ItemView {
       updateProgress("Extracting entities from response...", 10);
       let statusText = currentContent + "\n\n🏷️ Extracting entities...";
       this.chatHistory[assistantIndex].content = statusText;
-      this.renderMessages();
+      await this.renderMessages();
 
       // Use explicit entity extraction instruction to ensure AI returns operations, not analysis
       const textToProcess = `Extract all entities (people, companies, locations, events) and their relationships from the following content. Create entities for each person, company, location, and event mentioned. Return JSON operations to create entities, do NOT provide analysis or summary.\n\nOriginal Query: ${originalQuery}\n\nContent to extract entities from:\n${aiResponse}`;
@@ -3509,7 +3509,7 @@ class ChatView extends ItemView {
         }
         const retryMsg = `\n\n⚠️ ${reasonText}. Retrying in ${delaySeconds}s... (attempt ${attempt + 1}/${maxAttempts})`;
         this.chatHistory[assistantIndex].content = currentContent + retryMsg;
-        this.renderMessages();
+        void this.renderMessages();
       };
 
       updateProgress("Sending to AI for entity extraction...", 25);
@@ -3528,7 +3528,7 @@ class ChatView extends ItemView {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
         this.chatHistory[assistantIndex].content = currentContent +
           `\n\n⚠️ Entity extraction failed: ${result.error || 'Unknown error'}`;
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -3536,7 +3536,7 @@ class ChatView extends ItemView {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
         this.chatHistory[assistantIndex].content = currentContent +
           "\n\n🏷️ No new entities detected in the response.";
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -3681,7 +3681,7 @@ class ChatView extends ItemView {
         this.chatHistory[assistantIndex].content = currentContent +
           "\n\n🏷️ No new entities were created (entities may already exist).";
       }
-      this.renderMessages();
+      await this.renderMessages();
 
     } catch (error) {
       console.error('[GraphGeneration] Error during graph generation:', error);
@@ -3689,7 +3689,7 @@ class ChatView extends ItemView {
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[assistantIndex].content = currentContent +
         `\n\n⚠️ Graph generation error: ${errorMsg}`;
-      this.renderMessages();
+      await this.renderMessages();
     }
   }
 
@@ -3700,7 +3700,7 @@ class ChatView extends ItemView {
       role: "assistant",
       content: "📄 Starting report generation...",
     });
-    this.renderMessages();
+    await this.renderMessages();
 
     try {
       // Generate report with status updates, progress, and intermediate results
@@ -3757,7 +3757,7 @@ class ChatView extends ItemView {
         reportData.content;
       this.chatHistory[messageIndex].content = finalContent;
       this.chatHistory[messageIndex].reportFilePath = fileName; // Store report file path for button
-      this.renderMessages();
+      await this.renderMessages();
 
       // Graph Generation Mode: Extract and create entities from the report
       if (this.graphGenerationMode) {
@@ -3798,7 +3798,7 @@ class ChatView extends ItemView {
         `📄 **Companies&People Generation Failed**\n\n` +
         `**Request:** ${description}\n\n` +
         `**Error:** ${userMessage}${suggestion}`;
-      this.renderMessages();
+      await this.renderMessages();
       new Notice(`Companies&People generation failed: ${userMessage}`);
     }
   }
@@ -3814,7 +3814,7 @@ class ChatView extends ItemView {
       content: "🔎 Searching OSINT databases...",
       progress: { message: "Analyzing query...", percent: 10 },
     });
-    this.renderMessages();
+    await this.renderMessages();
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
@@ -3831,7 +3831,7 @@ class ChatView extends ItemView {
           `🔎 **Leak Search Failed**\n\n` +
           `**Error:** License key required for Leak Search.\n\n` +
           `Please configure your API key in Settings → OSINT Copilot → API Key.`;
-        this.renderMessages();
+        await this.renderMessages();
         new Notice("License key required for leak search. Configure in settings.");
         return;
       }
@@ -3885,7 +3885,7 @@ class ChatView extends ItemView {
           this.chatHistory[messageIndex].content = searchResultsContent +
             `\n\n⚠️ Graph generation failed: ${errorMsg}`;
           this.chatHistory[messageIndex].progress = undefined;
-          this.renderMessages();
+          await this.renderMessages();
         }
       }
 
@@ -3908,7 +3908,7 @@ class ChatView extends ItemView {
         `🔎 **Leak Search Failed**\n\n` +
         `**Query:** ${query}\n\n` +
         `**Error:** ${errorMessage}${suggestion}`;
-      this.renderMessages();
+      await this.renderMessages();
       new Notice(`Leak Search failed: ${errorMessage}`);
     }
   }
@@ -3964,7 +3964,7 @@ class ChatView extends ItemView {
     }
 
     this.chatHistory[messageIndex].content = content;
-    this.renderMessages();
+    void this.renderMessages();
     return content;
   }
 
@@ -4032,7 +4032,7 @@ class ChatView extends ItemView {
       status: "starting",
       progress: { message: "Initializing investigation...", percent: 5 },
     });
-    this.renderMessages();
+    await this.renderMessages();
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
@@ -4111,7 +4111,7 @@ class ChatView extends ItemView {
           query: query, // Store query for later use when saving report
           progress: { message: "Searching dark web engines...", percent: 20 },
         };
-        this.renderMessages();
+        await this.renderMessages();
 
         // Start polling for status (pass query for report saving)
         this.pollDarkWebStatus(jobId, messageIndex, query);
@@ -4137,7 +4137,7 @@ class ChatView extends ItemView {
             content: `🕵️ Starting dark web investigation...\n\n⚠️ Network interrupted. Retrying... (${attempt}/${maxRetries})`,
             status: "starting",
           };
-          this.renderMessages();
+          await this.renderMessages();
 
           await this.plugin.sleep(delayMs);
         }
@@ -4153,7 +4153,7 @@ class ChatView extends ItemView {
       content: `❌ Error starting dark web investigation: ${isNetworkError ? "Network connection error. Please check your internet connection and try again." : errorMsg}\n\n💡 Tip: Your query was saved. You can try sending it again.`,
       status: "failed",
     };
-    this.renderMessages();
+    await this.renderMessages();
 
     // Restore the query to the input field so user can retry
     this.inputEl.value = query;
@@ -4191,7 +4191,7 @@ class ChatView extends ItemView {
           status: "timeout",
           progress: undefined,
         };
-        this.renderMessages();
+        await this.renderMessages();
         return;
       }
 
@@ -4228,7 +4228,7 @@ class ChatView extends ItemView {
                 status: "failed",
                 progress: undefined,
               };
-              this.renderMessages();
+              await this.renderMessages();
               return;
             }
           }
@@ -4310,7 +4310,7 @@ class ChatView extends ItemView {
             status: "failed",
             progress: undefined, // Clear progress bar on failure
           };
-          this.renderMessages();
+          await this.renderMessages();
         }
       } catch (error) {
         consecutiveErrors++;
@@ -4346,7 +4346,7 @@ class ChatView extends ItemView {
             status: "failed",
             progress: undefined,
           };
-          this.renderMessages();
+          await this.renderMessages();
         }
       }
     };
@@ -4422,7 +4422,7 @@ class ChatView extends ItemView {
         progress: undefined, // Clear progress bar on completion
         reportFilePath: savedFileName || undefined, // Store report file path for button
       };
-      this.renderMessages();
+      await this.renderMessages();
 
       // Graph Generation Mode: Extract and create entities from the dark web results
       if (this.graphGenerationMode) {
@@ -4448,7 +4448,7 @@ class ChatView extends ItemView {
         status: "completed",
         query: query,
       };
-      this.renderMessages();
+      await this.renderMessages();
     }
   }
 
@@ -4542,7 +4542,7 @@ class VaultAISettingTab extends PluginSettingTab {
             this.plugin.settings.reportApiKey = value;
             await this.plugin.saveSettings();
             // Refresh license key info when key changes
-            this.refreshApiInfo();
+            await this.refreshApiInfo();
           });
         text.inputEl.type = "password";
       });
@@ -4563,7 +4563,7 @@ class VaultAISettingTab extends PluginSettingTab {
       });
 
       // Fetch license key info
-      this.fetchApiKeyInfo().then((info) => {
+      void this.fetchApiKeyInfo().then((info) => {
         loadingEl.remove();
 
         if (info) {
