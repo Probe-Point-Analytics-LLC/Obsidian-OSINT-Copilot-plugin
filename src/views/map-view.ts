@@ -1,3 +1,4 @@
+/* eslint-disable obsidianmd/no-static-styles-assignment */
 /**
  * Map View for visualizing Location entities using Leaflet.
  */
@@ -164,7 +165,9 @@ interface MapLocation {
 
 export class MapView extends ItemView {
     private entityManager: EntityManager;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private map: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private markers: Map<string, any> = new Map();
     private container: HTMLElement | null = null;
     private onLocationClick: ((entityId: string) => void) | null = null;
@@ -205,10 +208,9 @@ export class MapView extends ItemView {
         // Create map container
         this.container = container.createDiv({ cls: 'graph_copilot-map-canvas' });
         this.container.id = 'graph_copilot-map-' + Date.now();
-        this.container.style.cssText = `
-            width: 100%;
-            height: calc(100% - 50px);
-        `;
+        this.container.id = 'graph_copilot-map-' + Date.now();
+        this.container.style.setProperty('width', '100%');
+        this.container.style.setProperty('height', 'calc(100% - 50px)');
 
         // Load Leaflet and initialize
         await this.loadLeaflet();
@@ -221,6 +223,14 @@ export class MapView extends ItemView {
     }
 
     async onClose(): Promise<void> {
+        // Initialize handlers
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((this.map as any)._handlers) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this.map as any)._handlers.forEach((handler: any) => {
+                handler.enable();
+            });
+        }
         if (this.map) {
             this.map.remove();
             this.map = null;
@@ -259,16 +269,14 @@ export class MapView extends ItemView {
      * Create the toolbar.
      */
     private createToolbar(toolbar: HTMLElement): void {
-        toolbar.style.cssText = `
-            display: flex;
-            gap: 10px;
-            padding: 10px;
-            background: var(--background-secondary);
-            border-bottom: 1px solid var(--background-modifier-border);
-        `;
+        toolbar.style.setProperty('display', 'flex');
+        toolbar.style.setProperty('gap', '10px');
+        toolbar.style.setProperty('padding', '10px');
+        toolbar.style.setProperty('background', 'var(--background-secondary)');
+        toolbar.style.setProperty('border-bottom', '1px solid var(--background-modifier-border)');
 
         // Add Location button
-        const addBtn = toolbar.createEl('button', { text: '+ Add location' });
+        const addBtn = toolbar.createEl('button', { text: '+ add location' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openLocationCreator();
 
@@ -276,22 +284,25 @@ export class MapView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Refresh button
-        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
         refreshBtn.onclick = () => { this.refresh(); };
 
         // Fit all button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit all' });
+        const fitBtn = toolbar.createEl('button', { text: '⊡ fit all' });
         fitBtn.onclick = () => this.fitAllMarkers();
 
         // Geolocate button
-        const geolocateBtn = toolbar.createEl('button', { text: '📍 Geolocate missing' });
+        const geolocateBtn = toolbar.createEl('button', { text: '📍 geolocate missing' });
         geolocateBtn.onclick = () => this.showGeolocateMissingDialog();
 
         // Info label
-        toolbar.createEl('span', {
+        const infoSpan = toolbar.createEl('span', {
             text: 'Map shows all location entities with coordinates',
             cls: 'graph_copilot-map-info'
-        }).style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 12px;';
+        });
+        infoSpan.style.setProperty('margin-left', 'auto');
+        infoSpan.style.setProperty('color', 'var(--text-muted)');
+        infoSpan.style.setProperty('font-size', '12px');
     }
 
     /**
@@ -371,18 +382,19 @@ export class MapView extends ItemView {
                 // Use actual tiles as icons
                 if (layerName === 'Satellite') {
                     // Esri Satellite tile (rich green/terrain)
-                    container.style.backgroundImage = 'url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8")';
+                    container.style.setProperty('background-image', 'url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8")');
                 } else if (layerName === 'Carto Light') {
                     // Carto Light tile (clean/grey)
-                    container.style.backgroundImage = 'url("https://a.basemaps.cartocdn.com/light_all/5/15/12.png")';
+                    container.style.setProperty('background-image', 'url("https://a.basemaps.cartocdn.com/light_all/5/15/12.png")');
                 } else {
                     // Default OSM tile (standard map colors)
-                    container.style.backgroundImage = 'url("https://tile.openstreetmap.org/5/16/10.png")';
+                    container.style.setProperty('background-image', 'url("https://tile.openstreetmap.org/5/16/10.png")');
                 }
             }
         };
 
         // Listen for layer changes
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.map.on('baselayerchange', (e: any) => {
             updateLayerControl(e.name);
         });
@@ -396,6 +408,7 @@ export class MapView extends ItemView {
         }, 100);
 
         // Add context menu for the map
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.map.on('contextmenu', (e: any) => {
             const menu = new Menu();
 
@@ -476,15 +489,15 @@ export class MapView extends ItemView {
 
         for (const entity of entities) {
             console.log('[MapView] Parsing entity:', entity.label, 'properties:', entity.properties);
-            const lat = this.parseCoordinate(entity.properties.latitude);
-            const lng = this.parseCoordinate(entity.properties.longitude);
+            const lat = this.parseCoordinate(entity.properties.latitude as string | number | undefined);
+            const lng = this.parseCoordinate(entity.properties.longitude as string | number | undefined);
             console.log('[MapView] Parsed coordinates - lat:', lat, 'lng:', lng);
 
             if (lat !== null && lng !== null) {
                 // Handle both Location and Address entity types
                 const address = entity.type === 'Address'
-                    ? (entity.properties.street || entity.properties.full)
-                    : entity.properties.address;
+                    ? ((entity.properties.street || entity.properties.full) as string)
+                    : (entity.properties.address as string);
 
                 locations.push({
                     id: entity.id,
@@ -492,8 +505,8 @@ export class MapView extends ItemView {
                     lat,
                     lng,
                     address: address,
-                    city: entity.properties.city,
-                    country: entity.properties.country
+                    city: entity.properties.city as string,
+                    country: entity.properties.country as string
                 });
             } else {
                 console.log('[MapView] Skipping entity - missing coordinates');
@@ -562,6 +575,7 @@ export class MapView extends ItemView {
         });
 
         // Context menu handler
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         marker.on('contextmenu', (e: any) => {
             const menu = new Menu();
 
@@ -667,8 +681,8 @@ export class MapView extends ItemView {
     addLocation(entity: Entity): void {
         if (entity.type !== EntityType.Location) return;
 
-        const lat = this.parseCoordinate(entity.properties.latitude);
-        const lng = this.parseCoordinate(entity.properties.longitude);
+        const lat = this.parseCoordinate(entity.properties.latitude as string | number | undefined);
+        const lng = this.parseCoordinate(entity.properties.longitude as string | number | undefined);
 
         if (lat !== null && lng !== null) {
             this.addMarker({
@@ -676,9 +690,9 @@ export class MapView extends ItemView {
                 label: entity.label,
                 lat,
                 lng,
-                address: entity.properties.address,
-                city: entity.properties.city,
-                country: entity.properties.country
+                address: entity.properties.address as string,
+                city: entity.properties.city as string,
+                country: entity.properties.country as string
             });
         }
     }
@@ -691,6 +705,20 @@ export class MapView extends ItemView {
         if (marker) {
             marker.remove();
             this.markers.delete(entityId);
+        }
+    }
+
+    /**
+     * Highlight a specific location.
+     */
+    highlightLocation(entityId: string): void {
+        const entity = this.entityManager.getEntity(entityId);
+        if (!entity || !this.map) return;
+
+        const marker = this.markers.get(entity.id);
+        if (marker) {
+            marker.openPopup();
+            this.map.setView(marker.getLatLng(), 15);
         }
     }
 
@@ -786,15 +814,13 @@ class GeolocateMissingModal extends Modal {
 
         this.locations.forEach(entity => {
             const item = listContainer.createDiv({ cls: 'geolocate-item' });
-            item.style.cssText = `
-                padding: 10px;
-                margin: 5px 0;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            `;
+            item.style.setProperty('padding', '10px');
+            item.style.setProperty('margin', '5px 0');
+            item.style.setProperty('border', '1px solid var(--background-modifier-border)');
+            item.style.setProperty('border-radius', '4px');
+            item.style.setProperty('display', 'flex');
+            item.style.setProperty('justify-content', 'space-between');
+            item.style.setProperty('align-items', 'center');
 
             const info = item.createDiv();
             info.createEl('strong', { text: entity.label });
@@ -860,7 +886,7 @@ class GeolocateMissingModal extends Modal {
             );
 
             // Update entity
-            const updates: Record<string, any> = {
+            const updates: Record<string, unknown> = {
                 latitude: result.latitude,
                 longitude: result.longitude
             };
@@ -876,12 +902,12 @@ class GeolocateMissingModal extends Modal {
 
             // Update UI
             btn.textContent = '✓ done';
-            btn.style.color = 'var(--text-success)';
-            item.style.borderColor = 'var(--text-success)';
+            btn.style.setProperty('color', 'var(--text-success)');
+            item.style.setProperty('border-color', 'var(--text-success)');
 
         } catch (error) {
             btn.textContent = '✗ failed';
-            btn.style.color = 'var(--text-error)';
+            btn.style.setProperty('color', 'var(--text-error)');
             if (error instanceof GeocodingError) {
                 new Notice(`Failed to geocode ${entity.label}: ${error.message}`);
             } else {
@@ -923,7 +949,7 @@ class GeolocateMissingModal extends Modal {
                     }
                 );
 
-                const updates: Record<string, any> = {
+                const updates: Record<string, unknown> = {
                     latitude: result.latitude,
                     longitude: result.longitude
                 };

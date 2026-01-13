@@ -119,7 +119,7 @@ export class EntityManager {
             }
 
             // Extract properties from frontmatter
-            const properties: Record<string, any> = {};
+            const properties: Record<string, unknown> = {};
             const config = ENTITY_CONFIGS[type];
             const allProps = [...config.properties, ...COMMON_PROPERTIES];
 
@@ -130,9 +130,9 @@ export class EntityManager {
             }
 
             return {
-                id: frontmatter.id,
+                id: frontmatter.id as string,
                 type,
-                label: frontmatter.label || getEntityLabel(type, properties),
+                label: (frontmatter.label as string) || getEntityLabel(type, properties),
                 properties,
                 filePath: file.path
             };
@@ -145,12 +145,12 @@ export class EntityManager {
     /**
      * Parse YAML frontmatter from note content.
      */
-    private parseFrontmatter(content: string): Record<string, any> | null {
+    private parseFrontmatter(content: string): Record<string, unknown> | null {
         const match = content.match(/^---\n([\s\S]*?)\n---/);
         if (!match) return null;
 
         const yaml = match[1];
-        const result: Record<string, any> = {};
+        const result: Record<string, unknown> = {};
 
         // Simple YAML parser for frontmatter
         const lines = yaml.split('\n');
@@ -210,7 +210,7 @@ export class EntityManager {
             }
 
             // Extract connection properties from frontmatter
-            const properties: Record<string, any> = {};
+            const properties: Record<string, unknown> = {};
             const excludedKeys = ['id', 'type', 'relationship', 'fromEntityId', 'toEntityId',
                 'fromEntity', 'toEntity', 'ftmSchema', 'label'];
 
@@ -221,13 +221,13 @@ export class EntityManager {
             }
 
             return {
-                id: frontmatter.id,
-                fromEntityId: frontmatter.fromEntityId,
-                toEntityId: frontmatter.toEntityId,
-                relationship: frontmatter.relationship,
-                label: frontmatter.label,
+                id: frontmatter.id as string,
+                fromEntityId: frontmatter.fromEntityId as string,
+                toEntityId: frontmatter.toEntityId as string,
+                relationship: frontmatter.relationship as string,
+                label: frontmatter.label as string,
                 properties: Object.keys(properties).length > 0 ? properties : undefined,
-                ftmSchema: frontmatter.ftmSchema,
+                ftmSchema: frontmatter.ftmSchema as string,
                 filePath: file.path
             };
         } catch (error) {
@@ -329,7 +329,7 @@ export class EntityManager {
      */
     async createEntity(
         type: EntityType,
-        properties: Record<string, any>,
+        properties: Record<string, unknown>,
         options?: { skipAutoGeocode?: boolean }
     ): Promise<Entity> {
         const id = generateId();
@@ -367,7 +367,7 @@ export class EntityManager {
      */
     async createFTMEntity(
         schemaName: string,
-        properties: Record<string, any>,
+        properties: Record<string, unknown>,
         options?: { skipAutoGeocode?: boolean }
     ): Promise<Entity> {
         const id = generateId();
@@ -405,7 +405,7 @@ export class EntityManager {
     /**
      * Geocode an Address entity's properties if coordinates are missing.
      */
-    private async geocodeAddressIfNeeded(properties: Record<string, any>): Promise<Record<string, any>> {
+    private async geocodeAddressIfNeeded(properties: Record<string, unknown>): Promise<Record<string, unknown>> {
         const hasLatitude = properties.latitude !== undefined && properties.latitude !== null && properties.latitude !== '';
         const hasLongitude = properties.longitude !== undefined && properties.longitude !== null && properties.longitude !== '';
 
@@ -413,10 +413,10 @@ export class EntityManager {
             return properties;
         }
 
-        const address = properties.full || properties.street;
-        const city = properties.city;
-        const state = properties.state || properties.region;
-        const country = properties.country;
+        const address = (properties.full as string) || (properties.street as string);
+        const city = properties.city as string;
+        const state = (properties.state as string) || (properties.region as string);
+        const country = properties.country as string;
 
         if (!address && !city && !state && !country) {
             return properties;
@@ -559,7 +559,7 @@ ${entity.properties.notes || ''}
      * Geocode a Location entity's properties if coordinates are missing.
      * Uses the address, city, state, country fields to build a geocoding query.
      */
-    private async geocodeLocationIfNeeded(properties: Record<string, any>): Promise<Record<string, any>> {
+    private async geocodeLocationIfNeeded(properties: Record<string, unknown>): Promise<Record<string, unknown>> {
         // Check if coordinates already exist and are valid
         const hasLatitude = properties.latitude !== undefined && properties.latitude !== null && properties.latitude !== '';
         const hasLongitude = properties.longitude !== undefined && properties.longitude !== null && properties.longitude !== '';
@@ -570,10 +570,10 @@ ${entity.properties.notes || ''}
         }
 
         // Build geocoding query from available address fields
-        const address = properties.address;
-        const city = properties.city;
-        const state = properties.state;
-        const country = properties.country;
+        const address = properties.address as string;
+        const city = properties.city as string;
+        const state = properties.state as string;
+        const country = properties.country as string;
 
         // Need at least one field to geocode
         if (!address && !city && !state && !country) {
@@ -586,7 +586,7 @@ ${entity.properties.notes || ''}
             const result = await geocodingService.geocodeAddressWithRetry(address, city, state, country);
 
             // Update properties with geocoded coordinates
-            const updatedProperties: Record<string, any> = {
+            const updatedProperties: Record<string, unknown> = {
                 ...properties,
                 latitude: result.latitude,
                 longitude: result.longitude
@@ -615,15 +615,15 @@ ${entity.properties.notes || ''}
             if (error instanceof GeocodingError) {
                 console.warn('[EntityManager] Geocoding failed:', error.type, error.message);
                 if (error.type === GeocodingErrorType.NotFound) {
-                    new Notice("⚠️ Could not find coordinates for location. You can add them manually.");
+                    new Notice("⚠️ could not find coordinates for location. You can add them manually.");
                 } else if (error.type === GeocodingErrorType.RateLimited) {
-                    new Notice("⚠️ Geocoding rate limited. Coordinates can be added manually.");
+                    new Notice("⚠️ geocoding rate limited. Coordinates can be added manually.");
                 } else {
                     new Notice(`⚠️ Geocoding failed: ${error.message}`);
                 }
             } else {
                 console.error('[EntityManager] Unexpected geocoding error:', error);
-                new Notice("⚠️ Could not geocode location. You can add coordinates manually.");
+                new Notice("⚠️ could not geocode location. You can add coordinates manually.");
             }
             // Return original properties without coordinates - entity creation continues
             return properties;
@@ -650,7 +650,7 @@ ${entity.properties.notes || ''}
         const hasCoords = entity.properties.latitude && entity.properties.longitude;
         if (hasCoords) {
             console.log('[EntityManager] Entity already has coordinates');
-            new Notice('📍 Location already has coordinates.');
+            new Notice('📍 location already has coordinates.');
             return true;
         }
 
@@ -830,7 +830,7 @@ ${entity.properties.notes || ''}
     /**
      * Update an existing entity.
      */
-    async updateEntity(entityId: string, properties: Record<string, any>): Promise<Entity | null> {
+    async updateEntity(entityId: string, properties: Record<string, unknown>): Promise<Entity | null> {
         const entity = this.entities.get(entityId);
         if (!entity) return null;
 
@@ -1080,7 +1080,7 @@ ${entity.properties.notes || ''}
         fromEntityId: string,
         toEntityId: string,
         relationship: string,
-        properties?: Record<string, any>
+        properties?: Record<string, unknown>
     ): Promise<Connection | null> {
         const fromEntity = this.entities.get(fromEntityId);
         const toEntity = this.entities.get(toEntityId);
@@ -1118,7 +1118,7 @@ ${entity.properties.notes || ''}
      * Update an existing connection's properties.
      * Updates both the in-memory connection and the connection note file.
      */
-    async updateConnection(connectionId: string, properties: Record<string, any>): Promise<Connection | null> {
+    async updateConnection(connectionId: string, properties: Record<string, unknown>): Promise<Connection | null> {
         const connection = this.connections.get(connectionId);
         if (!connection) return null;
 

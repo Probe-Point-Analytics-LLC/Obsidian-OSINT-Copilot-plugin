@@ -7,10 +7,10 @@ export interface ConversationMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
-  notes?: any[];
+  notes?: unknown[];
   jobId?: string;
   status?: string;
-  progress?: any;
+  progress?: unknown;
   reportFilePath?: string; // Path to generated report file
 }
 
@@ -73,9 +73,10 @@ export class ConversationService {
       if (!existing) {
         try {
           await this.app.vault.createFolder(currentPath);
-        } catch (error: any) {
+        } catch (error) {
           // Ignore "folder already exists" errors (race condition)
-          if (!error?.message?.includes('Folder already exists')) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          if (!errorMsg.includes('Folder already exists')) {
             throw error;
           }
         }
@@ -278,9 +279,9 @@ export class ConversationService {
       try {
         // Try to create the file
         await this.app.vault.create(filePath, content);
-      } catch (error: any) {
+      } catch (error) {
         // Handle "File already exists" race condition
-        const errorMsg = String(error?.message || error || '').toLowerCase();
+        const errorMsg = String(error instanceof Error ? error.message : error || '').toLowerCase();
         if (errorMsg.includes('already exists') || errorMsg.includes('file exists')) {
           // File was created between our check and create - just write to it
           await this.app.vault.adapter.write(filePath, content);

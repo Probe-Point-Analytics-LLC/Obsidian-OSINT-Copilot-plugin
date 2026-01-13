@@ -53,7 +53,7 @@ export interface DetectedEntity {
 export interface AISearchResponse {
     query: string;
     detected_entities: DetectedEntity[];
-    results: Record<string, any>[];
+    results: Record<string, unknown>[];
     total_results: number;
     status: 'success' | 'error' | 'no_results';
     status_message: string;
@@ -216,7 +216,7 @@ export class GraphApiService {
         ok: boolean;
         status: number;
         text: () => Promise<string>;
-        json: () => Promise<any>;
+        json: () => Promise<unknown>;
     } {
         return {
             ok: response.status >= 200 && response.status < 300,
@@ -239,7 +239,7 @@ export class GraphApiService {
         url: string,
         options: RequestInit,
         timeoutMs: number = 30000
-    ): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<any> }> {
+    ): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }> {
         // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(() => {
@@ -549,7 +549,7 @@ export class GraphApiService {
                     // Success!
                     const result = await response.json();
                     console.log('[GraphApiService] AI processing successful:', result);
-                    return result;
+                    return result as ProcessTextResponse;
                 }
             } catch (error) {
                 console.error(`[GraphApiService] Process text failed (attempt ${attempt}/${maxRetries}):`, error);
@@ -684,7 +684,7 @@ export class GraphApiService {
                     }
                 } else {
                     // Success!
-                    const result: AISearchResponse = await response.json();
+                    const result = await response.json() as AISearchResponse;
                     console.log('[GraphApiService] AI Search successful:', result.total_results, 'results');
                     return result;
                 }

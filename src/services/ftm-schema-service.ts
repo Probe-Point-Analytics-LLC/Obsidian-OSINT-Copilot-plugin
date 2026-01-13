@@ -1457,7 +1457,7 @@ class FTMSchemaServiceClass {
     /**
      * Get the label for an entity based on its schema and properties.
      */
-    getEntityLabel(schemaName: string, properties: Record<string, any>): string {
+    getEntityLabel(schemaName: string, properties: Record<string, unknown>): string {
         const labelField = this.getLabelField(schemaName);
         if (properties[labelField]) {
             return String(properties[labelField]);

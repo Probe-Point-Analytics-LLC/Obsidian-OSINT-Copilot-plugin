@@ -28,6 +28,7 @@
     "@typescript-eslint/parser": "^8.53.0",
     "esbuild": "^0.19.8",
     "eslint": "^9.39.2",
+    "eslint-formatter-compact": "^9.0.1",
     "eslint-plugin-obsidianmd": "^0.1.9",
     "globals": "^17.0.0",
     "obsidian": "^1.5.0",

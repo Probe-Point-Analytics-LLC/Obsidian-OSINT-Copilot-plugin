@@ -13,6 +13,14 @@ import { GeocodingService, GeocodingError } from '../services/geocoding-service'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const cytoscape: any;
 
+interface NodeSingular {
+    id(): string;
+    position(): { x: number; y: number };
+    renderedPosition(): { x: number; y: number };
+    data(key?: string): any;
+    layout(options: any): any;
+}
+
 export const GRAPH_VIEW_TYPE = 'graph_copilot-graph-view';
 
 // File path for persisting node positions
@@ -238,8 +246,8 @@ export class GraphView extends ItemView {
 
     async onClose(): Promise<void> {
         // Clean up keyboard handler
-        if ((this as any)._keyHandler) {
-            document.removeEventListener('keydown', (this as any)._keyHandler);
+        if ((this as unknown as { _keyHandler: (e: KeyboardEvent) => void })._keyHandler) {
+            document.removeEventListener('keydown', (this as unknown as { _keyHandler: (e: KeyboardEvent) => void })._keyHandler);
         }
 
         if (this.cy) {
@@ -307,12 +315,12 @@ export class GraphView extends ItemView {
         `;
 
         // Add Entity button
-        const addBtn = toolbar.createEl('button', { text: '+ Add entity' });
+        const addBtn = toolbar.createEl('button', { text: '+ add entity' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openEntityCreator();
 
         // Connect button (node selection mode)
-        this.connectBtn = toolbar.createEl('button', { text: '🔗 Connect' });
+        this.connectBtn = toolbar.createEl('button', { text: '🔗 connect' });
         this.connectBtn.addClass('graph_copilot-connect-btn');
         this.connectBtn.onclick = () => this.toggleConnectionMode();
 
@@ -320,19 +328,19 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Box Select button
-        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ Box select' });
+        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ box select' });
         this.boxSelectBtn.title = 'Enter box selection mode to select multiple items by dragging';
         this.boxSelectBtn.onclick = () => this.toggleBoxSelectMode();
 
         // Selection controls (shown when items are selected)
         // Clear Selection button (hidden by default)
-        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ Clear selection' });
+        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ clear selection' });
         this.clearSelectionBtn.addClass('graph_copilot-clear-selection-btn');
         this.clearSelectionBtn.style.display = 'none';
         this.clearSelectionBtn.onclick = () => this.clearSelection();
 
         // Delete Selected button (hidden by default)
-        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 Delete selected' });
+        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 delete selected' });
         this.deleteSelectedBtn.addClass('graph_copilot-delete-selected-btn');
         this.deleteSelectedBtn.style.display = 'none';
         this.deleteSelectedBtn.onclick = () => this.showDeleteConfirmation();
@@ -350,18 +358,18 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Undo/Redo buttons
-        this.undoBtn = toolbar.createEl('button', { text: '↶ Undo' });
+        this.undoBtn = toolbar.createEl('button', { text: '↶ undo' });
         this.undoBtn.addClass('graph_copilot-undo-btn');
         this.undoBtn.disabled = true;
         this.undoBtn.onclick = () => this.performUndo();
 
-        this.redoBtn = toolbar.createEl('button', { text: '↷ Redo' });
+        this.redoBtn = toolbar.createEl('button', { text: '↷ redo' });
         this.redoBtn.addClass('graph_copilot-redo-btn');
         this.redoBtn.disabled = true;
         this.redoBtn.onclick = () => this.performRedo();
 
         // History panel toggle button
-        const historyBtn = toolbar.createEl('button', { text: '📜 History' });
+        const historyBtn = toolbar.createEl('button', { text: '📜 history' });
         historyBtn.addClass('graph_copilot-history-btn');
         historyBtn.onclick = () => this.toggleHistoryPanel();
 
@@ -369,7 +377,7 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Rearrange button (was Refresh) - resets all node positions using automatic layout
-        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 Rearrange' });
+        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 rearrange' });
         rearrangeBtn.title = 'Rearrange all entities using automatic layout (resets current positions)';
         rearrangeBtn.onclick = () => {
             (async () => {
@@ -378,23 +386,23 @@ export class GraphView extends ItemView {
                 if (!confirmed) return;
 
                 rearrangeBtn.disabled = true;
-                rearrangeBtn.textContent = '🔄 Rearranging...';
+                rearrangeBtn.textContent = '🔄 rearranging...';
                 await this.rearrangeGraph();
                 rearrangeBtn.disabled = false;
-                rearrangeBtn.textContent = '🔄 Rearrange';
+                rearrangeBtn.textContent = '🔄 rearrange';
             })();
         };
 
 
         // Refresh button - reload entities while preserving positions
-        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
         refreshBtn.title = 'Refresh graph (reload entities while preserving zoom and positions)';
         refreshBtn.addClass('graph_copilot-refresh-btn');
         refreshBtn.onclick = () => {
             (async () => {
                 refreshBtn.disabled = true;
                 const originalText = refreshBtn.textContent;
-                refreshBtn.textContent = '↻ Refreshing...';
+                refreshBtn.textContent = '↻ refreshing...';
 
                 try {
                     await this.refreshWithSavedPositions();
@@ -421,7 +429,7 @@ export class GraphView extends ItemView {
             })();
         };
         // Fit button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit' });
+        const fitBtn = toolbar.createEl('button', { text: '⊡ fit' });
         fitBtn.title = 'Fit all entities in view';
         fitBtn.onclick = () => this.cy?.fit();
 
@@ -477,7 +485,7 @@ export class GraphView extends ItemView {
 
         if (this.connectBtn) {
             this.connectBtn.removeClass('graph_copilot-connect-btn-active');
-            this.connectBtn.textContent = '🔗 Connect';
+            this.connectBtn.textContent = '🔗 connect';
         }
 
         if (this.statusIndicator) {
@@ -519,7 +527,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.addClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ Exit box select';
+            this.boxSelectBtn.textContent = '⬚ exit box select';
         }
 
         if (this.cy) {
@@ -543,7 +551,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.removeClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ Box select';
+            this.boxSelectBtn.textContent = '⬚ box select';
         }
 
         if (this.cy) {
@@ -682,6 +690,7 @@ export class GraphView extends ItemView {
         });
 
         // Event handlers - Single click selects, double-click opens
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('tap', 'node', (evt: any) => {
             const node = evt.target;
             const entityId = node.id();
@@ -943,6 +952,7 @@ export class GraphView extends ItemView {
         document.addEventListener('keydown', keyHandler);
 
         // Store reference for cleanup
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (this as any)._keyHandler = keyHandler;
     }
 
@@ -991,6 +1001,7 @@ export class GraphView extends ItemView {
      */
     private selectAll(): void {
         if (!this.cy) return;
+
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.nodes().forEach((node: any) => {
@@ -1696,7 +1707,7 @@ export class GraphView extends ItemView {
     /**
      * Show tooltip for Location entities with map preview hint.
      */
-    private showLocationTooltip(node: any): void {
+    private showLocationTooltip(node: NodeSingular): void {
         const entityId = node.id();
         const entity = this.entityManager.getEntity(entityId);
         if (!entity || !entity.properties.latitude || !entity.properties.longitude) return;
@@ -1708,8 +1719,8 @@ export class GraphView extends ItemView {
         tooltip.id = 'graph_copilot-location-tooltip';
         tooltip.className = 'graph_copilot-location-tooltip';
 
-        const lat = parseFloat(entity.properties.latitude);
-        const lng = parseFloat(entity.properties.longitude);
+        const lat = parseFloat(entity.properties.latitude as string);
+        const lng = parseFloat(entity.properties.longitude as string);
 
         tooltip.innerHTML = `
             <div style="font-weight: bold; margin-bottom: 4px;">📍 ${entity.label}</div>
@@ -1762,7 +1773,7 @@ export class GraphView extends ItemView {
                 selector: 'node',
                 style: {
                     'background-color': 'data(color)',
-                    'label': (ele: any) => {
+                    'label': (ele: NodeSingular) => {
                         const icon = ele.data('icon') || '📦';
                         const label = ele.data('label') || '';
                         return `${icon}\n${label}`;
@@ -2030,7 +2041,7 @@ export class GraphView extends ItemView {
         this.cy.add([...nodes, ...edges]);
 
         // Update cache with current positions
-        this.cy.nodes().forEach((node: any) => {
+        this.cy.nodes().forEach((node: NodeSingular) => {
             const pos = node.position();
             this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
         });
@@ -2038,7 +2049,7 @@ export class GraphView extends ItemView {
         // Only run layout for new nodes if there are any
         if (nodesNeedingLayout.length > 0 && nodesNeedingLayout.length < entities.length) {
             // Run layout only on new nodes
-            const newNodes = this.cy.nodes().filter((node: any) => nodesNeedingLayout.includes(node.id()));
+            const newNodes = this.cy.nodes().filter((node: NodeSingular) => nodesNeedingLayout.includes(node.id()));
             if (newNodes.length > 0) {
                 newNodes.layout({
                     name: 'cose',
@@ -2051,7 +2062,7 @@ export class GraphView extends ItemView {
 
                 // Save new positions after layout completes
                 setTimeout(() => {
-                    newNodes.forEach((node: any) => {
+                    newNodes.forEach((node: NodeSingular) => {
                         const pos = node.position();
                         this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
                     });
@@ -2063,7 +2074,7 @@ export class GraphView extends ItemView {
             this.runLayout();
             // Save positions after layout
             setTimeout(() => {
-                this.cy.nodes().forEach((node: any) => {
+                this.cy.nodes().forEach((node: NodeSingular) => {
                     const pos = node.position();
                     this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
                 });
@@ -2089,7 +2100,7 @@ export class GraphView extends ItemView {
 
         // Save new positions after layout completes
         setTimeout(() => {
-            this.cy.nodes().forEach((node: any) => {
+            this.cy.nodes().forEach((node: NodeSingular) => {
                 const pos = node.position();
                 this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
             });
@@ -2281,6 +2292,7 @@ export class GraphView extends ItemView {
     /**
      * Simple debounce helper.
      */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private debounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         return ((...args: Parameters<T>) => {
@@ -2822,7 +2834,7 @@ export class GraphView extends ItemView {
             );
 
             // Update entity with coordinates
-            const updates: Record<string, any> = {
+            const updates: Record<string, unknown> = {
                 latitude: result.latitude,
                 longitude: result.longitude
             };

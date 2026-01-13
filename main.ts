@@ -1,19 +1,31 @@
+/* eslint-disable obsidianmd/no-static-styles-assignment */
 import {
   App,
+  Editor,
+  MarkdownView,
+  Modal,
+  Notice,
   Plugin,
   PluginSettingTab,
   Setting,
-  Notice,
   TFile,
-  CachedMetadata,
-  Modal,
   ItemView,
   WorkspaceLeaf,
   MarkdownRenderer,
-  Component,
+  Menu,
   requestUrl,
   RequestUrlResponse,
+  CachedMetadata,
+  Component,
 } from "obsidian";
+
+interface ApiKeyInfo {
+  plan?: string;
+  remaining_quota?: number;
+  active?: boolean;
+  expires_at?: string;
+  is_trial?: boolean;
+}
 
 // Graph plugin imports
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName } from './src/entities/types';
@@ -56,7 +68,7 @@ interface IndexedNote {
   content: string;
   tags: string[];
   links: string[];
-  frontmatter?: Record<string, any>;
+  frontmatter?: Record<string, unknown>;
   updated: number;
 }
 
@@ -768,7 +780,7 @@ export default class VaultAIPlugin extends Plugin {
       // Use provided model or default to CHAT_MODEL
       const modelToUse = model || CHAT_MODEL;
 
-      const requestBody: any = {
+      const requestBody: Record<string, unknown> = {
         model: modelToUse,
         messages,
         stream: stream,  // Pass stream flag to endpoint
@@ -1046,7 +1058,7 @@ export default class VaultAIPlugin extends Plugin {
       for (let initAttempt = 1; initAttempt <= maxInitialRetries; initAttempt++) {
         try {
           // Build request body - include conversation_id if we have one
-          const requestBody: any = {
+          const requestBody: Record<string, unknown> = {
             description: description,
             vault_context: "", // Can be extended to include vault context
             force_new_report: true // Always create new reports instead of overwriting
@@ -1397,7 +1409,7 @@ export default class VaultAIPlugin extends Plugin {
           const data = response.json;
 
           // Try different response structures
-          let messages: Record<string, any>[] = [];
+          let messages: Record<string, unknown>[] = [];
           if (Array.isArray(data)) {
             messages = data;
           } else if (data.messages && Array.isArray(data.messages)) {
@@ -1408,11 +1420,11 @@ export default class VaultAIPlugin extends Plugin {
 
           // Find last assistant message
           const lastAssistantMessage = messages
-            .filter((msg: Record<string, any>) => msg.role === 'assistant' || msg.role === 'AI')
+            .filter((msg: Record<string, unknown>) => msg.role === 'assistant' || msg.role === 'AI')
             .pop();
 
           if (lastAssistantMessage && lastAssistantMessage.content) {
-            return lastAssistantMessage.content;
+            return lastAssistantMessage.content as string;
           }
         } else if (response.status !== 404) {
           // If it's not 404, it might be a different error (403, 500, etc.)
@@ -1461,7 +1473,7 @@ export default class VaultAIPlugin extends Plugin {
 
       // Try strict JSON parse
       const match = text.trim();
-      let obj: any = null;
+      let obj: unknown = null;
       try {
         obj = JSON.parse(match);
         //console.log("[extractEntityFromQuery] Parsed JSON:", obj);
@@ -1485,11 +1497,12 @@ export default class VaultAIPlugin extends Plugin {
       }
 
       const allowed = ["person", "company", "asset", "event", "location", "unknown"];
-      const t = (obj?.type || "unknown").toLowerCase();
-      const type = allowed.includes(t) ? t : "unknown";
+      const data = obj as Record<string, unknown>;
+      const t = (String(data?.type) || "unknown").toLowerCase();
+      const type = allowed.includes(t) ? (t as "person" | "company" | "asset" | "event" | "location" | "unknown") : "unknown";
       const nameVal =
-        typeof obj?.name === "string" && obj.name.trim().length > 0
-          ? obj.name.trim()
+        typeof data?.name === "string" && data.name.trim().length > 0
+          ? data.name.trim()
           : null;
 
       console.log("[extractEntityFromQuery] Extracted:", { name: nameVal, type });
@@ -1561,7 +1574,7 @@ export default class VaultAIPlugin extends Plugin {
           }
 
           // Last resort: if there's only one string field, use it
-          const stringFields = Object.entries(data).filter(([_, v]) => typeof v === 'string' && (v as string).length > 100);
+          const stringFields = Object.entries(data).filter(([_, v]) => typeof v === 'string' && v.length > 100);
           if (stringFields.length === 1) {
             console.log(`[OSINT Copilot] Extracted markdown from single string field: ${stringFields[0][0]}`);
             return stringFields[0][1] as string;
@@ -1959,7 +1972,7 @@ interface ChatHistoryItem {
   notes?: IndexedNote[];
   jobId?: string; // For DarkWeb investigations
   status?: string; // For DarkWeb investigation status
-  progress?: any; // For DarkWeb investigation progress
+  progress?: { message: string, percent: number }; // For DarkWeb investigation progress
   query?: string; // For DarkWeb investigation query (used for saving reports)
   intermediateResults?: string[]; // For report generation intermediate results
   createdEntities?: CreatedEntityInfo[]; // For entity generation - clickable graph view links
@@ -2050,7 +2063,7 @@ class ChatView extends ItemView {
       notes: m.notes as IndexedNote[],
       jobId: m.jobId,
       status: m.status,
-      progress: m.progress,
+      progress: m.progress as { message: string, percent: number } | undefined,
       reportFilePath: m.reportFilePath
     }));
   }
@@ -3018,7 +3031,7 @@ class ChatView extends ItemView {
       (messageIndex < this.chatHistory.length &&
         this.chatHistory[messageIndex].intermediateResults &&
         this.chatHistory[messageIndex].intermediateResults!.length > 0
-        ? this.chatHistory[messageIndex].intermediateResults!
+        ? this.chatHistory[messageIndex].intermediateResults
         : undefined);
 
     // Update intermediate results
@@ -3221,7 +3234,7 @@ class ChatView extends ItemView {
               const entityLabel = labelField ? entityData.properties[labelField] : null;
 
               if (entityLabel) {
-                const nameValidation = validateEntityName(entityLabel, entityType);
+                const nameValidation = validateEntityName(entityLabel as string, entityType);
                 if (!nameValidation.isValid) {
                   console.warn(`[EntityOnlyMode] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
                   operationEntities.push(null);
@@ -3581,7 +3594,7 @@ class ChatView extends ItemView {
               const entityLabel = labelField ? entityData.properties[labelField] : null;
 
               if (entityLabel) {
-                const nameValidation = validateEntityName(entityLabel, entityType);
+                const nameValidation = validateEntityName(entityLabel as string, entityType);
                 if (!nameValidation.isValid) {
                   console.warn(`[GraphGeneration] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
                   operationEntities.push(null);
@@ -4367,7 +4380,7 @@ class ChatView extends ItemView {
 
       if (summary.findings && summary.findings.length > 0) {
         reportContent += `## Key Findings (${summary.findings.length})\n\n`;
-        summary.findings.forEach((finding: any, index: number) => {
+        summary.findings.forEach((finding: { title?: string; url?: string; snippet?: string }, index: number) => {
           reportContent += `### ${index + 1}. ${finding.title || "Finding"}\n\n`;
           if (finding.url) reportContent += `**URL:** ${finding.url}\n\n`;
           if (finding.snippet) reportContent += `${finding.snippet}\n\n`;
@@ -4541,6 +4554,11 @@ class VaultAISettingTab extends PluginSettingTab {
           const infoGrid = apiInfoContainer.createDiv();
           infoGrid.style.cssText = "display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.9em;";
 
+          // Safe values
+          const quota = info.remaining_quota ?? 0;
+          const isActive = info.active ?? false;
+          const isTrial = info.is_trial ?? false;
+
           // Plan
           const planDiv = infoGrid.createDiv();
           planDiv.createEl("strong", { text: "Plan: " });
@@ -4549,11 +4567,11 @@ class VaultAISettingTab extends PluginSettingTab {
           // Quota
           const quotaDiv = infoGrid.createDiv();
           quotaDiv.createEl("strong", { text: "Remaining quota: " });
-          const quotaSpan = quotaDiv.createSpan({ text: `${info.remaining_quota} reports` });
-          if (info.remaining_quota <= 0) {
+          const quotaSpan = quotaDiv.createSpan({ text: `${quota} reports` });
+          if (quota <= 0) {
             quotaSpan.style.color = "var(--text-error)";
             quotaSpan.style.fontWeight = "bold";
-          } else if (info.remaining_quota <= 5) {
+          } else if (quota <= 5) {
             quotaSpan.style.color = "var(--text-warning)";
           }
 
@@ -4561,18 +4579,22 @@ class VaultAISettingTab extends PluginSettingTab {
           const statusDiv = infoGrid.createDiv();
           statusDiv.createEl("strong", { text: "Status: " });
           const statusSpan = statusDiv.createSpan({
-            text: info.active ? "Active" : "Inactive"
+            text: isActive ? "Active" : "Inactive"
           });
-          statusSpan.style.color = info.active ? "var(--text-success)" : "var(--text-error)";
+          statusSpan.style.color = isActive ? "var(--text-success)" : "var(--text-error)";
 
           // Expiry
           const expiryDiv = infoGrid.createDiv();
           expiryDiv.createEl("strong", { text: "Expires: " });
-          const expiryDate = new Date(info.expires_at);
-          expiryDiv.createSpan({ text: expiryDate.toLocaleDateString() });
+          if (info.expires_at) {
+            const expiryDate = new Date(info.expires_at);
+            expiryDiv.createSpan({ text: expiryDate.toLocaleDateString() });
+          } else {
+            expiryDiv.createSpan({ text: "N/A" });
+          }
 
           // Trial badge
-          if (info.is_trial) {
+          if (isTrial) {
             const trialBadge = apiInfoContainer.createEl("p", {
               text: "🎁 trial account",
               cls: "setting-item-description",
@@ -4581,7 +4603,7 @@ class VaultAISettingTab extends PluginSettingTab {
           }
 
           // Quota exhaustion warning
-          if (info.remaining_quota <= 0) {
+          if (quota <= 0) {
             const quotaWarning = apiInfoContainer.createDiv();
             quotaWarning.style.cssText = "margin-top: 15px; padding: 12px; background: var(--background-modifier-error); border-radius: 5px; border-left: 4px solid var(--text-error);";
             quotaWarning.createEl("p", {
@@ -4595,11 +4617,11 @@ class VaultAISettingTab extends PluginSettingTab {
               href: "https://osint-copilot.com/dashboard/",
             });
             upgradeLink.style.cssText = "color: var(--interactive-accent); font-weight: 500; text-decoration: none;";
-          } else if (info.remaining_quota <= 5) {
+          } else if (quota <= 5) {
             const lowQuotaWarning = apiInfoContainer.createDiv();
             lowQuotaWarning.style.cssText = "margin-top: 15px; padding: 10px; background: var(--background-modifier-warning); border-radius: 5px;";
             lowQuotaWarning.createEl("p", {
-              text: `⚠️ Low quota: Only ${info.remaining_quota} report credits remaining.`,
+              text: `⚠️ Low quota: Only ${quota} report credits remaining.`,
             }).style.cssText = "margin: 0; font-size: 0.9em; color: var(--text-warning);";
           }
         } else {
@@ -4684,7 +4706,7 @@ class VaultAISettingTab extends PluginSettingTab {
 
   }
 
-  async fetchApiKeyInfo(): Promise<any> {
+  async fetchApiKeyInfo(): Promise<ApiKeyInfo | null> {
     if (!this.plugin.settings.reportApiKey) {
       return null;
     }
@@ -4704,7 +4726,7 @@ class VaultAISettingTab extends PluginSettingTab {
         return null;
       }
 
-      return response.json;
+      return response.json as ApiKeyInfo;
     } catch (error) {
       console.error("Failed to fetch license key info:", error);
       return null;

@@ -34,6 +34,7 @@ export const COMMON_RELATIONSHIPS = [
 export class EntityCreationModal extends Modal {
     private entityManager: EntityManager;
     private entityType: EntityType;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private properties: Record<string, any> = {};
     private onEntityCreated: ((entityId: string) => void) | null;
     private geocodingService: GeocodingService;
@@ -45,6 +46,7 @@ export class EntityCreationModal extends Modal {
         entityManager: EntityManager,
         entityType: EntityType,
         onEntityCreated?: (entityId: string) => void,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         initialProperties: Record<string, any> = {},
         private entityId?: string
     ) {
@@ -360,7 +362,7 @@ export class EntityCreationModal extends Modal {
                 ? this.properties[propertyName]
                 : (!this.entityId && propertyName === 'add_to_timeline');
 
-            (input as HTMLInputElement).checked = initialValue;
+            input.checked = initialValue;
             this.properties[propertyName] = initialValue;
             updateButtonState(initialValue);
 
@@ -394,7 +396,7 @@ export class EntityCreationModal extends Modal {
 
         // Set initial value if present in properties
         if (this.properties[propertyName] !== undefined) {
-            (input as HTMLInputElement).value = String(this.properties[propertyName]);
+            input.value = String(this.properties[propertyName]);
         }
 
         input.id = `entity-${propertyName}`;
@@ -1190,10 +1192,10 @@ export class EntityEditModal extends Modal {
 
         try {
             const result = await this.geocodingService.geocodeAddressWithRetry(
-                address,
-                city,
-                state,
-                country,
+                address as string,
+                city as string,
+                state as string,
+                country as string,
                 (attempt, maxAttempts, delaySeconds) => {
                     this.setGeocodeStatus('loading', `Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
                 }
@@ -1305,27 +1307,27 @@ export class EntityEditModal extends Modal {
         if (propertyName === 'notes' || propertyName === 'description' || propertyName === 'text') {
             input = fieldContainer.createEl('textarea', {
                 placeholder: `Enter ${this.formatPropertyName(propertyName).toLowerCase()}...`
-            }) as HTMLTextAreaElement;
+            });
             input.rows = 3;
-            if (currentValue) input.value = currentValue;
+            if (currentValue) input.value = currentValue as string;
         } else if (propertyName === 'start_date' || propertyName === 'end_date') {
             // Date-time input for date fields
             input = fieldContainer.createEl('input', {
                 type: 'datetime-local'
-            }) as HTMLInputElement;
+            });
             // Convert stored format back to datetime-local format
             if (currentValue) {
-                (input as HTMLInputElement).value = (currentValue as string).replace(' ', 'T');
+                input.value = (currentValue as string).replace(' ', 'T');
             }
         } else if (propertyName === 'latitude' || propertyName === 'longitude') {
             // Number input for coordinates
             input = fieldContainer.createEl('input', {
                 type: 'number',
                 placeholder: propertyName === 'latitude' ? '-90 to 90' : '-180 to 180'
-            }) as HTMLInputElement;
-            (input as HTMLInputElement).step = 'any';
+            });
+            input.step = 'any';
             if (currentValue !== undefined && currentValue !== null) {
-                (input as HTMLInputElement).value = currentValue.toString();
+                input.value = currentValue.toString();
             }
         } else if (propertyName === 'add_to_timeline' || propertyName === 'tampered') {
             // Boolean toggle button with visual feedback
@@ -1335,10 +1337,10 @@ export class EntityEditModal extends Modal {
             // Hidden checkbox for form state
             input = toggleContainer.createEl('input', {
                 type: 'checkbox'
-            }) as HTMLInputElement;
+            });
             input.id = `entity-${propertyName}`;
             input.style.display = 'none';
-            if (currentValue) (input as HTMLInputElement).checked = true;
+            if (currentValue) input.checked = true;
 
             // Create a styled toggle button
             const toggleBtn = toggleContainer.createEl('button', {
@@ -1410,8 +1412,8 @@ export class EntityEditModal extends Modal {
             input = fieldContainer.createEl('input', {
                 type: 'text',
                 placeholder: `Enter ${this.formatPropertyName(propertyName).toLowerCase()}...`
-            }) as HTMLInputElement;
-            if (currentValue) input.value = currentValue;
+            });
+            if (currentValue) input.value = currentValue as string;
         }
 
         input.id = `entity-${propertyName}`;
@@ -1421,12 +1423,12 @@ export class EntityEditModal extends Modal {
         input.addEventListener('input', () => {
             if (input.type === 'datetime-local') {
                 // Convert to YYYY-MM-DD HH:mm format
-                const value = (input as HTMLInputElement).value;
+                const value = input.value;
                 if (value) {
                     this.properties[propertyName] = value.replace('T', ' ');
                 }
             } else if (input.type === 'number') {
-                const value = parseFloat((input as HTMLInputElement).value);
+                const value = parseFloat(input.value);
                 if (!isNaN(value)) {
                     this.properties[propertyName] = value;
                 }
@@ -1438,7 +1440,7 @@ export class EntityEditModal extends Modal {
         // Also handle change event for datetime-local
         input.addEventListener('change', () => {
             if (input.type === 'datetime-local') {
-                const value = (input as HTMLInputElement).value;
+                const value = input.value;
                 if (value) {
                     this.properties[propertyName] = value.replace('T', ' ');
                 }
@@ -1503,10 +1505,10 @@ export class EntityEditModal extends Modal {
 
         try {
             const result = await this.geocodingService.geocodeAddressWithRetry(
-                this.properties.address,
-                this.properties.city,
-                this.properties.state,
-                this.properties.country,
+                this.properties.address as string,
+                this.properties.city as string,
+                this.properties.state as string,
+                this.properties.country as string,
                 (attempt, maxAttempts, delaySeconds) => {
                     this.setGeocodeStatus('loading', `Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
                 }
@@ -1563,6 +1565,7 @@ export class EntityEditModal extends Modal {
 export class FTMEntityCreationModal extends Modal {
     private entityManager: EntityManager;
     private schemaName: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private properties: Record<string, any> = {};
     private onEntityCreated: ((entityId: string) => void) | null;
     private optionalSectionExpanded: boolean = false;
@@ -1924,6 +1927,7 @@ export class FTMEntityEditModal extends Modal {
     private entityManager: EntityManager;
     private entity: Entity;
     private schemaName: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private properties: Record<string, any> = {};
     private onEntityUpdated: ((entityId: string) => void) | null;
     private optionalSectionExpanded: boolean = false;
@@ -2716,6 +2720,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
 export class FTMIntervalCreationModal extends Modal {
     private entityManager: EntityManager;
     private intervalType: string; // FTM schema name (e.g., 'Associate', 'Ownership')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private properties: Record<string, any> = {};
     private onConnectionCreated: ((connectionId?: string) => void) | null;
     private sourceEntityId: string | null = null;
@@ -2980,6 +2985,7 @@ export class FTMIntervalCreationModal extends Modal {
 export class ConnectionEditModal extends Modal {
     private entityManager: EntityManager;
     private connection: Connection;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private properties: Record<string, any> = {};
     private onConnectionUpdated: ((connectionId: string) => void) | null;
 

@@ -289,7 +289,7 @@ export interface Entity {
     id: string;
     type: EntityType | string;  // Support both legacy EntityType and FTM schema names
     label: string;
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     filePath?: string;
     /** FTM schema name if using FTM format */
     ftmSchema?: string;
@@ -302,7 +302,7 @@ export interface FTMEntity {
     id: string;
     schema: string;  // FTM schema name (e.g., 'Person', 'Company')
     label: string;
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     filePath?: string;
 }
 
@@ -312,7 +312,7 @@ export interface Connection {
     toEntityId: string;
     relationship: string;
     label?: string;  // Human-readable label for the connection
-    properties?: Record<string, any>;  // FTM interval properties (startDate, endDate, role, etc.)
+    properties?: Record<string, unknown>;  // FTM interval properties (startDate, endDate, role, etc.)
     ftmSchema?: string;  // FTM interval schema name (e.g., 'Associate', 'Ownership')
     filePath?: string;  // Path to the connection's note file
 }
@@ -327,7 +327,7 @@ export interface AIOperation {
     action: "create" | "update";
     entities?: Array<{
         type: string;
-        properties: Record<string, any>;
+        properties: Record<string, unknown>;
     }>;
     connections?: Array<{
         from: number;
@@ -337,7 +337,7 @@ export interface AIOperation {
     updates?: Array<{
         type: string;
         current_label: string;
-        new_properties: Record<string, any>;
+        new_properties: Record<string, unknown>;
     }>;
 }
 
@@ -359,7 +359,7 @@ export interface ProcessTextResponse {
  * Get the label for an entity based on its type and properties.
  * Supports both legacy EntityType and FTM schema names.
  */
-export function getEntityLabel(type: EntityType | string, properties: Record<string, any>): string {
+export function getEntityLabel(type: EntityType | string, properties: Record<string, unknown>): string {
     // First try FTM schema
     if (ftmSchemaService.hasSchema(type)) {
         return ftmSchemaService.getEntityLabel(type, properties);
