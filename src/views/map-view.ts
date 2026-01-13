@@ -2,7 +2,7 @@
  * Map View for visualizing Location entities using Leaflet.
  */
 
-import { App, ItemView, WorkspaceLeaf, Notice, Modal } from 'obsidian';
+import { App, ItemView, WorkspaceLeaf, Notice, Modal, Menu } from 'obsidian';
 import { Entity, EntityType, ENTITY_CONFIGS } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityCreationModal } from '../modals/entity-modal';
@@ -138,6 +138,17 @@ svg.leaflet-zoom-animated{will-change:transform}
 .leaflet-tooltip-left:before{right:0;margin-right:-12px;border-left-color:#fff}
 .leaflet-tooltip-right:before{left:0;margin-left:-12px;border-right-color:#fff}
 @media print{.leaflet-control{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+
+/* Custom Layer Control Styles */
+.leaflet-control-layers-toggle {
+    background-size: cover;
+    border: 2px solid rgba(255,255,255,0.8);
+    background-color: #fff;
+    transition: background-image 0.2s ease;
+}
+.leaflet-retina .leaflet-control-layers-toggle {
+    background-size: cover;
+}
 `;
 
 interface MapLocation {
@@ -318,11 +329,10 @@ export class MapView extends ItemView {
             crossOrigin: 'anonymous'
         });
 
-        // Fallback 1: OpenStreetMap DE (German mirror, often more reliable)
-        const osmDeLayer = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
-            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19,
-            crossOrigin: 'anonymous'
+        // Satellite Layer: Esri World Imagery
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+            maxZoom: 19
         });
 
         // Fallback 2: Carto Positron (light theme, no API key required)
@@ -347,15 +357,71 @@ export class MapView extends ItemView {
         // Add layer control for manual switching if needed
         const baseMaps = {
             "OpenStreetMap": osmLayer,
-            "OpenStreetMap DE": osmDeLayer,
+            "Satellite": satelliteLayer,
             "Carto Light": cartoLayer
         };
         L.control.layers(baseMaps).addTo(this.map);
+
+        // Update layer control visual on change
+        const updateLayerControl = (layerName: string) => {
+            const container = this.container?.querySelector('.leaflet-control-layers-toggle') as HTMLElement;
+            if (container) {
+                // Use actual tiles as icons
+                if (layerName === 'Satellite') {
+                    // Esri Satellite tile (rich green/terrain)
+                    container.style.backgroundImage = 'url("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/5/8")';
+                } else if (layerName === 'Carto Light') {
+                    // Carto Light tile (clean/grey)
+                    container.style.backgroundImage = 'url("https://a.basemaps.cartocdn.com/light_all/5/15/12.png")';
+                } else {
+                    // Default OSM tile (standard map colors)
+                    container.style.backgroundImage = 'url("https://tile.openstreetmap.org/5/16/10.png")';
+                }
+            }
+        };
+
+        // Listen for layer changes
+        this.map.on('baselayerchange', (e: any) => {
+            updateLayerControl(e.name);
+        });
+
+        // Set initial state (OSM is default)
+        setTimeout(() => updateLayerControl('OpenStreetMap'), 100);
 
         // Fix map size after container is visible
         setTimeout(() => {
             this.map?.invalidateSize();
         }, 100);
+
+        // Add context menu for the map
+        this.map.on('contextmenu', (e: any) => {
+            const menu = new Menu();
+
+            menu.addItem((item) => {
+                item
+                    .setTitle('Create Location Here')
+                    .setIcon('map-pin')
+                    .onClick(() => {
+                        const modal = new EntityCreationModal(
+                            this.app,
+                            this.entityManager,
+                            EntityType.Location,
+                            (entityId) => {
+                                this.refresh();
+                            },
+                            {
+                                latitude: e.latlng.lat,
+                                longitude: e.latlng.lng
+                            }
+                        );
+                        modal.open();
+                    });
+            });
+
+
+
+            menu.showAtPosition({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+        });
     }
 
     /**
@@ -493,6 +559,58 @@ export class MapView extends ItemView {
             }
         });
 
+        // Context menu handler
+        marker.on('contextmenu', (e: any) => {
+            const menu = new Menu();
+
+            menu.addItem((item) => {
+                item
+                    .setTitle('Open Note')
+                    .setIcon('file-text')
+                    .onClick(() => {
+                        this.entityManager.openEntityNote(location.id);
+                    });
+            });
+
+            menu.addItem((item) => {
+                item
+                    .setTitle('Edit')
+                    .setIcon('pencil')
+                    .onClick(() => {
+                        const entity = this.entityManager.getEntity(location.id);
+                        if (entity) {
+                            new EntityCreationModal(
+                                this.app,
+                                this.entityManager,
+                                entity.type as EntityType,
+                                () => {
+                                    this.refresh();
+                                },
+                                entity.properties,
+                                entity.id
+                            ).open();
+                        } else {
+                            new Notice('Entity not found');
+                        }
+                    });
+            });
+
+            menu.addItem((item) => {
+                item
+                    .setTitle('Focus')
+                    .setIcon('crosshair')
+                    .onClick(() => {
+                        this.map.setView(marker.getLatLng(), 16);
+                    });
+            });
+
+            menu.showAtPosition({ x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+
+            // Prevent map context menu from firing
+            L.DomEvent.stopPropagation(e);
+        });
+
+
         // Double-click to open note
         marker.on('dblclick', () => {
             this.entityManager.openEntityNote(location.id);
@@ -507,7 +625,7 @@ export class MapView extends ItemView {
     private createPopupContent(location: MapLocation): string {
         let content = `<div style="min-width: 150px;">`;
         content += `<strong>${location.label}</strong>`;
-        
+
         if (location.address) {
             content += `<br><small>${location.address}</small>`;
         }
@@ -515,7 +633,7 @@ export class MapView extends ItemView {
             const parts = [location.city, location.country].filter(Boolean);
             content += `<br><small>${parts.join(', ')}</small>`;
         }
-        
+
         content += `<br><small style="color: #888;">
             ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
         </small>`;
@@ -523,7 +641,7 @@ export class MapView extends ItemView {
             Double-click to open note
         </a>`;
         content += `</div>`;
-        
+
         return content;
     }
 
@@ -600,7 +718,7 @@ export class MapView extends ItemView {
             const isLocationOrAddress = entity.type === EntityType.Location || entity.type === 'Address';
             const hasNoCoords = !entity.properties.latitude || !entity.properties.longitude;
             const hasAddress = entity.properties.address || entity.properties.street ||
-                             entity.properties.full || entity.properties.city || entity.properties.country;
+                entity.properties.full || entity.properties.city || entity.properties.country;
             return isLocationOrAddress && hasNoCoords && hasAddress;
         });
 
@@ -681,7 +799,7 @@ class GeolocateMissingModal extends Modal {
             info.createEl('br');
 
             const address = entity.properties.address || entity.properties.street ||
-                          entity.properties.full || entity.properties.city || entity.properties.country;
+                entity.properties.full || entity.properties.city || entity.properties.country;
             info.createEl('small', {
                 text: String(address),
                 cls: 'text-muted'

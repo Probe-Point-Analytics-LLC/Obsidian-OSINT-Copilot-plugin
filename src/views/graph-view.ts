@@ -1888,8 +1888,21 @@ export class GraphView extends ItemView {
             };
         });
 
-        // Add edges
-        const edges = connections.map(conn => ({
+        // Build a set of valid entity IDs for edge validation
+        const entityIds = new Set(entities.map(e => e.id));
+
+        // Add edges - filter out connections with missing source or target entities
+        const validConnections = connections.filter(conn => {
+            const hasSource = entityIds.has(conn.fromEntityId);
+            const hasTarget = entityIds.has(conn.toEntityId);
+            if (!hasSource || !hasTarget) {
+                console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? 'source' : 'target'} entity`);
+                return false;
+            }
+            return true;
+        });
+
+        const edges = validConnections.map(conn => ({
             data: {
                 id: conn.id,
                 source: conn.fromEntityId,
@@ -1972,8 +1985,21 @@ export class GraphView extends ItemView {
             console.log(`[GraphView] Nodes with saved positions:`, nodesWithSavedPositions);
         }
 
-        // Add edges
-        const edges = connections.map(conn => ({
+        // Build a set of valid entity IDs for edge validation
+        const entityIds = new Set(entities.map(e => e.id));
+
+        // Add edges - filter out connections with missing source or target entities
+        const validConnections = connections.filter(conn => {
+            const hasSource = entityIds.has(conn.fromEntityId);
+            const hasTarget = entityIds.has(conn.toEntityId);
+            if (!hasSource || !hasTarget) {
+                console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? 'source' : 'target'} entity`);
+                return false;
+            }
+            return true;
+        });
+
+        const edges = validConnections.map(conn => ({
             data: {
                 id: conn.id,
                 source: conn.fromEntityId,

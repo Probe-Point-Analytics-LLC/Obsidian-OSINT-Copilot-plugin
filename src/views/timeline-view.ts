@@ -2,7 +2,7 @@
  * Timeline View for visualizing Event entities with dates.
  */
 
-import { App, ItemView, WorkspaceLeaf } from 'obsidian';
+import { App, ItemView, WorkspaceLeaf, Menu, Notice } from 'obsidian';
 import { Entity, EntityType, ENTITY_CONFIGS } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityCreationModal } from '../modals/entity-modal';
@@ -404,6 +404,36 @@ export class TimelineView extends ItemView {
                 this.entityManager.openEntityNote(event.id);
             }
         };
+
+        // Context menu handler
+        card.addEventListener('contextmenu', (e: MouseEvent) => {
+            const menu = new Menu();
+
+            menu.addItem((item) => {
+                item
+                    .setTitle('Edit')
+                    .setIcon('pencil')
+                    .onClick(() => {
+                        const entity = this.entityManager.getEntity(event.id);
+                        if (entity) {
+                            new EntityCreationModal(
+                                this.app,
+                                this.entityManager,
+                                entity.type as EntityType,
+                                () => {
+                                    this.refresh();
+                                },
+                                entity.properties,
+                                entity.id
+                            ).open();
+                        } else {
+                            new Notice('Entity not found');
+                        }
+                    });
+            });
+
+            menu.showAtPosition({ x: e.clientX, y: e.clientY });
+        });
     }
 
     /**

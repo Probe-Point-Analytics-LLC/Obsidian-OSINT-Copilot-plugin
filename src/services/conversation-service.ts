@@ -22,9 +22,9 @@ export interface ConversationMetadata {
   messageCount: number;
   localSearchMode: boolean;
   darkWebMode: boolean;
-  entityGenerationMode: boolean;
+  graphGenerationMode: boolean;
   reportGenerationMode: boolean;
-  osintSearchMode?: boolean; // OSINT Search mode
+  osintSearchMode?: boolean; // Leak Search mode
   reportConversationId?: string; // conversation_id для report generation API
 }
 
@@ -150,7 +150,8 @@ export class ConversationService {
     const updatedAt = parseInt(this.extractYamlValue(frontmatter, 'updatedAt') || '0');
     const messageCount = parseInt(this.extractYamlValue(frontmatter, 'messageCount') || '0');
     const darkWebMode = this.extractYamlValue(frontmatter, 'darkWebMode') === 'true';
-    const entityGenerationMode = this.extractYamlValue(frontmatter, 'entityGenerationMode') === 'true';
+    const graphGenerationMode = this.extractYamlValue(frontmatter, 'graphGenerationMode') === 'true' ||
+      this.extractYamlValue(frontmatter, 'entityGenerationMode') === 'true'; // Backward compatibility
     const reportGenerationMode = this.extractYamlValue(frontmatter, 'reportGenerationMode') === 'true';
     // localSearchMode defaults to true for backward compatibility (if not specified, assume local search mode)
     // Also check for legacy 'lookupMode' key for backward compatibility with old conversations
@@ -162,7 +163,7 @@ export class ConversationService {
     const localSearchMode = localSearchModeValue === null ? !darkWebMode && !reportGenerationMode : localSearchModeValue === 'true';
     const reportConversationId = this.extractYamlValue(frontmatter, 'reportConversationId');
 
-    return { id, title, createdAt, updatedAt, messageCount, localSearchMode, darkWebMode, entityGenerationMode, reportGenerationMode, reportConversationId: reportConversationId || undefined };
+    return { id, title, createdAt, updatedAt, messageCount, localSearchMode, darkWebMode, graphGenerationMode, reportGenerationMode, reportConversationId: reportConversationId || undefined };
   }
 
   private extractYamlValue(yaml: string, key: string): string | null {
@@ -212,7 +213,7 @@ export class ConversationService {
     return title.length < firstMessage.length ? title + '...' : title;
   }
 
-  async createConversation(firstMessage?: string, darkWebMode: boolean = false, entityGenerationMode: boolean = false, reportGenerationMode: boolean = false): Promise<Conversation> {
+  async createConversation(firstMessage?: string, darkWebMode: boolean = false, graphGenerationMode: boolean = false, reportGenerationMode: boolean = false): Promise<Conversation> {
     const id = this.generateId();
     const now = Date.now();
     // Infer localSearchMode: true if no other main mode is active
@@ -225,7 +226,7 @@ export class ConversationService {
       messageCount: 0,
       localSearchMode,
       darkWebMode,
-      entityGenerationMode,
+      graphGenerationMode,
       reportGenerationMode,
       messages: []
     };
@@ -303,15 +304,15 @@ export class ConversationService {
       `messageCount: ${conversation.messageCount}`,
       `localSearchMode: ${conversation.localSearchMode}`,
       `darkWebMode: ${conversation.darkWebMode}`,
-      `entityGenerationMode: ${conversation.entityGenerationMode || false}`,
+      `graphGenerationMode: ${conversation.graphGenerationMode || false}`,
       `reportGenerationMode: ${conversation.reportGenerationMode || false}`
     ];
-    
+
     // Add reportConversationId only if it exists
     if (conversation.reportConversationId) {
       frontmatterLines.push(`reportConversationId: ${conversation.reportConversationId}`);
     }
-    
+
     frontmatterLines.push('---', '');
     const frontmatter = frontmatterLines.join('\n');
 

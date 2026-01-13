@@ -715,7 +715,7 @@ ${entity.properties.notes || ''}
      * Save an entity as an Obsidian note.
      */
     private async saveEntityAsNote(entity: Entity): Promise<string> {
-        const filename = sanitizeFilename(entity.label);
+        const filename = sanitizeFilename(`${entity.label}_${entity.id.substring(0, 8)}`);
         const folderPath = normalizePath(`${this.basePath}/${entity.type}`);
 
         // Ensure the folder exists before creating the file

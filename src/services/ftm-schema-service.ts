@@ -1463,9 +1463,12 @@ class FTMSchemaServiceClass {
             return String(properties[labelField]);
         }
 
-        // Fallback: try 'name' field
-        if (properties.name) {
-            return String(properties.name);
+        // Fallback: try common label fields that backend might use
+        const fallbackFields = ['full_name', 'name', 'title', 'address', 'label'];
+        for (const field of fallbackFields) {
+            if (properties[field] && typeof properties[field] === 'string' && properties[field].trim()) {
+                return String(properties[field]);
+            }
         }
 
         return schemaName;

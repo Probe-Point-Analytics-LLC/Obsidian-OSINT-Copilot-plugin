@@ -1,7 +1,7 @@
 LegalEntity:
   extends:
     - Thing
-  label: Legal entity
+  label: Legal entity (General entity)
   plural: Legal entities
   description: >
     Any party to legal proceedings, such as asset ownership, corporate governance

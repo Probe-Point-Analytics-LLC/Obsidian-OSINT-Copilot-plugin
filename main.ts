@@ -11,6 +11,8 @@ import {
   WorkspaceLeaf,
   MarkdownRenderer,
   Component,
+  requestUrl,
+  RequestUrlResponse,
 } from "obsidian";
 
 // Graph plugin imports
@@ -192,22 +194,27 @@ export default class VaultAIPlugin extends Plugin {
 
     // Add ribbon icons for all OSINT Copilot features (grouped together)
     // Chat icon is always shown, but requires license key to use
-    this.addRibbonIcon("message-square", "OSINT Copilot Chat", async () => {
-      await this.openChatView();
+    // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
+    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot Chat (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const forceNew = evt.ctrlKey || evt.metaKey;
+      await this.openChatView(forceNew);
     });
 
     // Graph features icons (Entity Graph, Timeline, Map) - shown when graph features are enabled
     if (this.settings.enableGraphFeatures) {
-      this.addRibbonIcon("git-fork", "Entity Graph", async () => {
-        await this.openGraphView();
+      const graphRibbon = this.addRibbonIcon("git-fork", "Entity Graph (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+        const forceNew = evt.ctrlKey || evt.metaKey;
+        await this.openGraphView(forceNew);
       });
 
-      this.addRibbonIcon("calendar", "Timeline", async () => {
-        await this.openTimelineView();
+      const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+        const forceNew = evt.ctrlKey || evt.metaKey;
+        await this.openTimelineView(forceNew);
       });
 
-      this.addRibbonIcon("map-pin", "Location Map", async () => {
-        await this.openMapView();
+      const mapRibbon = this.addRibbonIcon("map-pin", "Location Map (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+        const forceNew = evt.ctrlKey || evt.metaKey;
+        await this.openMapView(forceNew);
       });
     }
 
@@ -248,9 +255,21 @@ export default class VaultAIPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "open-chat-view-new-pane",
+      name: "Open Chat in New Pane",
+      callback: async () => await this.openChatView(true),
+    });
+
+    this.addCommand({
       id: "open-graph-view",
       name: "Open Entity Graph",
       callback: async () => await this.openGraphView(),
+    });
+
+    this.addCommand({
+      id: "open-graph-view-new-pane",
+      name: "Open Entity Graph in New Pane",
+      callback: async () => await this.openGraphView(true),
     });
 
     this.addCommand({
@@ -260,9 +279,21 @@ export default class VaultAIPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "open-timeline-view-new-pane",
+      name: "Open Timeline in New Pane",
+      callback: async () => await this.openTimelineView(true),
+    });
+
+    this.addCommand({
       id: "open-map-view",
       name: "Open Location Map",
       callback: async () => await this.openMapView(),
+    });
+
+    this.addCommand({
+      id: "open-map-view-new-pane",
+      name: "Open Location Map in New Pane",
+      callback: async () => await this.openMapView(true),
     });
 
     // Utility commands
@@ -326,20 +357,80 @@ export default class VaultAIPlugin extends Plugin {
   // GRAPH VIEW METHODS
   // ============================================================================
 
-  async openGraphView() {
+  /**
+   * Get or create a leaf in the main editor area for OSINT views.
+   * This replaces note editors and uses the main workspace area.
+   * @param viewType The view type to check for existing instances
+   * @param forceNew If true, creates a new split pane even if one exists
+   * @returns A workspace leaf in the main editor area
+   */
+  private getMainEditorLeaf(viewType: string, forceNew: boolean): WorkspaceLeaf | null {
+    // Check for existing OSINT views in the main area
+    const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE];
+
+    // Find all leaves in the main editor area (not sidebars)
+    const mainLeaves: WorkspaceLeaf[] = [];
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      // Check if leaf is in the main editor area (root split)
+      const root = leaf.getRoot();
+      if (root === this.app.workspace.rootSplit) {
+        mainLeaves.push(leaf);
+      }
+    });
+
+    // Find existing OSINT views in main area
+    const existingOsintLeaves = mainLeaves.filter(leaf =>
+      osintViewTypes.includes(leaf.view?.getViewType() || '')
+    );
+
+    // Find note editor leaves in main area
+    const noteEditorLeaves = mainLeaves.filter(leaf =>
+      leaf.view?.getViewType() === 'markdown' || leaf.view?.getViewType() === 'empty'
+    );
+
+    // If forceNew and there's an existing OSINT view, split from it
+    if (forceNew && existingOsintLeaves.length > 0) {
+      return this.app.workspace.createLeafBySplit(existingOsintLeaves[0], 'vertical');
+    }
+
+    // If there's a note editor, replace it
+    if (noteEditorLeaves.length > 0) {
+      return noteEditorLeaves[0];
+    }
+
+    // If there's an existing OSINT view and not forcing new, split from it
+    if (existingOsintLeaves.length > 0) {
+      return this.app.workspace.createLeafBySplit(existingOsintLeaves[0], 'vertical');
+    }
+
+    // Otherwise, get a new leaf in the main area
+    return this.app.workspace.getLeaf('tab');
+  }
+
+  /**
+   * Open the Graph View in the main editor area.
+   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
+   *                 This allows multiple views to be open simultaneously.
+   */
+  async openGraphView(forceNew: boolean = false) {
     if (!this.settings.enableGraphFeatures) {
       new Notice('Graph features are disabled. Enable them in Settings → OSINT Copilot → Enable Graph Features', 5000);
       console.warn('[VaultAIPlugin] Attempted to open graph view but graph features are disabled');
       return;
     }
-    
-    console.log('[VaultAIPlugin] Opening graph view');
+
+    console.log('[VaultAIPlugin] Opening graph view, forceNew:', forceNew);
     const existing = this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE);
-    if (existing.length > 0) {
+
+    // If not forcing new and one exists, reveal it
+    if (!forceNew && existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
       return existing[0];
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
+
+    // Get a leaf in the main editor area
+    const leaf = this.getMainEditorLeaf(GRAPH_VIEW_TYPE, forceNew);
+
     if (leaf) {
       await leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
@@ -407,26 +498,46 @@ export default class VaultAIPlugin extends Plugin {
     }
   }
 
-  async openTimelineView() {
+  /**
+   * Open the Timeline View in the main editor area.
+   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
+   *                 This allows multiple views to be open simultaneously.
+   */
+  async openTimelineView(forceNew: boolean = false) {
     const existing = this.app.workspace.getLeavesOfType(TIMELINE_VIEW_TYPE);
-    if (existing.length > 0) {
+
+    // If not forcing new and one exists, reveal it
+    if (!forceNew && existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
+
+    // Get a leaf in the main editor area
+    const leaf = this.getMainEditorLeaf(TIMELINE_VIEW_TYPE, forceNew);
+
     if (leaf) {
       await leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
     }
   }
 
-  async openMapView() {
+  /**
+   * Open the Map View in the main editor area.
+   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
+   *                 This allows multiple views to be open simultaneously.
+   */
+  async openMapView(forceNew: boolean = false) {
     const existing = this.app.workspace.getLeavesOfType(MAP_VIEW_TYPE);
-    if (existing.length > 0) {
+
+    // If not forcing new and one exists, reveal it
+    if (!forceNew && existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.app.workspace.getRightLeaf(false);
+
+    // Get a leaf in the main editor area
+    const leaf = this.getMainEditorLeaf(MAP_VIEW_TYPE, forceNew);
+
     if (leaf) {
       await leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
@@ -654,7 +765,7 @@ export default class VaultAIPlugin extends Plugin {
     try {
       // Use provided model or default to CHAT_MODEL
       const modelToUse = model || CHAT_MODEL;
-      
+
       const requestBody: any = {
         model: modelToUse,
         messages,
@@ -662,84 +773,33 @@ export default class VaultAIPlugin extends Plugin {
       };
 
 
-      const response = await fetch(endpoint, {
+      // Use Obsidian's requestUrl to bypass CORS restrictions
+      const response: RequestUrlResponse = await requestUrl({
+        url: endpoint,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.settings.reportApiKey}`,
         },
         body: JSON.stringify(requestBody),
-        mode: "cors",
-        credentials: "omit",
+        throw: false,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
+      if (response.status < 200 || response.status >= 300) {
+        const errorText = response.text || "";
         console.error("[callRemoteModel] API error:", response.status, errorText);
         throw new Error(
           `API request failed (${response.status}): ${errorText.substring(0, 200)}`
         );
       }
 
-      // Non-streaming endpoint always returns JSON
-      if (!stream) {
-        const jsonData = await response.json();
-        const content = jsonData.choices?.[0]?.message?.content || 
-                       jsonData.choices?.[0]?.text || 
-                       jsonData.content || 
-                       "";
-        return content || "No answer received.";
-      }
-
-      // If streaming (SSE response)
-      if (!response.body) {
-        throw new Error("Response body is null");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullResponse = "";
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-
-          const dataPart = trimmed.slice("data:".length).trim();
-          if (dataPart === "[DONE]") {
-            continue;
-          }
-
-          try {
-            const parsed = JSON.parse(dataPart);
-            const deltaContent = parsed.choices?.[0]?.delta?.content;
-            const messageContent = parsed.choices?.[0]?.message?.content;
-
-            const content = deltaContent ?? messageContent ?? "";
-            if (content) {
-              fullResponse += content;
-            }
-          } catch (e) {
-            console.warn("Failed to parse SSE chunk:", e, trimmed);
-          }
-        }
-      }
-
-      if (!fullResponse) {
-        fullResponse = "No answer received.";
-      }
-
-      return fullResponse;
+      // requestUrl doesn't support streaming, so always parse as JSON
+      const jsonData = response.json;
+      const content = jsonData.choices?.[0]?.message?.content ||
+        jsonData.choices?.[0]?.text ||
+        jsonData.content ||
+        "";
+      return content || "No answer received.";
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Model call failed: ${error.message}`);
@@ -776,76 +836,19 @@ export default class VaultAIPlugin extends Plugin {
 
   /**
    * Execute a streaming fetch request (single attempt)
+   * Note: Obsidian's requestUrl doesn't support streaming, so we use non-streaming
+   * and deliver the full response at once via onDelta callback.
    */
   private async executeStreamingFetch(
     endpoint: string,
     messages: ChatMessage[],
     onDelta?: (text: string) => void
   ): Promise<string> {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.settings.reportApiKey}`,
-      },
-      body: JSON.stringify({
-        model: CHAT_MODEL,
-        messages,
-        stream: true,
-      }),
-      mode: "cors",
-      credentials: "omit",
-    });
-
-    if (!response.ok) {
-      // Fallback to non-streaming on any error (e.g., org not verified for streaming)
-      const full = await this.callRemoteModel(messages);
-      if (onDelta) onDelta(full);
-      return full;
-    }
-
-    // Fallback if streaming body is not available
-    if (!response.body || !("getReader" in response.body)) {
-      const full = await this.callRemoteModel(messages);
-      if (onDelta) onDelta(full);
-      return full;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-
-    let fullText = "";
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") {
-          return fullText;
-        }
-        try {
-          const parsed = JSON.parse(data);
-          const delta: string = parsed?.choices?.[0]?.delta?.content ?? "";
-          if (delta) {
-            fullText += delta;
-            onDelta?.(delta);
-          }
-        } catch {
-          // ignore JSON parse errors for keep-alive lines
-        }
-      }
-    }
-
-    return fullText;
+    // Obsidian's requestUrl doesn't support streaming responses,
+    // so we fall back to non-streaming and deliver the full response at once
+    const full = await this.callRemoteModel(messages);
+    if (onDelta) onDelta(full);
+    return full;
   }
 
   async callRemoteModelStream(
@@ -1033,7 +1036,7 @@ export default class VaultAIPlugin extends Plugin {
 
       let jobId = "";
       const maxInitialRetries = 3;
-      
+
       // Get conversation_id from current conversation (if exists)
       // Each conversation has its own conversation_id for report generation
       const savedConversationId = currentConversation?.reportConversationId || null;
@@ -1043,9 +1046,10 @@ export default class VaultAIPlugin extends Plugin {
           // Build request body - include conversation_id if we have one
           const requestBody: any = {
             description: description,
-            vault_context: "" // Can be extended to include vault context
+            vault_context: "", // Can be extended to include vault context
+            force_new_report: true // Always create new reports instead of overwriting
           };
-          
+
           // Include conversation_id only if we have a saved one
           if (savedConversationId) {
             requestBody.conversation_id = savedConversationId;
@@ -1054,26 +1058,26 @@ export default class VaultAIPlugin extends Plugin {
             console.log('[OSINT Copilot] Sending first request (no conversation_id)');
           }
 
-          const generateResponse = await fetch(`${baseUrl}/api/generate-report`, {
+          const generateResponse: RequestUrlResponse = await requestUrl({
+            url: `${baseUrl}/api/generate-report`,
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${reportApiKey}`,
             },
             body: JSON.stringify(requestBody),
-            mode: 'cors',
-            credentials: 'omit',
+            throw: false,
           });
 
-          if (!generateResponse.ok) {
-            const errorText = await generateResponse.text();
+          if (generateResponse.status < 200 || generateResponse.status >= 300) {
+            const errorText = generateResponse.text || "";
 
             // Handle quota exhaustion specifically - don't retry these
             if (generateResponse.status === 403) {
               const lowerError = errorText.toLowerCase();
               if (lowerError.includes("quota") || lowerError.includes("exhausted")) {
                 throw new Error(
-                  "Corporate Report quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
+                  "Companies&People quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
                 );
               }
               if (lowerError.includes("expired")) {
@@ -1089,11 +1093,11 @@ export default class VaultAIPlugin extends Plugin {
             }
 
             throw new Error(
-              `Corporate Report generation request failed (${generateResponse.status}): ${errorText.substring(0, 200)}`
+              `Companies&People generation request failed (${generateResponse.status}): ${errorText.substring(0, 200)}`
             );
           }
 
-          const generateData = await generateResponse.json();
+          const generateData = generateResponse.json;
           jobId = generateData.job_id;
 
           if (!jobId) {
@@ -1112,7 +1116,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = initError instanceof Error && this.isTransientNetworkError(initError);
 
           if (isNetworkError && initAttempt < maxInitialRetries) {
-            console.log(`[OSINT Copilot] Corporate Report init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
+            console.log(`[OSINT Copilot] Companies&People init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
             statusCallback?.(`Network interrupted, retrying... (attempt ${initAttempt}/${maxInitialRetries})`);
             await this.sleep(1000 * initAttempt); // Exponential backoff
           } else {
@@ -1121,7 +1125,7 @@ export default class VaultAIPlugin extends Plugin {
         }
       }
 
-      statusCallback?.(`Corporate Report generation started (Job ID: ${jobId}). Processing...`);
+      statusCallback?.(`Companies&People generation started (Job ID: ${jobId}). Processing...`);
 
       // Step 2: Poll for job status with adaptive polling and retry logic
       let attempts = 0;
@@ -1149,33 +1153,21 @@ export default class VaultAIPlugin extends Plugin {
         statusCallback?.(`Checking report status... (${elapsedSecs}s elapsed)`);
 
         try {
-          // Add timeout to prevent hanging on network issues
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+          // Use Obsidian's requestUrl to bypass CORS restrictions
+          const statusResponse: RequestUrlResponse = await requestUrl({
+            url: `${baseUrl}/api/report-status/${jobId}`,
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${reportApiKey}`,
+            },
+            throw: false,
+          });
 
-          let statusResponse: Response;
-          try {
-            statusResponse = await fetch(`${baseUrl}/api/report-status/${jobId}`, {
-              method: "GET",
-              headers: {
-                Authorization: `Bearer ${reportApiKey}`,
-              },
-              mode: 'cors',
-              credentials: 'omit',
-              signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!statusResponse.ok) {
-              throw new Error(`Failed to check job status: ${statusResponse.status}`);
-            }
-          } catch (fetchError) {
-            clearTimeout(timeoutId);
-            throw fetchError;
+          if (statusResponse.status < 200 || statusResponse.status >= 300) {
+            throw new Error(`Failed to check job status: ${statusResponse.status}`);
           }
 
-          const statusData = await statusResponse.json();
+          const statusData = statusResponse.json;
           jobStatus = statusData.status;
 
           // Reset consecutive error counter on successful fetch
@@ -1198,20 +1190,20 @@ export default class VaultAIPlugin extends Plugin {
           // ✅ Check response_ready for answers (new feature)
           if (statusData.response_ready) {
             statusCallback?.("Response ready, retrieving from conversation...");
-            
+
             const conversationId = currentConversation?.reportConversationId || statusData.conversation_id;
-            
+
             if (!conversationId) {
               throw new Error("Response ready but no conversation_id available");
             }
-            
+
             // Backend should return content in statusData when response_ready = true
             // Check multiple possible field names
-            let responseContent = statusData.content || 
-                                 statusData.response_content || 
-                                 statusData.message ||
-                                 statusData.response;
-            
+            let responseContent = statusData.content ||
+              statusData.response_content ||
+              statusData.message ||
+              statusData.response;
+
             // If not in statusData, try to get from conversation via API (fallback)
             if (!responseContent) {
               try {
@@ -1229,22 +1221,22 @@ export default class VaultAIPlugin extends Plugin {
                 );
               }
             }
-            
+
             if (!responseContent) {
               throw new Error(
                 `Response is ready but no content found. ` +
                 `Backend must return 'content' or 'response_content' in statusData when response_ready = true.`
               );
             }
-            
+
             // Save conversation_id if not already saved
             if (currentConversation && !currentConversation.reportConversationId) {
               currentConversation.reportConversationId = conversationId;
             }
-            
+
             // Sanitize the markdown content
             const sanitizedContent = this.sanitizeMarkdownContent(responseContent);
-            
+
             return {
               content: sanitizedContent,
               filename: `response_${jobId}.md`,
@@ -1261,12 +1253,12 @@ export default class VaultAIPlugin extends Plugin {
 
             // Check for common backend issues
             if (backendError.toLowerCase().includes("ssl") ||
-                backendError.toLowerCase().includes("certificate") ||
-                backendError.toLowerCase().includes("n8n")) {
+              backendError.toLowerCase().includes("certificate") ||
+              backendError.toLowerCase().includes("n8n")) {
               throw new Error("Backend service temporarily unavailable. Please try again in a few minutes.");
             }
 
-            throw new Error(`Corporate Report generation failed: ${backendError}`);
+            throw new Error(`Companies&People generation failed: ${backendError}`);
           }
         } catch (pollError) {
           // Check if this is a transient network error
@@ -1279,7 +1271,7 @@ export default class VaultAIPlugin extends Plugin {
             const errorType = pollError instanceof Error ? pollError.name : 'Unknown';
             const errorMsg = pollError instanceof Error ? pollError.message : String(pollError);
             console.log(
-              `[OSINT Copilot] Corporate Report status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
+              `[OSINT Copilot] Companies&People status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
               `Type: ${errorType}, Message: ${errorMsg}`
             );
 
@@ -1303,7 +1295,7 @@ export default class VaultAIPlugin extends Plugin {
       // Check if job completed or response is ready (for answers)
       // Note: response_ready case is handled inside the loop and returns early
       if (jobStatus !== "completed") {
-        throw new Error("Corporate Report generation timed out. Please try again.");
+        throw new Error("Companies&People generation timed out. Please try again.");
       }
 
       // Step 3: Download the report with retry logic
@@ -1314,22 +1306,22 @@ export default class VaultAIPlugin extends Plugin {
 
       for (let downloadAttempt = 1; downloadAttempt <= maxDownloadRetries; downloadAttempt++) {
         try {
-          const downloadResponse = await fetch(`${baseUrl}/api/download-report/${jobId}`, {
+          const downloadResponse: RequestUrlResponse = await requestUrl({
+            url: `${baseUrl}/api/download-report/${jobId}`,
             method: "GET",
             headers: {
               Authorization: `Bearer ${reportApiKey}`,
             },
-            mode: 'cors',
-            credentials: 'omit',
+            throw: false,
           });
 
-          if (!downloadResponse.ok) {
-            const errorText = await downloadResponse.text();
+          if (downloadResponse.status < 200 || downloadResponse.status >= 300) {
+            const errorText = downloadResponse.text || "";
             throw new Error(`Failed to download report: ${downloadResponse.status} - ${errorText}`);
           }
 
           // Get the raw response text
-          const rawContent = await downloadResponse.text();
+          const rawContent = downloadResponse.text;
 
           // Check if the response is JSON and extract markdown content if so
           reportContent = this.extractMarkdownFromResponse(rawContent);
@@ -1339,7 +1331,7 @@ export default class VaultAIPlugin extends Plugin {
           const isNetworkError = downloadError instanceof Error && this.isTransientNetworkError(downloadError);
 
           if (isNetworkError && downloadAttempt < maxDownloadRetries) {
-            console.log(`[OSINT Copilot] Corporate Report download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
+            console.log(`[OSINT Copilot] Companies&People download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
             statusCallback?.(`Download interrupted, retrying... (attempt ${downloadAttempt}/${maxDownloadRetries})`);
             await this.sleep(1000 * downloadAttempt); // Exponential backoff
           } else {
@@ -1354,7 +1346,7 @@ export default class VaultAIPlugin extends Plugin {
         throw new Error("No content received from server");
       }
 
-      statusCallback?.("Corporate Report downloaded successfully!");
+      statusCallback?.("Companies&People downloaded successfully!");
 
       // Sanitize the markdown content
       const sanitizedContent = this.sanitizeMarkdownContent(reportContent);
@@ -1365,7 +1357,7 @@ export default class VaultAIPlugin extends Plugin {
       };
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`Corporate Report generation failed: ${error.message}`);
+        throw new Error(`Companies&People generation failed: ${error.message}`);
       }
       throw error;
     }
@@ -1390,18 +1382,18 @@ export default class VaultAIPlugin extends Plugin {
 
     for (const endpoint of possibleEndpoints) {
       try {
-        const response = await fetch(`${baseUrl}${endpoint}`, {
+        const response: RequestUrlResponse = await requestUrl({
+          url: `${baseUrl}${endpoint}`,
           method: "GET",
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
-          mode: 'cors',
-          credentials: 'omit',
+          throw: false,
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          
+        if (response.status >= 200 && response.status < 300) {
+          const data = response.json;
+
           // Try different response structures
           let messages: any[] = [];
           if (Array.isArray(data)) {
@@ -1411,12 +1403,12 @@ export default class VaultAIPlugin extends Plugin {
           } else if (data.conversation && Array.isArray(data.conversation.messages)) {
             messages = data.conversation.messages;
           }
-          
+
           // Find last assistant message
           const lastAssistantMessage = messages
             .filter((msg: any) => msg.role === 'assistant' || msg.role === 'AI')
             .pop();
-          
+
           if (lastAssistantMessage && lastAssistantMessage.content) {
             return lastAssistantMessage.content;
           }
@@ -1461,10 +1453,10 @@ export default class VaultAIPlugin extends Plugin {
 
     try {
       const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL); // Use OpenAI model for entity extraction
-      
+
       // Debug logging
       //console.log("[extractEntityFromQuery] Raw response:", text);
-      
+
       // Try strict JSON parse
       const match = text.trim();
       let obj: any = null;
@@ -1484,12 +1476,12 @@ export default class VaultAIPlugin extends Plugin {
           }
         }
       }
-      
+
       if (!obj) {
         //  console.error("[extractEntityFromQuery] No valid JSON found in response:", match);
         return { name: null, type: "unknown" };
       }
-      
+
       const allowed = ["person", "company", "asset", "event", "location", "unknown"];
       const t = (obj?.type || "unknown").toLowerCase();
       const type = allowed.includes(t) ? t : "unknown";
@@ -1497,7 +1489,7 @@ export default class VaultAIPlugin extends Plugin {
         typeof obj?.name === "string" && obj.name.trim().length > 0
           ? obj.name.trim()
           : null;
-      
+
       console.log("[extractEntityFromQuery] Extracted:", { name: nameVal, type });
       return { name: nameVal, type };
     } catch (error) {
@@ -1602,10 +1594,13 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   async saveReportToVault(reportContent: string, description: string, originalFilename?: string): Promise<string> {
-    const date = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const date = now.toISOString().split("T")[0];
+    // Add timestamp (HH-MM-SS) for uniqueness to prevent overwrites
+    const timestamp = now.toISOString().split("T")[1].split(".")[0].replace(/:/g, "-");
 
     // Extract entity name from description for meaningful filename
-    // Common patterns: "Tell me about X", "Corporate Report on X", "Who is X", "What is X", etc.
+    // Common patterns: "Tell me about X", "Companies&People on X", "Who is X", "What is X", etc.
     let entityName = description;
     const patterns = [
       /(?:tell me about|report on|who is|what is|investigate|research|find|look up|search for)\s+(.+)/i,
@@ -1627,9 +1622,10 @@ export default class VaultAIPlugin extends Plugin {
       .trim()
       .replace(/\s+/g, "_");
 
-    // Create filename: EntityName_Report_YYYY-MM-DD.md
-    const baseFilename = sanitizedEntity ? `${sanitizedEntity}_Report` : "Corporate Report";
-    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}.md`;
+    // Create filename with timestamp: EntityName_Report_YYYY-MM-DD_HH-MM-SS.md
+    // This ensures each report is unique and maintains chronological order
+    const baseFilename = sanitizedEntity ? `${sanitizedEntity}_Report` : "Corporate_Report";
+    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}.md`;
 
     // Ensure Reports folder exists
     const reportsFolder = this.app.vault.getAbstractFileByPath(this.settings.reportOutputDir);
@@ -1640,26 +1636,32 @@ export default class VaultAIPlugin extends Plugin {
     // Add metadata header to the report
     let content = `---\n`;
     content += `report_description: "${description.replace(/"/g, '\\"')}"\n`;
-    content += `generated: ${new Date().toISOString()}\n`;
+    content += `generated: ${now.toISOString()}\n`;
     content += `source: OpenDossier API\n`;
     content += `---\n\n`;
     content += reportContent;
 
-    // Check if file exists, if so add a counter to create unique filename
+    // Check if file exists (unlikely with timestamp, but add counter as fallback)
+    // This provides an additional safety layer to prevent any potential overwrites
     let finalFileName = fileName;
     let counter = 1;
     while (this.app.vault.getAbstractFileByPath(finalFileName)) {
-      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}-${counter}.md`;
+      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}-${counter}.md`;
       counter++;
     }
 
-    // Create new file
+    // Create new file - guaranteed to be unique
     await this.app.vault.create(finalFileName, content);
+
+    console.log(`[OSINT Copilot] Report saved to: ${finalFileName}`);
     return finalFileName;
   }
 
   async saveDarkWebReportToVault(reportContent: string, query: string, jobId: string): Promise<string> {
-    const date = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const date = now.toISOString().split("T")[0];
+    // Add timestamp (HH-MM-SS) for uniqueness to prevent overwrites
+    const timestamp = now.toISOString().split("T")[1].split(".")[0].replace(/:/g, "-");
 
     // Sanitize query for filename: replace spaces with underscores, remove special chars
     const sanitizedQuery = query
@@ -1668,9 +1670,10 @@ export default class VaultAIPlugin extends Plugin {
       .trim()
       .replace(/\s+/g, "_");
 
-    // Create filename: DarkWeb_QueryTopic_YYYY-MM-DD.md
+    // Create filename with timestamp: DarkWeb_QueryTopic_YYYY-MM-DD_HH-MM-SS.md
+    // This ensures each dark web investigation is unique and maintains chronological order
     const baseFilename = sanitizedQuery ? `DarkWeb_${sanitizedQuery}` : `DarkWeb_Investigation`;
-    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}.md`;
+    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}.md`;
 
     // Ensure Reports folder exists
     const reportsFolder = this.app.vault.getAbstractFileByPath(this.settings.reportOutputDir);
@@ -1682,21 +1685,24 @@ export default class VaultAIPlugin extends Plugin {
     let content = `---\n`;
     content += `investigation_query: "${query.replace(/"/g, '\\"')}"\n`;
     content += `job_id: "${jobId}"\n`;
-    content += `generated: ${new Date().toISOString()}\n`;
+    content += `generated: ${now.toISOString()}\n`;
     content += `source: Dark Web Investigation\n`;
     content += `---\n\n`;
     content += reportContent;
 
-    // Check if file exists, if so add a counter to create unique filename
+    // Check if file exists (unlikely with timestamp, but add counter as fallback)
+    // This provides an additional safety layer to prevent any potential overwrites
     let finalFileName = fileName;
     let counter = 1;
     while (this.app.vault.getAbstractFileByPath(finalFileName)) {
-      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}-${counter}.md`;
+      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}-${counter}.md`;
       counter++;
     }
 
-    // Create new file
+    // Create new file - guaranteed to be unique
     await this.app.vault.create(finalFileName, content);
+
+    console.log(`[OSINT Copilot] Dark web report saved to: ${finalFileName}`);
     return finalFileName;
   }
 
@@ -1712,7 +1718,12 @@ export default class VaultAIPlugin extends Plugin {
     new AskModal(this.app, this).open();
   }
 
-  async openChatView() {
+  /**
+   * Open the Chat View in the main editor area.
+   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
+   *                 This allows multiple views to be open simultaneously.
+   */
+  async openChatView(forceNew: boolean = false) {
     // License key validation - Chat feature requires a valid license key
     if (!this.settings.reportApiKey) {
       new Notice("A valid license key is required to use the Chat feature. Please purchase a license key to enable this functionality.", 8000);
@@ -1726,12 +1737,16 @@ export default class VaultAIPlugin extends Plugin {
     }
 
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
-    if (existing.length > 0) {
+
+    // If not forcing new and one exists, reveal it
+    if (!forceNew && existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
-    const leaf = this.app.workspace.getRightLeaf(false);
+    // Get a leaf in the main editor area
+    const leaf = this.getMainEditorLeaf(CHAT_VIEW_TYPE, forceNew);
+
     if (leaf) {
       await leaf.setViewState({
         type: CHAT_VIEW_TYPE,
@@ -1834,9 +1849,8 @@ class AskModal extends Modal {
         this.notesContainer.style.display = "block";
       }
     } catch (error) {
-      this.answerContainer.innerHTML = `<p style="color: var(--text-error);">Error: ${
-        error instanceof Error ? error.message : String(error)
-      }</p>`;
+      this.answerContainer.innerHTML = `<p style="color: var(--text-error);">Error: ${error instanceof Error ? error.message : String(error)
+        }</p>`;
     }
   }
 
@@ -1961,17 +1975,17 @@ class ChatView extends ItemView {
   localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
-  osintSearchMode: boolean = false; // OSINT Search mode
+  osintSearchMode: boolean = false; // Leak Search mode
   // Mode dropdown element (replaces individual toggle checkboxes)
   modeDropdown!: HTMLSelectElement;
-  // OSINT Search options
+  // Leak Search options
   osintSearchOptionsVisible: boolean = false;
   osintSearchCountry: 'RU' | 'UA' | 'BY' | 'KZ' = 'RU';
   osintSearchMaxProviders: number = 3;
   osintSearchParallel: boolean = true;
-  // Entity generation is independent (can be enabled with any main mode, or alone for Entity-Only Mode)
-  entityGenerationMode: boolean = false;
-  entityGenerationToggle!: HTMLInputElement;
+  // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
+  graphGenerationMode: boolean = true;
+  graphGenerationToggle!: HTMLInputElement;
   pollingIntervals: Map<string, number> = new Map();
   currentConversation: Conversation | null = null;
   sidebarVisible: boolean = true;
@@ -2004,11 +2018,25 @@ class ChatView extends ItemView {
       this.currentConversation = conversation;
       this.chatHistory = this.conversationMessagesToHistory(conversation.messages);
       this.darkWebMode = conversation.darkWebMode || false;
-      this.entityGenerationMode = conversation.entityGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
-      // Local Search mode: true if no other main mode is active (backward compatibility)
-      this.localSearchMode = !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+
+      // Check if any main mode is explicitly set in the conversation
+      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode;
+
+      if (hasMainMode) {
+        // Use the saved modes
+        this.localSearchMode = conversation.localSearchMode || false;
+        this.graphGenerationMode = conversation.graphGenerationMode || false;
+      } else {
+        // No main mode set - default to Graph Generation mode
+        this.localSearchMode = false;
+        this.graphGenerationMode = true;
+      }
+    } else {
+      // No conversation - default to Graph Generation mode
+      this.localSearchMode = false;
+      this.graphGenerationMode = true;
     }
   }
 
@@ -2042,14 +2070,14 @@ class ChatView extends ItemView {
       this.currentConversation = await this.plugin.conversationService.createConversation(
         this.chatHistory.length > 0 ? this.chatHistory[0].content : undefined,
         this.darkWebMode,
-        this.entityGenerationMode,
+        this.graphGenerationMode,
         this.reportGenerationMode
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
     this.currentConversation.localSearchMode = this.localSearchMode;
     this.currentConversation.darkWebMode = this.darkWebMode;
-    this.currentConversation.entityGenerationMode = this.entityGenerationMode;
+    this.currentConversation.graphGenerationMode = this.graphGenerationMode;
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
     this.currentConversation.osintSearchMode = this.osintSearchMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
@@ -2099,9 +2127,9 @@ class ChatView extends ItemView {
       await this.startNewConversation();
     });
 
-    // === Main Mode Selection Dropdown (Mutually Exclusive - can be "none" for Entity-Only Mode) ===
+    // === Main Mode Selection Dropdown (Mutually Exclusive - can be "none" for Graph only Mode) ===
     const modeSelectContainer = buttonGroup.createDiv("vault-ai-mode-select-container");
-    modeSelectContainer.setAttribute("title", "Select a mode, or choose 'Entity Only' for entity extraction without AI chat");
+    modeSelectContainer.setAttribute("title", "Select a mode, or choose 'Graph Generation' for entity extraction without AI chat");
 
     const modeLabel = modeSelectContainer.createEl("label", {
       text: "Mode:",
@@ -2116,11 +2144,11 @@ class ChatView extends ItemView {
 
     // Add mode options
     const modeOptions = [
+      { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
-      { value: "report", label: "📄 Corporate Report", mode: "reportGenerationMode" },
-      { value: "osint", label: "🔎 OSINT Search", mode: "osintSearchMode" },
-      { value: "none", label: "🏷️ Entity Only", mode: "none" },
+      { value: "report", label: "📄 Companies&People", mode: "reportGenerationMode" },
+      { value: "osint", label: "🔎 Leak Search", mode: "osintSearchMode" },
     ];
 
     for (const option of modeOptions) {
@@ -2128,12 +2156,12 @@ class ChatView extends ItemView {
         text: option.label,
         value: option.value,
       });
-      // Set selected based on current mode
-      if (option.value === "local" && this.localSearchMode) optEl.selected = true;
+      // Set selected based on current mode - check Graph only first since it's the default
+      if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
+      else if (option.value === "local" && this.localSearchMode) optEl.selected = true;
       else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
       else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
       else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
-      else if (option.value === "none" && this.isEntityOnlyMode()) optEl.selected = true;
     }
 
     // Handle mode selection
@@ -2158,22 +2186,22 @@ class ChatView extends ItemView {
           break;
         case "report":
           this.reportGenerationMode = true;
-          new Notice("Corporate Report Mode enabled");
+          new Notice("Companies&People Mode enabled");
           break;
         case "osint":
           this.osintSearchMode = true;
-          new Notice("OSINT Search Mode enabled");
+          new Notice("Leak Search Mode enabled");
           break;
         case "none":
-          // All modes off - Entity-Only Mode if entity generation is on
-          if (this.entityGenerationMode) {
-            new Notice("Entity-Only Mode enabled - extract entities from your text");
+          // All modes off - Graph only Mode if graph generation is on
+          if (this.graphGenerationMode) {
+            new Notice("Graph only Mode enabled - extract entities from your text");
           } else {
-            // Enable entity generation automatically for Entity Only mode
-            this.entityGenerationMode = true;
-            this.entityGenerationToggle.checked = true;
-            this.updateEntityGenerationLabel();
-            new Notice("Entity-Only Mode enabled - extract entities from your text");
+            // Enable graph generation automatically for Graph Generation mode
+            this.graphGenerationMode = true;
+            this.graphGenerationToggle.checked = true;
+            this.updateGraphGenerationLabel();
+            new Notice("Graph only Mode enabled - extract entities from your text");
           }
           break;
       }
@@ -2183,36 +2211,36 @@ class ChatView extends ItemView {
       this.updateModeDisclaimer();
     });
 
-    // === Entity Generation Toggle (Independent - enables Entity-Only Mode when all main modes are off) ===
+    // === Graph Generation Toggle (Independent - enables Graph only Mode when all main modes are off) ===
     const entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
     entityGenContainer.addClass("vault-ai-toggle-container");
-    entityGenContainer.setAttribute("title", "Extract entities (works with any mode, or alone for Entity-Only Mode)");
+    entityGenContainer.setAttribute("title", "Extract entities (works with any mode, or alone for Graph only Mode)");
 
-    this.entityGenerationToggle = entityGenContainer.createEl("input", {
+    this.graphGenerationToggle = entityGenContainer.createEl("input", {
       type: "checkbox",
       cls: "vault-ai-entity-gen-checkbox",
     });
-    this.entityGenerationToggle.id = "entity-gen-mode-toggle";
-    this.entityGenerationToggle.checked = this.entityGenerationMode;
-    this.entityGenerationToggle.addEventListener("change", () => {
-      this.entityGenerationMode = this.entityGenerationToggle.checked;
-      this.updateEntityGenerationLabel();
+    this.graphGenerationToggle.id = "graph-gen-mode-toggle";
+    this.graphGenerationToggle.checked = this.graphGenerationMode;
+    this.graphGenerationToggle.addEventListener("change", () => {
+      this.graphGenerationMode = this.graphGenerationToggle.checked;
+      this.updateGraphGenerationLabel();
       this.updateInputPlaceholder();
       this.updateModeDisclaimer();
-      if (this.isEntityOnlyMode()) {
-        new Notice("Entity-Only Mode enabled - extract entities from your text");
-      } else if (this.entityGenerationMode) {
-        new Notice("Entity Generation enabled");
+      if (this.isGraphOnlyMode()) {
+        new Notice("Graph only Mode enabled - extract entities from your text");
+      } else if (this.graphGenerationMode) {
+        new Notice("Graph Generation enabled");
       } else {
-        new Notice("Entity Generation disabled");
+        new Notice("Graph Generation disabled");
       }
     });
 
     const entityGenLabel = entityGenContainer.createEl("label", {
-      text: this.getEntityGenLabelText(),
-      cls: this.entityGenerationMode ? "vault-ai-entity-gen-label active" : "vault-ai-entity-gen-label",
+      text: this.getGraphGenLabelText(),
+      cls: this.graphGenerationMode ? "vault-ai-entity-gen-label active" : "vault-ai-entity-gen-label",
     });
-    entityGenLabel.htmlFor = "entity-gen-mode-toggle";
+    entityGenLabel.htmlFor = "graph-gen-mode-toggle";
 
     // Messages container
     this.messagesContainer = chatArea.createDiv("vault-ai-chat-messages");
@@ -2244,7 +2272,7 @@ class ChatView extends ItemView {
       }
     });
 
-    // OSINT Search Options Panel (shown when OSINT Search mode is active)
+    // Leak Search Options Panel (shown when Leak Search mode is active)
     if (this.osintSearchMode) {
       this.renderOSINTSearchOptions(inputContainer);
     }
@@ -2255,34 +2283,34 @@ class ChatView extends ItemView {
    * Returns HTML string or null if no disclaimer needed.
    */
   private getModeDisclaimer(): string | null {
-    if (this.isEntityOnlyMode()) {
-      return "🏷️ <strong>Entity-Only Mode:</strong> Your text will be analyzed to extract and create entities (people, companies, locations, etc.) without AI chat.";
+    if (this.isGraphOnlyMode()) {
+      return "🏷️ <strong>Graph Generation Mode:</strong> Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat.";
     }
 
     if (this.osintSearchMode) {
-      if (this.entityGenerationMode) {
-        return "🔎 <strong>OSINT Search + Entities:</strong> Search OSINT databases and automatically create entities from the results.";
+      if (this.graphGenerationMode) {
+        return "🔎 <strong>Leak Search + Graph Gen:</strong> Search leaked databases and automatically create entities from the results.";
       }
-      return "🔎 <strong>OSINT Search:</strong> Search multiple OSINT databases for information about people, emails, phones, and more.";
+      return "🔎 <strong>Leak Search:</strong> Search multiple leaked databases for information about people, emails, phones, and more.";
     }
 
     if (this.darkWebMode) {
-      if (this.entityGenerationMode) {
-        return "🕵️ <strong>Dark Web + Entities:</strong> Investigate dark web sources and automatically create entities from findings.";
+      if (this.graphGenerationMode) {
+        return "🕵️ <strong>Dark Web + Graph Gen:</strong> Investigate dark web sources and automatically create entities from findings.";
       }
       return "🕵️ <strong>Dark Web:</strong> Search dark web sources for leaked data and threat intelligence.";
     }
 
     if (this.reportGenerationMode) {
-      if (this.entityGenerationMode) {
-        return "📄 <strong>Corporate Report + Entities:</strong> Generate comprehensive reports and automatically create entities from the content.";
+      if (this.graphGenerationMode) {
+        return "📄 <strong>Persons&Companies + Graph Gen:</strong> Generate comprehensive reports and automatically create entities from the content.";
       }
-      return "📄 <strong>Corporate Report:</strong> Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags";
+      return "📄 <strong>Persons&Companies:</strong> Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags";
     }
 
     if (this.localSearchMode) {
-      if (this.entityGenerationMode) {
-        return "🔍 <strong>Local Search + Entities:</strong> Search your vault and automatically create entities from AI responses.";
+      if (this.graphGenerationMode) {
+        return "🔍 <strong>Local Search + Graph Gen:</strong> Search your vault and automatically create entities from AI responses.";
       }
       return null; // Default mode, no disclaimer needed
     }
@@ -2291,7 +2319,7 @@ class ChatView extends ItemView {
   }
 
   /**
-   * Render the OSINT Search options panel.
+   * Render the Leak Search options panel.
    */
   private renderOSINTSearchOptions(container: HTMLElement) {
     const optionsPanel = container.createDiv("vault-ai-osint-search-options");
@@ -2361,21 +2389,21 @@ class ChatView extends ItemView {
     });
   }
 
-  // Check if Entity-Only Mode is active (entity generation ON, all main modes OFF)
-  isEntityOnlyMode(): boolean {
-    return this.entityGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+  // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
+  isGraphOnlyMode(): boolean {
+    return this.graphGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
   }
 
-  // Show notice when entering Entity-Only Mode
-  checkEntityOnlyMode() {
-    if (this.isEntityOnlyMode()) {
-      new Notice("Entity-Only Mode - enter text to extract entities");
+  // Show notice when entering Graph only Mode
+  checkGraphOnlyMode() {
+    if (this.isGraphOnlyMode()) {
+      new Notice("Graph only Mode - enter text to extract entities");
     }
   }
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    if (this.isEntityOnlyMode()) {
+    if (this.isGraphOnlyMode()) {
       return "Enter text to extract entities...";
     } else if (this.osintSearchMode) {
       return "Enter OSINT search query (e.g., 'Find info about john@example.com')...";
@@ -2429,29 +2457,29 @@ class ChatView extends ItemView {
     }
   }
 
-  // Get the entity generation label text (shows Entity-Only when applicable)
-  getEntityGenLabelText(): string {
-    if (this.isEntityOnlyMode()) {
-      return "🏷️ Entity-Only (ON)";
-    } else if (this.entityGenerationMode) {
-      return "🏷️ Entities (ON)";
+  // Get the graph generation label text (shows Graph only when applicable)
+  getGraphGenLabelText(): string {
+    if (this.isGraphOnlyMode()) {
+      return "🏷️ Graph only (ON)";
+    } else if (this.graphGenerationMode) {
+      return "🏷️ Graph Generation (ON)";
     } else {
-      return "🏷️ Entities";
+      return "🏷️ Graph Generation";
     }
   }
 
-  updateEntityGenerationLabel() {
+  updateGraphGenerationLabel() {
     const container = this.containerEl.querySelector(".vault-ai-entity-gen-toggle");
     if (container) {
       const label = container.querySelector("label");
       if (label) {
-        label.textContent = this.getEntityGenLabelText();
-        label.className = this.entityGenerationMode ? "vault-ai-entity-gen-label active" : "vault-ai-entity-gen-label";
-        // Add special styling for Entity-Only Mode
-        if (this.isEntityOnlyMode()) {
-          container.addClass("entity-only-mode");
+        label.textContent = this.getGraphGenLabelText();
+        label.className = this.graphGenerationMode ? "vault-ai-entity-gen-label active" : "vault-ai-entity-gen-label";
+        // Add special styling for Graph only Mode
+        if (this.isGraphOnlyMode()) {
+          container.addClass("graph-only-mode");
         } else {
-          container.removeClass("entity-only-mode");
+          container.removeClass("graph-only-mode");
         }
       }
     }
@@ -2473,8 +2501,8 @@ class ChatView extends ItemView {
       }
     }
 
-    // Also update entity generation label (for Entity-Only Mode indicator)
-    this.updateEntityGenerationLabel();
+    // Also update graph generation label (for Graph only Mode indicator)
+    this.updateGraphGenerationLabel();
   }
 
   renderSidebar() {
@@ -2514,31 +2542,31 @@ class ChatView extends ItemView {
       const meta = convContent.createDiv("vault-ai-conversation-meta");
       const date = new Date(conv.updatedAt);
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
-      // Check if Entity-Only Mode (entity gen ON, all main modes OFF)
+      // Check if Graph only Mode (graph gen ON, all main modes OFF)
       const convOsintSearchMode = conv.osintSearchMode || false;
-      const isEntityOnly = conv.entityGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
-      // Show main mode badge or Entity-Only badge
-      if (isEntityOnly) {
-        meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entityonly", title: "Entity-Only Mode" });
+      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
+      // Show main mode badge or Graph only badge
+      if (isGraphOnly) {
+        meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphonly", title: "Graph only Mode" });
       } else if (convOsintSearchMode) {
-        meta.createEl("span", { text: "🔎", cls: "vault-ai-conversation-osint-search", title: "OSINT Search Mode" });
-        if (conv.entityGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
+        meta.createEl("span", { text: "🔎", cls: "vault-ai-conversation-osint-search", title: "Leak Search Mode" });
+        if (conv.graphGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph Generation" });
         }
       } else if (conv.darkWebMode) {
         meta.createEl("span", { text: "🕵️", cls: "vault-ai-conversation-darkweb", title: "Dark Web Mode" });
-        if (conv.entityGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
+        if (conv.graphGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph Generation" });
         }
       } else if (conv.reportGenerationMode) {
-        meta.createEl("span", { text: "📄", cls: "vault-ai-conversation-report", title: "Corporate Report Generation Mode" });
-        if (conv.entityGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
+        meta.createEl("span", { text: "📄", cls: "vault-ai-conversation-report", title: "Companies&People Generation Mode" });
+        if (conv.graphGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph Generation" });
         }
       } else {
         meta.createEl("span", { text: "🔍", cls: "vault-ai-conversation-local-search", title: "Local Search Mode" });
-        if (conv.entityGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-entitygen", title: "Entity Generation" });
+        if (conv.graphGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph Generation" });
         }
       }
 
@@ -2594,7 +2622,7 @@ class ChatView extends ItemView {
       this.currentConversation = conversation;
       this.chatHistory = this.conversationMessagesToHistory(conversation.messages);
       this.darkWebMode = conversation.darkWebMode || false;
-      this.entityGenerationMode = conversation.entityGenerationMode || false;
+      this.graphGenerationMode = conversation.graphGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
       // Use localSearchMode from conversation, or infer from other modes for backward compatibility
@@ -2615,10 +2643,10 @@ class ChatView extends ItemView {
     }
     this.currentConversation = null;
     this.chatHistory = [];
-    // Reset mode toggles for new conversation (Local Search Mode is default)
-    this.localSearchMode = true;
+    // Reset mode toggles for new conversation (Graph Generation Mode is default)
+    this.localSearchMode = false;
     this.darkWebMode = false;
-    this.entityGenerationMode = false;
+    this.graphGenerationMode = true;
     this.reportGenerationMode = false;
     this.osintSearchMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
@@ -2852,7 +2880,7 @@ class ChatView extends ItemView {
         `;
       }
 
-      // Show "Open Corporate Report" button for report generation messages
+      // Show "Open Companies&People" button for report generation messages
       if (item.role === "assistant" && item.reportFilePath) {
         const reportButtonContainer = messageDiv.createDiv("vault-ai-report-button-container");
         reportButtonContainer.style.cssText = `
@@ -2864,7 +2892,7 @@ class ChatView extends ItemView {
         `;
 
         const reportButton = reportButtonContainer.createEl("button", {
-          text: "📄 Open Corporate Report",
+          text: "📄 Open Companies&People",
           cls: "vault-ai-open-report-btn",
         });
         reportButton.style.cssText = `
@@ -2896,7 +2924,7 @@ class ChatView extends ItemView {
             await this.app.workspace.getLeaf().openFile(file);
             new Notice(`Opened report: ${item.reportFilePath}`);
           } else {
-            new Notice(`Corporate Report file not found: ${item.reportFilePath}`);
+            new Notice(`Companies&People file not found: ${item.reportFilePath}`);
           }
         });
 
@@ -2924,21 +2952,21 @@ class ChatView extends ItemView {
     const messageDiv = this.messagesContainer.querySelector(
       `.vault-ai-chat-message[data-message-index="${messageIndex}"]`
     ) as HTMLElement;
-    
+
     if (!messageDiv) return;
 
     // Use progress from parameter, or fallback to saved progress in chatHistory
-    const currentProgress = progress || 
-      (messageIndex < this.chatHistory.length && 
-       this.chatHistory[messageIndex].progress && 
-       typeof this.chatHistory[messageIndex].progress === "object" && 
-       "percent" in this.chatHistory[messageIndex].progress
+    const currentProgress = progress ||
+      (messageIndex < this.chatHistory.length &&
+        this.chatHistory[messageIndex].progress &&
+        typeof this.chatHistory[messageIndex].progress === "object" &&
+        "percent" in this.chatHistory[messageIndex].progress
         ? this.chatHistory[messageIndex].progress as { message: string; percent: number }
         : undefined);
 
     // Find or create progress container FIRST (before updating content)
     let progressContainer = messageDiv.querySelector(".vault-ai-progress-container") as HTMLElement;
-    
+
     if (currentProgress) {
       if (!progressContainer) {
         // Create progress container if it doesn't exist - insert after contentDiv
@@ -2959,7 +2987,7 @@ class ChatView extends ItemView {
       // Create progress bar
       const progressBar = progressContainer.createDiv("vault-ai-progress-bar");
       progressBar.style.width = `${currentProgress.percent}%`;
-      
+
       // Create progress text
       const progressText = progressContainer.createEl("span", {
         cls: "vault-ai-progress-text",
@@ -2983,16 +3011,16 @@ class ChatView extends ItemView {
     }
 
     // Use intermediate results from parameter, or fallback to saved results in chatHistory
-    const currentIntermediateResults = intermediateResults || 
-      (messageIndex < this.chatHistory.length && 
-       this.chatHistory[messageIndex].intermediateResults && 
-       this.chatHistory[messageIndex].intermediateResults!.length > 0
+    const currentIntermediateResults = intermediateResults ||
+      (messageIndex < this.chatHistory.length &&
+        this.chatHistory[messageIndex].intermediateResults &&
+        this.chatHistory[messageIndex].intermediateResults!.length > 0
         ? this.chatHistory[messageIndex].intermediateResults!
         : undefined);
 
     // Update intermediate results
     let resultsContainer = messageDiv.querySelector(".vault-ai-intermediate-results-container") as HTMLElement;
-    
+
     if (currentIntermediateResults && currentIntermediateResults.length > 0) {
       if (!resultsContainer) {
         // Create results container if it doesn't exist
@@ -3039,9 +3067,9 @@ class ChatView extends ItemView {
     await this.saveCurrentConversation();
 
     // Route to appropriate handler based on mode
-    if (this.isEntityOnlyMode()) {
-      // Entity-Only Mode: Extract entities from user input without AI chat
-      await this.handleEntityOnlyMode(query);
+    if (this.isGraphOnlyMode()) {
+      // Graph only Mode: Extract entities from user input without AI chat
+      await this.handleGraphOnlyMode(query);
     } else if (this.osintSearchMode) {
       await this.handleOSINTSearch(query);
     } else if (this.darkWebMode) {
@@ -3058,10 +3086,10 @@ class ChatView extends ItemView {
   }
 
   /**
-   * Handle Entity-Only Mode: Extract entities from user input text without sending to AI.
-   * This mode is active when entityGenerationMode is ON and all main modes are OFF.
+   * Handle Graph only Mode: Extract entities from user input text without sending to AI.
+   * This mode is active when graphGenerationMode is ON and all main modes are OFF.
    */
-  async handleEntityOnlyMode(inputText: string) {
+  async handleGraphOnlyMode(inputText: string) {
     // Add processing placeholder with progress bar
     const messageIndex = this.chatHistory.length;
     this.chatHistory.push({
@@ -3114,7 +3142,7 @@ class ChatView extends ItemView {
       if (!result.success) {
         this.chatHistory[messageIndex].progress = undefined; // Clear progress bar
         this.chatHistory[messageIndex].content =
-          `🏷️ **Entity Extraction Failed**\n\n` +
+          `🏷️ **Graph Generation Failed**\n\n` +
           `**Input:** ${inputText.substring(0, 100)}${inputText.length > 100 ? '...' : ''}\n\n` +
           `**Error:** ${result.error || 'Unknown error'}`;
         this.renderMessages();
@@ -3124,7 +3152,7 @@ class ChatView extends ItemView {
       if (!result.operations || result.operations.length === 0) {
         this.chatHistory[messageIndex].progress = undefined; // Clear progress bar
         this.chatHistory[messageIndex].content =
-          `🏷️ **Entity Extraction Complete**\n\n` +
+          `🏷️ **Graph Generation Complete**\n\n` +
           `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n` +
           `No entities detected in the provided text.`;
         this.renderMessages();
@@ -3147,11 +3175,11 @@ class ChatView extends ItemView {
       let entitiesProcessed = 0;
 
       // Debug: Log the full operations array
-      console.log('[EntityOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
+      console.log('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
 
       for (const operation of result.operations) {
         // Debug: Log each operation
-        console.log('[EntityOnlyMode] Processing operation:', {
+        console.log('[GraphOnlyMode] Processing operation:', {
           action: operation.action,
           hasEntities: !!operation.entities,
           entitiesCount: operation.entities?.length || 0,
@@ -3198,12 +3226,12 @@ class ChatView extends ItemView {
                 }
               }
 
-              console.log('[EntityOnlyMode] Creating entity with type:', entityType);
+              console.log('[GraphOnlyMode] Creating entity with type:', entityType);
               const entity = await this.plugin.entityManager.createEntity(
                 entityType,
                 entityData.properties
               );
-              console.log('[EntityOnlyMode] Entity created successfully:', {
+              console.log('[GraphOnlyMode] Entity created successfully:', {
                 id: entity.id,
                 type: entity.type,
                 label: entity.label,
@@ -3217,7 +3245,7 @@ class ChatView extends ItemView {
                 filePath: entity.filePath || ''
               });
             } catch (entityError) {
-              console.error('[EntityOnlyMode] Failed to create entity:', entityError);
+              console.error('[GraphOnlyMode] Failed to create entity:', entityError);
               operationEntities.push(null);
             }
           }
@@ -3240,7 +3268,7 @@ class ChatView extends ItemView {
                   connectionsCreated++;
                 }
               } catch (connError) {
-                console.error('[EntityOnlyMode] Failed to create connection:', connError);
+                console.error('[GraphOnlyMode] Failed to create connection:', connError);
               }
             }
           }
@@ -3250,7 +3278,7 @@ class ChatView extends ItemView {
       updateProgress("Finalizing...", 98);
 
       // Build the result message with clickable links
-      let resultContent = `🏷️ **Entity Extraction Complete**\n\n`;
+      let resultContent = `🏷️ **Graph Generation Complete**\n\n`;
       resultContent += `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n`;
 
       if (createdEntities.length > 0) {
@@ -3282,11 +3310,11 @@ class ChatView extends ItemView {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.chatHistory[messageIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[messageIndex].content =
-        `🏷️ **Entity Extraction Failed**\n\n` +
+        `🏷️ **Graph Generation Failed**\n\n` +
         `**Input:** ${inputText.substring(0, 100)}${inputText.length > 100 ? '...' : ''}\n\n` +
         `**Error:** ${errorMsg}`;
       this.renderMessages();
-      new Notice(`Entity extraction failed: ${errorMsg}`);
+      new Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
 
@@ -3327,8 +3355,8 @@ class ChatView extends ItemView {
         extracted.type === "unknown"
           ? "Entity defined. Starting local search."
           : extracted.name
-          ? `Entity defined (${extracted.type}: ${extracted.name}). Starting local search.`
-          : `Entity defined (${extracted.type}). Starting local search.`;
+            ? `Entity defined (${extracted.type}: ${extracted.name}). Starting local search.`
+            : `Entity defined (${extracted.type}). Starting local search.`;
       this.chatHistory[assistantIndex].content = entityMsg;
       updateProgress("Entity extracted, searching vault...", 30);
 
@@ -3400,9 +3428,9 @@ class ChatView extends ItemView {
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
       this.renderMessages();
 
-      // Entity Generation Mode: Extract and create entities from the AI response
-      if (this.entityGenerationMode) {
-        await this.processEntityGeneration(assistantIndex, fullAnswer, query, finalContent);
+      // Graph Generation Mode: Extract and create entities from the AI response
+      if (this.graphGenerationMode) {
+        await this.processGraphGeneration(assistantIndex, fullAnswer, query, finalContent);
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3416,10 +3444,10 @@ class ChatView extends ItemView {
   }
 
   /**
-   * Process entity generation from AI response text.
+   * Process graph generation from AI response text.
    * Calls the /api/process-text endpoint to extract entities and creates them via EntityManager.
    */
-  async processEntityGeneration(
+  async processGraphGeneration(
     assistantIndex: number,
     aiResponse: string,
     originalQuery: string,
@@ -3507,11 +3535,11 @@ class ChatView extends ItemView {
       let processedEntities = 0;
 
       // Debug: Log the full operations array
-      console.log('[EntityGeneration] Processing operations:', JSON.stringify(result.operations, null, 2));
+      console.log('[GraphGeneration] Processing operations:', JSON.stringify(result.operations, null, 2));
 
       for (const operation of result.operations) {
         // Debug: Log each operation
-        console.log('[EntityGeneration] Processing operation:', {
+        console.log('[GraphGeneration] Processing operation:', {
           action: operation.action,
           hasEntities: !!operation.entities,
           entitiesCount: operation.entities?.length || 0,
@@ -3530,7 +3558,7 @@ class ChatView extends ItemView {
             updateProgress(`Creating entity ${processedEntities}/${totalEntities}...`, entityProgress);
 
             // Debug: Log entity data
-            console.log('[EntityGeneration] Processing entity:', {
+            console.log('[GraphGeneration] Processing entity:', {
               type: entityData.type,
               properties: entityData.properties
             });
@@ -3539,7 +3567,7 @@ class ChatView extends ItemView {
               const entityType = entityData.type as EntityType;
               // Validate entity type
               if (!Object.values(EntityType).includes(entityType)) {
-                console.warn(`[EntityGeneration] Unknown entity type: ${entityData.type}. Valid types:`, Object.values(EntityType));
+                console.warn(`[GraphGeneration] Unknown entity type: ${entityData.type}. Valid types:`, Object.values(EntityType));
                 operationEntities.push(null);
                 continue;
               }
@@ -3552,18 +3580,18 @@ class ChatView extends ItemView {
               if (entityLabel) {
                 const nameValidation = validateEntityName(entityLabel, entityType);
                 if (!nameValidation.isValid) {
-                  console.warn(`[EntityGeneration] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
+                  console.warn(`[GraphGeneration] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
                   operationEntities.push(null);
                   continue;
                 }
               }
 
-              console.log('[EntityGeneration] Creating entity with type:', entityType);
+              console.log('[GraphGeneration] Creating entity with type:', entityType);
               const entity = await this.plugin.entityManager.createEntity(
                 entityType,
                 entityData.properties
               );
-              console.log('[EntityGeneration] Entity created successfully:', {
+              console.log('[GraphGeneration] Entity created successfully:', {
                 id: entity.id,
                 type: entity.type,
                 label: entity.label,
@@ -3577,7 +3605,7 @@ class ChatView extends ItemView {
                 filePath: entity.filePath || ''
               });
             } catch (entityError) {
-              console.error('[EntityGeneration] Failed to create entity:', entityError);
+              console.error('[GraphGeneration] Failed to create entity:', entityError);
               operationEntities.push(null);
             }
           }
@@ -3600,7 +3628,7 @@ class ChatView extends ItemView {
                   connectionsCreated++;
                 }
               } catch (connError) {
-                console.error('[EntityGeneration] Failed to create connection:', connError);
+                console.error('[GraphGeneration] Failed to create connection:', connError);
               }
             }
           }
@@ -3634,11 +3662,11 @@ class ChatView extends ItemView {
       this.renderMessages();
 
     } catch (error) {
-      console.error('[EntityGeneration] Error during entity generation:', error);
+      console.error('[GraphGeneration] Error during graph generation:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[assistantIndex].content = currentContent +
-        `\n\n⚠️ Entity generation error: ${errorMsg}`;
+        `\n\n⚠️ Graph generation error: ${errorMsg}`;
       this.renderMessages();
     }
   }
@@ -3661,25 +3689,25 @@ class ChatView extends ItemView {
         (status: string, progress?: { message: string; percent: number }, intermediateResults?: string[]) => {
           // Build status message with progress and intermediate results
           let statusMessage = `📄 ${status}`;
-          
+
           if (progress) {
             statusMessage = `📄 ${progress.message}`;
           }
-          
+
           // Update the processing message in real-time
           this.chatHistory[messageIndex].content = statusMessage;
-          
+
           // Store progress and intermediate results for rendering (preserve if not provided)
           if (progress) {
             this.chatHistory[messageIndex].progress = progress;
           }
           // Don't clear progress if not provided - keep the last known progress
-          
+
           if (intermediateResults && intermediateResults.length > 0) {
             this.chatHistory[messageIndex].intermediateResults = intermediateResults;
           }
           // Don't clear intermediate results if not provided - keep the last known results
-          
+
           // Always update progress bar - it will use saved progress if new one is not provided
           this.updateProgressBar(messageIndex, progress, intermediateResults);
         }
@@ -3691,7 +3719,7 @@ class ChatView extends ItemView {
         description,
         reportData.filename
       );
-      
+
       // ✅ IMPORTANT: Save conversation after report generation to persist reportConversationId
       // The conversation.reportConversationId was updated in generateReport() if server returned one
       if (this.currentConversation) {
@@ -3700,7 +3728,7 @@ class ChatView extends ItemView {
 
       // Update message with success header, file link, and full report content
       let finalContent =
-        `📄 **Corporate Report Generated Successfully!**\n\n` +
+        `📄 **Companies&People Generated Successfully!**\n\n` +
         `**Request:** ${description}\n\n` +
         `**Saved to:** \`${fileName}\`\n\n` +
         `---\n\n` +
@@ -3709,9 +3737,9 @@ class ChatView extends ItemView {
       this.chatHistory[messageIndex].reportFilePath = fileName; // Store report file path for button
       this.renderMessages();
 
-      // Entity Generation Mode: Extract and create entities from the report
-      if (this.entityGenerationMode) {
-        await this.processEntityGeneration(messageIndex, reportData.content, description, finalContent);
+      // Graph Generation Mode: Extract and create entities from the report
+      if (this.graphGenerationMode) {
+        await this.processGraphGeneration(messageIndex, reportData.content, description, finalContent);
       }
 
       // Open the report file
@@ -3720,7 +3748,7 @@ class ChatView extends ItemView {
         await this.app.workspace.getLeaf().openFile(file);
       }
 
-      new Notice(`Corporate Report saved to ${fileName}`);
+      new Notice(`Companies&People saved to ${fileName}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
 
@@ -3732,7 +3760,7 @@ class ChatView extends ItemView {
         userMessage = "Backend service temporarily unavailable (SSL/certificate issue)";
         suggestion = "\n\n💡 **Suggestion:** This is a temporary server-side issue. Please try again in a few minutes.";
       } else if (errorMsg.toLowerCase().includes("timeout")) {
-        userMessage = "Corporate Report generation timed out";
+        userMessage = "Companies&People generation timed out";
         suggestion = "\n\n💡 **Suggestion:** The server may be busy. Please try again with a simpler query.";
       } else if (errorMsg.toLowerCase().includes("quota")) {
         suggestion = "\n\n💡 **Suggestion:** Visit https://osint-copilot.com/dashboard/ to check your quota.";
@@ -3745,16 +3773,16 @@ class ChatView extends ItemView {
       }
 
       this.chatHistory[messageIndex].content =
-        `📄 **Corporate Report Generation Failed**\n\n` +
+        `📄 **Companies&People Generation Failed**\n\n` +
         `**Request:** ${description}\n\n` +
         `**Error:** ${userMessage}${suggestion}`;
       this.renderMessages();
-      new Notice(`Corporate Report generation failed: ${userMessage}`);
+      new Notice(`Companies&People generation failed: ${userMessage}`);
     }
   }
 
   /**
-   * Handle OSINT Search Mode: AI-powered multi-provider OSINT search.
+   * Handle Leak Search Mode: AI-powered multi-provider OSINT search.
    */
   async handleOSINTSearch(query: string) {
     // Add processing placeholder with progress bar
@@ -3778,11 +3806,11 @@ class ChatView extends ItemView {
       if (!this.plugin.settings.reportApiKey) {
         this.chatHistory[messageIndex].progress = undefined;
         this.chatHistory[messageIndex].content =
-          `🔎 **OSINT Search Failed**\n\n` +
-          `**Error:** License key required for OSINT Search.\n\n` +
+          `🔎 **Leak Search Failed**\n\n` +
+          `**Error:** License key required for Leak Search.\n\n` +
           `Please configure your API key in Settings → OSINT Copilot → API Key.`;
         this.renderMessages();
-        new Notice("License key required for OSINT Search. Configure in settings.");
+        new Notice("License key required for Leak Search. Configure in settings.");
         return;
       }
 
@@ -3822,25 +3850,25 @@ class ChatView extends ItemView {
       // Render the search results and get the content for entity extraction
       const searchResultsContent = this.renderOSINTSearchResults(messageIndex, query, result);
 
-      // Entity Generation Mode: Extract and create entities from search results
-      if (this.entityGenerationMode && result.results && result.results.length > 0) {
+      // Graph Generation Mode: Extract and create entities from search results
+      if (this.graphGenerationMode && result.results && result.results.length > 0) {
         try {
           // Convert search results to text for entity extraction
           const resultsText = this.formatOSINTResultsForEntityExtraction(query, result);
-          await this.processEntityGeneration(messageIndex, resultsText, query, searchResultsContent);
+          await this.processGraphGeneration(messageIndex, resultsText, query, searchResultsContent);
         } catch (entityError) {
           // Log error but don't fail the whole operation - search results are already displayed
-          console.error('[ChatView] Entity extraction from OSINT results failed:', entityError);
+          console.error('[ChatView] Graph generation from OSINT results failed:', entityError);
           const errorMsg = entityError instanceof Error ? entityError.message : String(entityError);
           this.chatHistory[messageIndex].content = searchResultsContent +
-            `\n\n⚠️ Entity extraction failed: ${errorMsg}`;
+            `\n\n⚠️ Graph generation failed: ${errorMsg}`;
           this.chatHistory[messageIndex].progress = undefined;
           this.renderMessages();
         }
       }
 
     } catch (error) {
-      console.error('[ChatView] OSINT Search error:', error);
+      console.error('[ChatView] Leak Search error:', error);
       this.chatHistory[messageIndex].progress = undefined;
 
       let errorMessage = error instanceof Error ? error.message : String(error);
@@ -3855,11 +3883,11 @@ class ChatView extends ItemView {
       }
 
       this.chatHistory[messageIndex].content =
-        `🔎 **OSINT Search Failed**\n\n` +
+        `🔎 **Leak Search Failed**\n\n` +
         `**Query:** ${query}\n\n` +
         `**Error:** ${errorMessage}${suggestion}`;
       this.renderMessages();
-      new Notice(`OSINT Search failed: ${errorMessage}`);
+      new Notice(`Leak Search failed: ${errorMessage}`);
     }
   }
 
@@ -3871,7 +3899,7 @@ class ChatView extends ItemView {
     this.chatHistory[messageIndex].progress = undefined;
 
     // Build the result content
-    let content = `🔎 **OSINT Search Results**\n\n`;
+    let content = `🔎 **Leak Search Results**\n\n`;
     content += `**Query:** ${query}\n`;
     content += `⏱️ ${(result.execution_time_ms / 1000).toFixed(1)}s | 📊 ${result.total_results} result(s)\n\n`;
 
@@ -3923,7 +3951,7 @@ class ChatView extends ItemView {
    * Converts the JSON results into a text format suitable for the AI entity extraction.
    */
   private formatOSINTResultsForEntityExtraction(query: string, result: AISearchResponse): string {
-    let text = `OSINT Search Results for query: "${query}"\n\n`;
+    let text = `Leak Search Results for query: "${query}"\n\n`;
 
     // Include detected entities from the search
     if (result.detected_entities && result.detected_entities.length > 0) {
@@ -4000,7 +4028,8 @@ class ChatView extends ItemView {
 
         // Start DarkWeb investigation
         const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/investigate`;
-        const response = await fetch(endpoint, {
+        const response: RequestUrlResponse = await requestUrl({
+          url: endpoint,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -4011,12 +4040,11 @@ class ChatView extends ItemView {
             model: DARKWEB_MODEL,
             threads: 8,
           }),
-          mode: "cors",
-          credentials: "omit",
+          throw: false,
         });
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
+        if (response.status < 200 || response.status >= 300) {
+          const errorText = response.text || "";
 
           // Handle quota exhaustion specifically - don't retry these
           if (response.status === 403) {
@@ -4042,7 +4070,7 @@ class ChatView extends ItemView {
         }
 
         updateProgress("Processing API response...", 15);
-        const result = await response.json();
+        const result = response.json;
         const jobId = result.job_id;
 
         if (!jobId) {
@@ -4148,56 +4176,44 @@ class ChatView extends ItemView {
       try {
         const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/status/${jobId}`;
 
-        // Add timeout to prevent hanging on network issues
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        // Use Obsidian's requestUrl to bypass CORS restrictions
+        const response: RequestUrlResponse = await requestUrl({
+          url: endpoint,
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
+          },
+          throw: false,
+        });
 
-        let response: Response;
-        try {
-          response = await fetch(endpoint, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
-            },
-            mode: "cors",
-            credentials: "omit",
-            signal: controller.signal,
-          });
+        if (response.status < 200 || response.status >= 300) {
+          // Handle 404 - job not found (backend lost job status, likely Redis issue)
+          if (response.status === 404) {
+            this.pollingIntervals.delete(jobId);
+            console.warn(`[OSINT Copilot] Job ${jobId} not found in backend (404). Attempting to fetch results directly...`);
 
-          clearTimeout(timeoutId);
-
-          if (!response.ok) {
-            // Handle 404 - job not found (backend lost job status, likely Redis issue)
-            if (response.status === 404) {
-              this.pollingIntervals.delete(jobId);
-              console.warn(`[OSINT Copilot] Job ${jobId} not found in backend (404). Attempting to fetch results directly...`);
-
-              // Try to fetch results directly from summary endpoint
-              // The job may have completed but status was lost
-              try {
-                await this.fetchDarkWebResults(jobId, messageIndex, query);
-                return; // Success - results fetched
-              } catch (summaryError) {
-                console.error('[OSINT Copilot] Failed to fetch results after 404:', summaryError);
-                this.chatHistory[messageIndex] = {
-                  role: "assistant",
-                  content: `⚠️ Investigation status unavailable\n\n**Job ID:** ${jobId}\n\nThe backend lost track of this investigation (likely due to a Redis connection issue).\n\nThe investigation may have completed, but the results are not accessible. Please try starting a new investigation.`,
-                  jobId: jobId,
-                  status: "failed",
-                  progress: undefined,
-                };
-                this.renderMessages();
-                return;
-              }
+            // Try to fetch results directly from summary endpoint
+            // The job may have completed but status was lost
+            try {
+              await this.fetchDarkWebResults(jobId, messageIndex, query);
+              return; // Success - results fetched
+            } catch (summaryError) {
+              console.error('[OSINT Copilot] Failed to fetch results after 404:', summaryError);
+              this.chatHistory[messageIndex] = {
+                role: "assistant",
+                content: `⚠️ Investigation status unavailable\n\n**Job ID:** ${jobId}\n\nThe backend lost track of this investigation (likely due to a Redis connection issue).\n\nThe investigation may have completed, but the results are not accessible. Please try starting a new investigation.`,
+                jobId: jobId,
+                status: "failed",
+                progress: undefined,
+              };
+              this.renderMessages();
+              return;
             }
-            throw new Error(`Status check failed (${response.status})`);
           }
-        } catch (fetchError) {
-          clearTimeout(timeoutId);
-          throw fetchError;
+          throw new Error(`Status check failed (${response.status})`);
         }
 
-        const statusData = await response.json();
+        const statusData = response.json;
         const status = statusData.status;
 
         // Reset error counter on success
@@ -4323,20 +4339,20 @@ class ChatView extends ItemView {
   async fetchDarkWebResults(jobId: string, messageIndex: number, query: string) {
     try {
       const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/summary/${jobId}`;
-      const response = await fetch(endpoint, {
+      const response: RequestUrlResponse = await requestUrl({
+        url: endpoint,
         method: "GET",
         headers: {
           Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
         },
-        mode: "cors",
-        credentials: "omit",
+        throw: false,
       });
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`Failed to fetch results (${response.status})`);
       }
 
-      const summary = await response.json();
+      const summary = response.json;
       console.log(`[OSINT Copilot] Dark web investigation completed. Job ID: ${jobId}`);
 
       // Format the results as markdown for both display and saving
@@ -4386,9 +4402,9 @@ class ChatView extends ItemView {
       };
       this.renderMessages();
 
-      // Entity Generation Mode: Extract and create entities from the dark web results
-      if (this.entityGenerationMode) {
-        await this.processEntityGeneration(messageIndex, reportContent, query, displayText);
+      // Graph Generation Mode: Extract and create entities from the dark web results
+      if (this.graphGenerationMode) {
+        await this.processGraphGeneration(messageIndex, reportContent, query, displayText);
       }
 
       // Open the saved file if it exists
@@ -4598,9 +4614,9 @@ class VaultAISettingTab extends PluginSettingTab {
       });
     }
 
-    // Corporate Report Output Directory
+    // Companies&People Output Directory
     new Setting(containerEl)
-      .setName("Corporate Report Output Directory")
+      .setName("Companies&People Output Directory")
       .setDesc("Directory where generated reports will be saved")
       .addText((text) =>
         text
@@ -4671,19 +4687,21 @@ class VaultAISettingTab extends PluginSettingTab {
     }
 
     try {
-      const response = await fetch("https://api.osint-copilot.com/api/key/info", {
+      const response: RequestUrlResponse = await requestUrl({
+        url: "https://api.osint-copilot.com/api/key/info",
         method: "GET",
         headers: {
           "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
           "Content-Type": "application/json",
         },
+        throw: false,
       });
 
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         return null;
       }
 
-      return await response.json();
+      return response.json;
     } catch (error) {
       console.error("Failed to fetch license key info:", error);
       return null;

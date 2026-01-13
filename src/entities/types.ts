@@ -47,7 +47,7 @@ export const FTM_ENTITY_TYPES: FTMEntityType[] = [
     'Company',
     'Organization',
     'Event',
-    'Address',
+    // 'Address', // Removed as per user request
     'Vehicle',
     'BankAccount',
     'CryptoWallet',
@@ -111,26 +111,42 @@ export function getFTMEntityConfig(schemaName: string): FTMEntityConfig | null {
 
 /**
  * Get all available FTM entity types for entity creation.
+ * LegalEntity is prioritized to appear first in the list.
  */
 export function getAvailableFTMEntityTypes(): Array<{ name: string; label: string; description: string; color: string }> {
-    return ftmSchemaService.getEntitySchemas().map(schema => ({
+    const types = ftmSchemaService.getEntitySchemas().map(schema => ({
         name: schema.name,
         label: schema.label,
         description: schema.description,
         color: schema.color || '#607D8B',
     }));
+
+    // Sort with LegalEntity first, then alphabetically
+    return types.sort((a, b) => {
+        if (a.name === 'LegalEntity') return -1;
+        if (b.name === 'LegalEntity') return 1;
+        return a.label.localeCompare(b.label);
+    });
 }
 
 /**
  * Get all available FTM interval/relationship types for connection creation.
+ * UnknownLink is prioritized to appear first in the list.
  */
 export function getAvailableFTMIntervalTypes(): Array<{ name: string; label: string; description: string; color: string }> {
-    return ftmSchemaService.getIntervalSchemas().map(schema => ({
+    const types = ftmSchemaService.getIntervalSchemas().map(schema => ({
         name: schema.name,
         label: schema.label,
         description: schema.description,
         color: schema.color || '#607D8B',
     }));
+
+    // Sort with UnknownLink first, then alphabetically
+    return types.sort((a, b) => {
+        if (a.name === 'UnknownLink') return -1;
+        if (b.name === 'UnknownLink') return 1;
+        return a.label.localeCompare(b.label);
+    });
 }
 
 export const ENTITY_CONFIGS: Record<EntityType, EntityConfig> = {
@@ -148,8 +164,8 @@ export const ENTITY_CONFIGS: Record<EntityType, EntityConfig> = {
     },
     [EntityType.Location]: {
         color: "#FF5722",
-        properties: ["address", "city", "state", "country", "postal_code", "latitude", "longitude", "location_type"],
-        labelField: "address",
+        properties: ["name", "address", "city", "state", "country", "postal_code", "latitude", "longitude", "location_type"],
+        labelField: "name",
         description: "A physical location or address"
     },
     [EntityType.Company]: {
@@ -227,7 +243,7 @@ export const ENTITY_ICONS: Record<string, string> = {
     // FTM entity types (only non-duplicate ones)
     'LegalEntity': "⚖️",
     'Organization': "🏛️",
-    'Address': "📍",
+    // 'Address': "📍", // Removed
     'BankAccount': "🏦",
     'CryptoWallet': "₿",
     'UserAccount': "👥",
@@ -354,6 +370,16 @@ export function getEntityLabel(type: EntityType | string, properties: Record<str
     if (config && properties[config.labelField]) {
         return String(properties[config.labelField]);
     }
+
+    // Try common label fields as fallbacks to avoid using type name as label
+    const fallbackFields = ['full_name', 'name', 'address', 'title', 'label', 'username', 'number'];
+    for (const field of fallbackFields) {
+        if (properties[field] && typeof properties[field] === 'string' && properties[field].trim()) {
+            return String(properties[field]);
+        }
+    }
+
+    // Last resort: return type name (but this should rarely happen)
     return type;
 }
 
@@ -410,7 +436,7 @@ const GENERIC_ENTITY_NAMES = new Set([
     'Username', 'Vehicle', 'Website', 'Evidence', 'Image', 'Text',
 
     // FTM entity types
-    'LegalEntity', 'Organization', 'Address', 'BankAccount', 'CryptoWallet',
+    'LegalEntity', 'Organization', /* 'Address', */ 'BankAccount', 'CryptoWallet',
     'UserAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
     'Ownership', 'Employment', 'Directorship',
 
@@ -424,7 +450,7 @@ const GENERIC_ENTITY_NAMES = new Set([
     'person', 'people', 'event', 'events', 'location', 'locations',
     'company', 'companies', 'organization', 'organizations',
     'email', 'emails', 'phone', 'phones', 'vehicle', 'vehicles',
-    'website', 'websites', 'document', 'documents', 'address', 'addresses',
+    'website', 'websites', 'document', 'documents', /* 'address', 'addresses', */
 
     // Very generic terms
     'Entity', 'entity', 'Item', 'item', 'Object', 'object',
@@ -533,7 +559,7 @@ export function legacyToFTMSchema(type: EntityType): string {
  * Generate a unique ID for entities.
  */
 export function generateId(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
         return v.toString(16);
