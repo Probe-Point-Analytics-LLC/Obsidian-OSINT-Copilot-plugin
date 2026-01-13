@@ -9,6 +9,7 @@ import { EntityCreationModal } from '../modals/entity-modal';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 
 // Leaflet types (simplified for bundling)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const L: any;
 
 export const MAP_VIEW_TYPE = 'graph_copilot-map-view';

@@ -826,7 +826,7 @@ export class ConnectionQuickModal extends Modal {
     private sourceLabel: string;
     private targetLabel: string;
     private relationship: string = '';
-    private properties: Record<string, any> = {};
+    private properties: Record<string, unknown> = {};
     private onConnectionCreated: ((connectionId?: string) => void) | null;
     private propertiesContainer: HTMLElement | null = null;
 
@@ -1057,7 +1057,7 @@ export class ConnectionQuickModal extends Modal {
 export class EntityEditModal extends Modal {
     private entityManager: EntityManager;
     private entity: Entity;
-    private properties: Record<string, any> = {};
+    private properties: Record<string, unknown> = {};
     private onEntityUpdated: ((entityId: string) => void) | null;
     private geocodingService: GeocodingService;
     private geocodeStatusEl: HTMLElement | null = null;
@@ -1315,7 +1315,7 @@ export class EntityEditModal extends Modal {
             }) as HTMLInputElement;
             // Convert stored format back to datetime-local format
             if (currentValue) {
-                (input as HTMLInputElement).value = currentValue.replace(' ', 'T');
+                (input as HTMLInputElement).value = (currentValue as string).replace(' ', 'T');
             }
         } else if (propertyName === 'latitude' || propertyName === 'longitude') {
             // Number input for coordinates
@@ -1458,8 +1458,8 @@ export class EntityEditModal extends Modal {
         const labelField = config.labelField;
 
         // Only validate that entity name is not generic (if provided)
-        if (this.properties[labelField] && this.properties[labelField].trim() !== '') {
-            const nameValidation = validateEntityName(this.properties[labelField], this.entity.type);
+        if (this.properties[labelField] && (this.properties[labelField] as string).trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField] as string, this.entity.type);
             if (!nameValidation.isValid) {
                 new Notice(nameValidation.error || 'Invalid entity name');
                 return;

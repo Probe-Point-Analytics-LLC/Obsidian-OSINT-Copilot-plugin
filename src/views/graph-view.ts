@@ -10,6 +10,7 @@ import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition }
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 
 // Cytoscape types (simplified for bundling)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const cytoscape: any;
 
 export const GRAPH_VIEW_TYPE = 'graph_copilot-graph-view';
@@ -19,6 +20,7 @@ const NODE_POSITIONS_FILE = '.osint-copilot/graph-positions.json';
 
 export class GraphView extends ItemView {
     private entityManager: EntityManager;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private cy: any = null;
     private container: HTMLElement | null = null;
     private onEntityClick: ((entityId: string) => void) | null = null;
@@ -706,6 +708,7 @@ export class GraphView extends ItemView {
         });
 
         // Double-click on node opens the entity note
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('dbltap', 'node', (evt: any) => {
             const node = evt.target;
             const entityId = node.id();
@@ -721,6 +724,7 @@ export class GraphView extends ItemView {
         });
 
         // Click on edge for selection
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('tap', 'edge', (evt: any) => {
             const edge = evt.target;
             const connectionId = edge.id();
@@ -740,6 +744,7 @@ export class GraphView extends ItemView {
         });
 
         // Right-click context menu for nodes
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('cxttap', 'node', (evt: any) => {
             const node = evt.target;
             const entityId = node.id();
@@ -751,6 +756,7 @@ export class GraphView extends ItemView {
         });
 
         // Right-click context menu for edges (relationships)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('cxttap', 'edge', (evt: any) => {
             const edge = evt.target;
             const connectionId = edge.id();
@@ -763,6 +769,7 @@ export class GraphView extends ItemView {
         });
 
         // Track node position changes for undo/redo and persist to storage
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('dragfree', 'node', (evt: any) => {
             const node = evt.target;
             const nodeId = node.id();
@@ -785,6 +792,7 @@ export class GraphView extends ItemView {
         });
 
         // Tooltip on hover - show map icon for Location entities
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('mouseover', 'node', (evt: any) => {
             const node = evt.target;
             const entityType = node.data('type');
@@ -796,6 +804,7 @@ export class GraphView extends ItemView {
             }
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('mouseout', 'node', (evt: any) => {
             const node = evt.target;
             node.style('border-width', 2);
@@ -803,6 +812,7 @@ export class GraphView extends ItemView {
         });
 
         // Click on background to cancel connection mode or clear selection
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('tap', (evt: any) => {
             if (evt.target === this.cy) {
                 if (this.connectionMode) {
@@ -818,6 +828,7 @@ export class GraphView extends ItemView {
 
         // Box selection event - fires when elements are selected via box selection
         // The 'boxselect' event fires on each element that gets selected
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('boxselect', 'node', (evt: any) => {
             if (!this.boxSelectMode) return;
 
@@ -830,6 +841,7 @@ export class GraphView extends ItemView {
             }
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('boxselect', 'edge', (evt: any) => {
             if (!this.boxSelectMode) return;
 
@@ -843,6 +855,7 @@ export class GraphView extends ItemView {
         });
 
         // When box selection ends, update the UI and clear Cytoscape's native selection
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.on('boxend', (evt: any) => {
             if (!this.boxSelectMode) return;
 
@@ -979,12 +992,14 @@ export class GraphView extends ItemView {
     private selectAll(): void {
         if (!this.cy) return;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.nodes().forEach((node: any) => {
             const entityId = node.id();
             this.selectedNodes.add(entityId);
             node.addClass('multi-selected');
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         this.cy.edges().forEach((edge: any) => {
             const connectionId = edge.id();
             this.selectedEdges.add(connectionId);

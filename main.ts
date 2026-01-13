@@ -1397,7 +1397,7 @@ export default class VaultAIPlugin extends Plugin {
           const data = response.json;
 
           // Try different response structures
-          let messages: any[] = [];
+          let messages: Record<string, any>[] = [];
           if (Array.isArray(data)) {
             messages = data;
           } else if (data.messages && Array.isArray(data.messages)) {
@@ -1408,7 +1408,7 @@ export default class VaultAIPlugin extends Plugin {
 
           // Find last assistant message
           const lastAssistantMessage = messages
-            .filter((msg: any) => msg.role === 'assistant' || msg.role === 'AI')
+            .filter((msg: Record<string, any>) => msg.role === 'assistant' || msg.role === 'AI')
             .pop();
 
           if (lastAssistantMessage && lastAssistantMessage.content) {
@@ -1730,6 +1730,7 @@ export default class VaultAIPlugin extends Plugin {
     if (!this.settings.reportApiKey) {
       new Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8000);
       // Open settings tab so user can enter their license key
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const settingTab = (this.app as any).setting;
       if (settingTab) {
         settingTab.open();
