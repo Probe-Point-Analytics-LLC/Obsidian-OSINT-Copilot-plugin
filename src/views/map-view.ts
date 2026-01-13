@@ -185,7 +185,7 @@ export class MapView extends ItemView {
     }
 
     getDisplayText(): string {
-        return 'OSINTCopilot Map';
+        return 'OSINTCopilot map';
     }
 
     getIcon(): string {
@@ -237,6 +237,7 @@ export class MapView extends ItemView {
         // Inject CSS inline to avoid CSP issues with external stylesheets
         // Only inject if not already present
         if (!document.getElementById('leaflet-inline-css')) {
+            // eslint-disable-next-line obsidianmd/no-forbidden-elements
             const style = document.createElement('style');
             style.id = 'leaflet-inline-css';
             style.textContent = LEAFLET_CSS;
@@ -266,7 +267,7 @@ export class MapView extends ItemView {
         `;
 
         // Add Location button
-        const addBtn = toolbar.createEl('button', { text: '+ Add Location' });
+        const addBtn = toolbar.createEl('button', { text: '+ add location' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openLocationCreator();
 
@@ -274,20 +275,20 @@ export class MapView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Refresh button
-        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
         refreshBtn.onclick = async () => await this.refresh();
 
         // Fit all button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit All' });
+        const fitBtn = toolbar.createEl('button', { text: '⊡ fit all' });
         fitBtn.onclick = () => this.fitAllMarkers();
 
         // Geolocate button
-        const geolocateBtn = toolbar.createEl('button', { text: '📍 Geolocate Missing' });
+        const geolocateBtn = toolbar.createEl('button', { text: '📍 geolocate missing' });
         geolocateBtn.onclick = () => this.showGeolocateMissingDialog();
 
         // Info label
         toolbar.createEl('span', {
-            text: 'Map shows all Location entities with coordinates',
+            text: 'Map shows all location entities with coordinates',
             cls: 'graph_copilot-map-info'
         }).style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 12px;';
     }
@@ -399,7 +400,7 @@ export class MapView extends ItemView {
 
             menu.addItem((item) => {
                 item
-                    .setTitle('Create Location Here')
+                    .setTitle('Create location here')
                     .setIcon('map-pin')
                     .onClick(() => {
                         const modal = new EntityCreationModal(
@@ -565,7 +566,7 @@ export class MapView extends ItemView {
 
             menu.addItem((item) => {
                 item
-                    .setTitle('Open Note')
+                    .setTitle('Open note')
                     .setIcon('file-text')
                     .onClick(() => {
                         this.entityManager.openEntityNote(location.id);
@@ -769,7 +770,7 @@ class GeolocateMissingModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
 
-        contentEl.createEl('h2', { text: 'Geolocate Locations' });
+        contentEl.createEl('h2', { text: 'Geolocate locations' });
         contentEl.createEl('p', {
             text: `Found ${this.locations.length} location(s) without coordinates that can be geocoded.`
         });
@@ -805,7 +806,7 @@ class GeolocateMissingModal extends Modal {
                 cls: 'text-muted'
             });
 
-            const btn = item.createEl('button', { text: '📍 Geolocate' });
+            const btn = item.createEl('button', { text: '📍 geolocate' });
             btn.onclick = async () => {
                 btn.disabled = true;
                 btn.textContent = 'Geocoding...';
@@ -817,7 +818,7 @@ class GeolocateMissingModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
         buttonContainer.style.cssText = 'display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;';
 
-        const geolocateAllBtn = buttonContainer.createEl('button', { text: 'Geolocate All' });
+        const geolocateAllBtn = buttonContainer.createEl('button', { text: 'Geolocate all' });
         geolocateAllBtn.onclick = async () => {
             geolocateAllBtn.disabled = true;
             await this.geolocateAll();
@@ -873,12 +874,12 @@ class GeolocateMissingModal extends Modal {
             await this.entityManager.updateEntity(entity.id, updates);
 
             // Update UI
-            btn.textContent = '✓ Done';
+            btn.textContent = '✓ done';
             btn.style.color = 'var(--text-success)';
             item.style.borderColor = 'var(--text-success)';
 
         } catch (error) {
-            btn.textContent = '✗ Failed';
+            btn.textContent = '✗ failed';
             btn.style.color = 'var(--text-error)';
             if (error instanceof GeocodingError) {
                 new Notice(`Failed to geocode ${entity.label}: ${error.message}`);

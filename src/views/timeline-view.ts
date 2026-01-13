@@ -39,7 +39,7 @@ export class TimelineView extends ItemView {
     }
 
     getDisplayText(): string {
-        return 'OSINTCopilot Timeline';
+        return 'OSINTCopilot timeline';
     }
 
     getIcon(): string {
@@ -96,7 +96,7 @@ export class TimelineView extends ItemView {
         `;
 
         // Add Event button
-        const addBtn = toolbar.createEl('button', { text: '+ Add Event' });
+        const addBtn = toolbar.createEl('button', { text: '+ add event' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openEventCreator();
 
@@ -104,18 +104,18 @@ export class TimelineView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Refresh button
-        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
         refreshBtn.onclick = async () => {
             refreshBtn.disabled = true;
-            refreshBtn.textContent = '↻ Loading...';
+            refreshBtn.textContent = '↻ loading...';
             await this.refresh();
             refreshBtn.disabled = false;
-            refreshBtn.textContent = '↻ Refresh';
+            refreshBtn.textContent = '↻ refresh';
         };
 
         // Filter label
         toolbar.createEl('span', {
-            text: 'Shows events with "Add to Timeline" enabled',
+            text: 'Shows events with "add to timeline" enabled',
             cls: 'graph_copilot-timeline-info'
         }).style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 12px;';
     }
@@ -236,7 +236,7 @@ export class TimelineView extends ItemView {
             }).style.marginBottom = '10px';
 
             emptyEl.createEl('p', {
-                text: 'To add events: Create an Event entity with a start date, then check the "Add to Timeline" checkbox.'
+                text: 'To add events: create an event entity with a start date, then check the "add to timeline" checkbox.'
             }).style.fontSize = '12px';
             return;
         }
@@ -335,7 +335,7 @@ export class TimelineView extends ItemView {
 
         // Remove from Timeline button
         const removeBtn = cardHeader.createEl('button', {
-            text: '✕ Remove',
+            text: '✕ remove',
             cls: 'graph_copilot-timeline-remove-btn'
         });
         removeBtn.style.cssText = `
@@ -349,7 +349,7 @@ export class TimelineView extends ItemView {
             transition: all 0.2s;
             white-space: nowrap;
         `;
-        removeBtn.title = 'Remove from Timeline';
+        removeBtn.title = 'Remove from timeline';
 
         // Remove button hover effects
         removeBtn.onmouseenter = () => {

@@ -36,7 +36,7 @@ export class EntityManager {
     async initialize(): Promise<void> {
         // Ensure base folder exists
         await this.ensureFolderExists(this.basePath);
-        
+
         // Create type folders
         for (const type of Object.values(EntityType)) {
             await this.ensureFolderExists(`${this.basePath}/${type}`);
@@ -108,7 +108,7 @@ export class EntityManager {
         try {
             const content = await this.app.vault.read(file);
             const frontmatter = this.parseFrontmatter(content);
-            
+
             if (!frontmatter || !frontmatter.type || !frontmatter.id) {
                 return null;
             }
@@ -122,7 +122,7 @@ export class EntityManager {
             const properties: Record<string, any> = {};
             const config = ENTITY_CONFIGS[type];
             const allProps = [...config.properties, ...COMMON_PROPERTIES];
-            
+
             for (const prop of allProps) {
                 if (frontmatter[prop] !== undefined) {
                     properties[prop] = frontmatter[prop];
@@ -151,7 +151,7 @@ export class EntityManager {
 
         const yaml = match[1];
         const result: Record<string, any> = {};
-        
+
         // Simple YAML parser for frontmatter
         const lines = yaml.split('\n');
         for (const line of lines) {
@@ -159,13 +159,13 @@ export class EntityManager {
             if (colonIndex > 0) {
                 const key = line.substring(0, colonIndex).trim();
                 let value = line.substring(colonIndex + 1).trim();
-                
+
                 // Handle quoted strings
                 if ((value.startsWith('"') && value.endsWith('"')) ||
                     (value.startsWith("'") && value.endsWith("'"))) {
                     value = value.slice(1, -1);
                 }
-                
+
                 // Handle booleans
                 if (value === 'true') result[key] = true;
                 else if (value === 'false') result[key] = false;
@@ -174,7 +174,7 @@ export class EntityManager {
                 else result[key] = value;
             }
         }
-        
+
         return result;
     }
 
@@ -212,7 +212,7 @@ export class EntityManager {
             // Extract connection properties from frontmatter
             const properties: Record<string, any> = {};
             const excludedKeys = ['id', 'type', 'relationship', 'fromEntityId', 'toEntityId',
-                                  'fromEntity', 'toEntity', 'ftmSchema', 'label'];
+                'fromEntity', 'toEntity', 'ftmSchema', 'label'];
 
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!excludedKeys.includes(key) && value !== undefined && value !== null) {
@@ -248,7 +248,7 @@ export class EntityManager {
 
             const content = await this.app.vault.read(file);
             const connections = this.parseRelationshipsFromContent(content, entity.id);
-            
+
             for (const conn of connections) {
                 this.connections.set(conn.id, conn);
             }
@@ -260,19 +260,19 @@ export class EntityManager {
      */
     private parseRelationshipsFromContent(content: string, fromEntityId: string): Connection[] {
         const connections: Connection[] = [];
-        
+
         // Match pattern: [[Entity Name]] RELATIONSHIP_TYPE [[Target Entity]]
         // or simpler: - [[Target Entity]] RELATIONSHIP_TYPE
         const relationshipRegex = /\[\[([^\]]+)\]\]\s+([A-Z_]+)\s+\[\[([^\]]+)\]\]/g;
         const simpleRegex = /-\s+\[\[([^\]]+)\]\]\s+([A-Z_]+)/g;
-        
+
         let match;
-        
+
         // Full relationship pattern
         while ((match = relationshipRegex.exec(content)) !== null) {
             const targetLabel = match[3];
             const relationship = match[2];
-            
+
             // Find target entity by label
             const targetEntity = this.findEntityByLabel(targetLabel);
             if (targetEntity) {
@@ -284,12 +284,12 @@ export class EntityManager {
                 });
             }
         }
-        
+
         // Simple relationship pattern
         while ((match = simpleRegex.exec(content)) !== null) {
             const targetLabel = match[1];
             const relationship = match[2];
-            
+
             const targetEntity = this.findEntityByLabel(targetLabel);
             if (targetEntity && targetEntity.id !== fromEntityId) {
                 connections.push({
@@ -300,7 +300,7 @@ export class EntityManager {
                 });
             }
         }
-        
+
         return connections;
     }
 
@@ -615,15 +615,15 @@ ${entity.properties.notes || ''}
             if (error instanceof GeocodingError) {
                 console.warn('[EntityManager] Geocoding failed:', error.type, error.message);
                 if (error.type === GeocodingErrorType.NotFound) {
-                    new Notice(`⚠️ Could not find coordinates for location. You can add them manually.`);
+                    new Notice("⚠️ could not find coordinates for location. You can add them manually.");
                 } else if (error.type === GeocodingErrorType.RateLimited) {
-                    new Notice(`⚠️ Geocoding rate limited. Coordinates can be added manually.`);
+                    new Notice("⚠️ geocoding rate limited. Coordinates can be added manually.");
                 } else {
                     new Notice(`⚠️ Geocoding failed: ${error.message}`);
                 }
             } else {
                 console.error('[EntityManager] Unexpected geocoding error:', error);
-                new Notice(`⚠️ Could not geocode location. You can add coordinates manually.`);
+                new Notice("⚠️ could not geocode location. You can add coordinates manually.");
             }
             // Return original properties without coordinates - entity creation continues
             return properties;
@@ -650,7 +650,7 @@ ${entity.properties.notes || ''}
         const hasCoords = entity.properties.latitude && entity.properties.longitude;
         if (hasCoords) {
             console.log('[EntityManager] Entity already has coordinates');
-            new Notice('📍 Location already has coordinates.');
+            new Notice('📍 location already has coordinates.');
             return true;
         }
 
@@ -725,7 +725,7 @@ ${entity.properties.notes || ''}
 
         // Build frontmatter
         const frontmatter = this.buildFrontmatter(entity);
-        
+
         // Build note content
         const content = `---
 ${frontmatter}
@@ -867,7 +867,7 @@ ${entity.properties.notes || ''}
         if (entity.filePath) {
             const file = this.app.vault.getAbstractFileByPath(entity.filePath);
             if (file instanceof TFile) {
-                await this.app.vault.delete(file);
+                await this.app.fileManager.trashFile(file);
             }
         }
 
@@ -1043,7 +1043,7 @@ ${entity.properties.notes || ''}
                 if (entity.filePath) {
                     const file = this.app.vault.getAbstractFileByPath(entity.filePath);
                     if (file instanceof TFile) {
-                        await this.app.vault.delete(file);
+                        await this.app.fileManager.trashFile(file);
                     }
                 }
 

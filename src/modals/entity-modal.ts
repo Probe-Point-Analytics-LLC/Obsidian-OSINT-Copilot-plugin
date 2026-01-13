@@ -98,7 +98,7 @@ export class EntityCreationModal extends Modal {
         }
 
         // Add common properties section
-        contentEl.createEl('h4', { text: 'Additional Properties' });
+        contentEl.createEl('h4', { text: 'Additional properties' });
         const commonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
 
         for (const prop of COMMON_PROPERTIES) {
@@ -128,7 +128,7 @@ export class EntityCreationModal extends Modal {
 
         // Geocode button
         this.geocodeBtn = geocodeSection.createEl('button', {
-            text: 'Put on Map',
+            text: 'Put on map',
             cls: 'graph_copilot-geocode-btn'
         });
 
@@ -167,7 +167,7 @@ export class EntityCreationModal extends Modal {
 
         // Show loading state
         this.geocodeBtn.disabled = true;
-        this.geocodeBtn.textContent = '⏳ Geocoding...';
+        this.geocodeBtn.textContent = '⏳ geocoding...';
         this.setGeocodeStatus('loading', 'Looking up coordinates...');
 
         try {
@@ -253,7 +253,7 @@ export class EntityCreationModal extends Modal {
             // Reset button state
             if (this.geocodeBtn) {
                 this.geocodeBtn.disabled = false;
-                this.geocodeBtn.textContent = 'Put on Map';
+                this.geocodeBtn.textContent = 'Put on map';
             }
         }
     }
@@ -338,7 +338,7 @@ export class EntityCreationModal extends Modal {
             icon.style.fontSize = '16px';
 
             const btnText = toggleBtn.createSpan({ cls: 'toggle-text' });
-            btnText.textContent = 'Add to Timeline';
+            btnText.textContent = 'Add to timeline';
 
             // Update button appearance based on state
             const updateButtonState = (checked: boolean) => {
@@ -346,12 +346,12 @@ export class EntityCreationModal extends Modal {
                     toggleBtn.style.background = 'var(--interactive-accent)';
                     toggleBtn.style.borderColor = 'var(--interactive-accent)';
                     toggleBtn.style.color = 'white';
-                    btnText.textContent = 'On Timeline ✓';
+                    btnText.textContent = 'On timeline ✓';
                 } else {
                     toggleBtn.style.background = 'var(--background-secondary)';
                     toggleBtn.style.borderColor = 'var(--background-modifier-border)';
                     toggleBtn.style.color = 'var(--text-muted)';
-                    btnText.textContent = 'Add to Timeline';
+                    btnText.textContent = 'Add to timeline';
                 }
             };
 
@@ -571,7 +571,7 @@ export class EntityTypeSelectorModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-selector-modal');
 
-        contentEl.createEl('h2', { text: 'Create New Entity' });
+        contentEl.createEl('h2', { text: 'Create new entity' });
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
 
         const gridContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-type-grid' });
@@ -656,7 +656,7 @@ export class ConnectionCreationModal extends Modal {
         this.entities = this.entityManager.getAllEntities();
 
         // Title
-        contentEl.createEl('h2', { text: 'Create Connection' });
+        contentEl.createEl('h2', { text: 'Create connection' });
         contentEl.createEl('p', {
             text: 'Create a relationship between two entities',
             cls: 'graph_copilot-entity-modal-description'
@@ -692,7 +692,7 @@ export class ConnectionCreationModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: 'Create Connection',
+            text: 'Create connection',
             cls: 'mod-cta'
         });
         createBtn.onclick = () => this.handleCreate();
@@ -737,7 +737,7 @@ export class ConnectionCreationModal extends Modal {
 
     private createRelationshipInput(container: HTMLElement): void {
         const fieldContainer = container.createDiv({ cls: 'graph_copilot-entity-field' });
-        fieldContainer.createEl('label', { text: 'Relationship Type *' });
+        fieldContainer.createEl('label', { text: 'Relationship type *' });
 
         const input = fieldContainer.createEl('input', {
             type: 'text',
@@ -854,7 +854,7 @@ export class ConnectionQuickModal extends Modal {
         contentEl.addClass('graph_copilot-connection-modal');
 
         // Title
-        contentEl.createEl('h2', { text: 'Create Connection' });
+        contentEl.createEl('h2', { text: 'Create connection' });
 
         // Show selected entities
         const entitiesDisplay = contentEl.createDiv({ cls: 'graph_copilot-connection-entities' });
@@ -874,7 +874,7 @@ export class ConnectionQuickModal extends Modal {
         const formContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
         const fieldContainer = formContainer.createDiv({ cls: 'graph_copilot-entity-field' });
 
-        fieldContainer.createEl('label', { text: 'Relationship Type *' });
+        fieldContainer.createEl('label', { text: 'Relationship type *' });
 
         const select = fieldContainer.createEl('select', { cls: 'graph_copilot-entity-input' });
 
@@ -912,7 +912,7 @@ export class ConnectionQuickModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: 'Create Connection',
+            text: 'Create connection',
             cls: 'mod-cta'
         });
         createBtn.onclick = () => this.handleCreate();
@@ -943,7 +943,7 @@ export class ConnectionQuickModal extends Modal {
         if (propertiesToShow.length === 0) return;
 
         // Add a separator
-        this.propertiesContainer.createEl('h4', { text: 'Connection Properties' });
+        this.propertiesContainer.createEl('h4', { text: 'Connection properties' });
 
         // Create fields for each property
         for (const propName of propertiesToShow) {
@@ -1116,7 +1116,7 @@ export class EntityEditModal extends Modal {
         }
 
         // Add common properties section
-        contentEl.createEl('h4', { text: 'Additional Properties' });
+        contentEl.createEl('h4', { text: 'Additional properties' });
         const commonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
 
         for (const prop of COMMON_PROPERTIES) {
@@ -1129,7 +1129,7 @@ export class EntityEditModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: 'Save Changes',
+            text: 'Save changes',
             cls: 'mod-cta'
         });
         saveBtn.onclick = () => this.handleSave();
@@ -1146,7 +1146,7 @@ export class EntityEditModal extends Modal {
 
         // Geocode button
         this.geocodeBtn = geocodeSection.createEl('button', {
-            text: 'Put on Map',
+            text: 'Put on map',
             cls: 'graph_copilot-geocode-btn'
         });
 
@@ -1185,7 +1185,7 @@ export class EntityEditModal extends Modal {
 
         // Show loading state
         this.geocodeBtn.disabled = true;
-        this.geocodeBtn.textContent = '⏳ Geocoding...';
+        this.geocodeBtn.textContent = '⏳ geocoding...';
         this.setGeocodeStatus('loading', 'Looking up coordinates...');
 
         try {
@@ -1271,7 +1271,7 @@ export class EntityEditModal extends Modal {
             // Reset button state
             if (this.geocodeBtn) {
                 this.geocodeBtn.disabled = false;
-                this.geocodeBtn.textContent = '📍 Geocode Address';
+                this.geocodeBtn.textContent = '📍 geocode address';
             }
         }
     }
@@ -1373,12 +1373,12 @@ export class EntityEditModal extends Modal {
                     toggleBtn.style.background = 'var(--interactive-accent)';
                     toggleBtn.style.borderColor = 'var(--interactive-accent)';
                     toggleBtn.style.color = 'white';
-                    btnText.textContent = 'On Timeline ✓';
+                    btnText.textContent = 'On timeline ✓';
                 } else {
                     toggleBtn.style.background = 'var(--background-secondary)';
                     toggleBtn.style.borderColor = 'var(--background-modifier-border)';
                     toggleBtn.style.color = 'var(--text-muted)';
-                    btnText.textContent = 'Add to Timeline';
+                    btnText.textContent = 'Add to timeline';
                 }
             };
 
@@ -1479,7 +1479,7 @@ export class EntityEditModal extends Modal {
 
                 this.close();
             } else {
-                new Notice('Failed to update entity: Entity not found');
+                new Notice('Failed to update entity: entity not found');
             }
         } catch (error) {
             new Notice(`Failed to update entity: ${error}`);
@@ -1603,7 +1603,7 @@ export class FTMEntityCreationModal extends Modal {
 
         // Required properties section
         if (config.requiredProperties.length > 0) {
-            formContainer.createEl('h4', { text: 'Required Properties', cls: 'graph_copilot-section-header' });
+            formContainer.createEl('h4', { text: 'Required properties', cls: 'graph_copilot-section-header' });
             for (const prop of config.requiredProperties) {
                 const propDef = config.propertyDefinitions[prop];
                 if (propDef) {
@@ -1617,7 +1617,7 @@ export class FTMEntityCreationModal extends Modal {
             p => !config.requiredProperties.includes(p)
         );
         if (featuredNonRequired.length > 0) {
-            formContainer.createEl('h4', { text: 'Key Properties', cls: 'graph_copilot-section-header' });
+            formContainer.createEl('h4', { text: 'Key properties', cls: 'graph_copilot-section-header' });
             for (const prop of featuredNonRequired) {
                 const propDef = config.propertyDefinitions[prop];
                 if (propDef) {
@@ -1655,7 +1655,7 @@ export class FTMEntityCreationModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: 'Create Entity',
+            text: 'Create entity',
             cls: 'mod-cta'
         });
         createBtn.onclick = () => this.handleCreate();
@@ -1807,7 +1807,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-selector-modal');
 
-        contentEl.createEl('h2', { text: 'Create New Entity' });
+        contentEl.createEl('h2', { text: 'Create new entity' });
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
 
         // Search input for filtering entity types
@@ -1971,7 +1971,7 @@ export class FTMEntityEditModal extends Modal {
 
         // Required properties section
         if (config.requiredProperties.length > 0) {
-            formContainer.createEl('h4', { text: 'Required Properties', cls: 'graph_copilot-section-header' });
+            formContainer.createEl('h4', { text: 'Required properties', cls: 'graph_copilot-section-header' });
             for (const prop of config.requiredProperties) {
                 const propDef = config.propertyDefinitions[prop];
                 if (propDef) {
@@ -1985,7 +1985,7 @@ export class FTMEntityEditModal extends Modal {
             p => !config.requiredProperties.includes(p)
         );
         if (featuredNonRequired.length > 0) {
-            formContainer.createEl('h4', { text: 'Key Properties', cls: 'graph_copilot-section-header' });
+            formContainer.createEl('h4', { text: 'Key properties', cls: 'graph_copilot-section-header' });
             for (const prop of featuredNonRequired) {
                 const propDef = config.propertyDefinitions[prop];
                 if (propDef) {
@@ -2029,7 +2029,7 @@ export class FTMEntityEditModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: 'Save Changes',
+            text: 'Save changes',
             cls: 'mod-cta'
         });
         saveBtn.onclick = () => this.handleSave();
@@ -2103,12 +2103,12 @@ export class FTMEntityEditModal extends Modal {
                     toggleBtn.style.background = 'var(--interactive-accent)';
                     toggleBtn.style.borderColor = 'var(--interactive-accent)';
                     toggleBtn.style.color = 'white';
-                    btnText.textContent = 'On Timeline ✓';
+                    btnText.textContent = 'On timeline ✓';
                 } else {
                     toggleBtn.style.background = 'var(--background-secondary)';
                     toggleBtn.style.borderColor = 'var(--background-modifier-border)';
                     toggleBtn.style.color = 'var(--text-muted)';
-                    btnText.textContent = 'Add to Timeline';
+                    btnText.textContent = 'Add to timeline';
                 }
             };
 
@@ -2217,7 +2217,7 @@ export class FTMEntityEditModal extends Modal {
             border-left: 3px solid var(--interactive-accent);
         `;
 
-        const header = geocodingSection.createEl('h4', { text: '📍 Geocoding' });
+        const header = geocodingSection.createEl('h4', { text: '📍 geocoding' });
         header.style.cssText = 'margin-top: 0; margin-bottom: 10px;';
 
         const description = geocodingSection.createEl('p', {
@@ -2231,7 +2231,7 @@ export class FTMEntityEditModal extends Modal {
         this.geocodeStatusEl.style.cssText = 'margin-bottom: 10px; font-size: 12px;';
 
         // Geocode button
-        const geocodeBtn = geocodingSection.createEl('button', { text: '📍 Geolocate Address' });
+        const geocodeBtn = geocodingSection.createEl('button', { text: '📍 geolocate address' });
         geocodeBtn.style.cssText = `
             padding: 8px 16px;
             background: var(--interactive-accent);
@@ -2318,7 +2318,7 @@ export class FTMEntityEditModal extends Modal {
 
             // Re-enable button
             button.disabled = false;
-            button.textContent = '✓ Geocoded Successfully';
+            button.textContent = '✓ geocoded successfully';
             button.style.background = 'var(--text-success)';
 
             new Notice('Geocoding successful! Don\'t forget to save your changes.');
@@ -2326,7 +2326,7 @@ export class FTMEntityEditModal extends Modal {
         } catch (error) {
             // Re-enable button
             button.disabled = false;
-            button.textContent = '📍 Geolocate Address';
+            button.textContent = '📍 geolocate address';
 
             if (error instanceof GeocodingError) {
                 this.updateGeocodeStatus(`✗ ${error.message}`, 'error');
@@ -2382,7 +2382,7 @@ export class FTMEntityEditModal extends Modal {
 
                 this.close();
             } else {
-                new Notice('Failed to update entity: Entity not found');
+                new Notice('Failed to update entity: entity not found');
             }
         } catch (error) {
             new Notice(`Failed to update entity: ${error}`);
@@ -2434,14 +2434,14 @@ export class FTMEntityEditModal extends Modal {
         const addPropSection = contentEl.createDiv({ cls: 'graph_copilot-add-property-section' });
         addPropSection.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--background-modifier-border);';
 
-        addPropSection.createEl('h4', { text: 'Add New Property', cls: 'graph_copilot-section-header' });
+        addPropSection.createEl('h4', { text: 'Add new property', cls: 'graph_copilot-section-header' });
 
         const addPropContainer = addPropSection.createDiv({ cls: 'graph_copilot-add-property-container' });
         addPropContainer.style.cssText = 'display: flex; gap: 10px; align-items: flex-end;';
 
         const nameFieldContainer = addPropContainer.createDiv({ cls: 'graph_copilot-entity-field' });
         nameFieldContainer.style.flex = '1';
-        nameFieldContainer.createEl('label', { text: 'Property Name' });
+        nameFieldContainer.createEl('label', { text: 'Property name' });
         const nameInput = nameFieldContainer.createEl('input', {
             type: 'text',
             placeholder: 'e.g., address, phone, email'
@@ -2450,14 +2450,14 @@ export class FTMEntityEditModal extends Modal {
 
         const valueFieldContainer = addPropContainer.createDiv({ cls: 'graph_copilot-entity-field' });
         valueFieldContainer.style.flex = '2';
-        valueFieldContainer.createEl('label', { text: 'Property Value' });
+        valueFieldContainer.createEl('label', { text: 'Property value' });
         const valueInput = valueFieldContainer.createEl('input', {
             type: 'text',
             placeholder: 'Enter value...'
         }) as HTMLInputElement;
         valueInput.addClass('graph_copilot-entity-input');
 
-        const addBtn = addPropContainer.createEl('button', { text: '+ Add' });
+        const addBtn = addPropContainer.createEl('button', { text: '+ add' });
         addBtn.style.cssText = 'padding: 8px 16px; margin-bottom: 2px;';
         addBtn.onclick = () => {
             const propName = nameInput.value.trim();
@@ -2493,7 +2493,7 @@ export class FTMEntityEditModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: 'Save Changes',
+            text: 'Save changes',
             cls: 'mod-cta'
         });
         saveBtn.onclick = () => this.handleNonFTMSave();
@@ -2555,7 +2555,7 @@ export class FTMEntityEditModal extends Modal {
 
                 this.close();
             } else {
-                new Notice('Failed to update entity: Entity not found');
+                new Notice('Failed to update entity: entity not found');
             }
         } catch (error) {
             new Notice(`Failed to update entity: ${error}`);
@@ -2601,7 +2601,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-selector-modal');
 
-        contentEl.createEl('h2', { text: 'Create New Connection' });
+        contentEl.createEl('h2', { text: 'Create new connection' });
         contentEl.createEl('p', { text: 'Select the type of relationship/interval to create:' });
 
         // Search input for filtering interval types
@@ -2796,7 +2796,7 @@ export class FTMIntervalCreationModal extends Modal {
 
         // Add optional properties in collapsible section
         if (config.optionalProperties.length > 0) {
-            contentEl.createEl('h4', { text: 'Additional Properties' });
+            contentEl.createEl('h4', { text: 'Additional properties' });
             const optionalContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
 
             for (const propName of config.optionalProperties) {
@@ -3016,7 +3016,7 @@ export class ConnectionEditModal extends Modal {
         const toEntity = this.entityManager.getEntity(this.connection.toEntityId);
 
         if (!fromEntity || !toEntity) {
-            contentEl.createEl('p', { text: 'Error: Source or target entity not found' });
+            contentEl.createEl('p', { text: 'Error: source or target entity not found' });
             const closeBtn = contentEl.createEl('button', { text: 'Close' });
             closeBtn.onclick = () => this.close();
             return;
@@ -3057,7 +3057,7 @@ export class ConnectionEditModal extends Modal {
                 cls: 'graph_copilot-entity-modal-description'
             });
         } else {
-            formContainer.createEl('h4', { text: 'Connection Properties', cls: 'graph_copilot-section-header' });
+            formContainer.createEl('h4', { text: 'Connection properties', cls: 'graph_copilot-section-header' });
 
             // Create fields for each editable property
             for (const propName of editableProperties) {
@@ -3073,7 +3073,7 @@ export class ConnectionEditModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: 'Save Changes',
+            text: 'Save changes',
             cls: 'mod-cta'
         });
         saveBtn.onclick = () => this.handleSave();
@@ -3176,14 +3176,14 @@ export class ConnectionEditModal extends Modal {
         const toEntity = this.entityManager.getEntity(this.connection.toEntityId);
 
         if (!fromEntity || !toEntity) {
-            contentEl.createEl('p', { text: 'Error: Source or target entity not found' });
+            contentEl.createEl('p', { text: 'Error: source or target entity not found' });
             const closeBtn = contentEl.createEl('button', { text: 'Close' });
             closeBtn.onclick = () => this.close();
             return;
         }
 
         // Title
-        contentEl.createEl('h2', { text: `Edit Connection` });
+        contentEl.createEl('h2', { text: "Edit connection" });
         contentEl.createEl('p', {
             text: `${fromEntity.label} → ${this.connection.relationship} → ${toEntity.label}`,
             cls: 'graph_copilot-entity-modal-description'
@@ -3221,14 +3221,14 @@ export class ConnectionEditModal extends Modal {
         const addPropSection = contentEl.createDiv({ cls: 'graph_copilot-add-property-section' });
         addPropSection.style.cssText = 'margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--background-modifier-border);';
 
-        addPropSection.createEl('h4', { text: 'Add New Property', cls: 'graph_copilot-section-header' });
+        addPropSection.createEl('h4', { text: 'Add new property', cls: 'graph_copilot-section-header' });
 
         const addPropContainer = addPropSection.createDiv({ cls: 'graph_copilot-add-property-container' });
         addPropContainer.style.cssText = 'display: flex; gap: 10px; align-items: flex-end;';
 
         const nameFieldContainer = addPropContainer.createDiv({ cls: 'graph_copilot-entity-field' });
         nameFieldContainer.style.flex = '1';
-        nameFieldContainer.createEl('label', { text: 'Property Name' });
+        nameFieldContainer.createEl('label', { text: 'Property name' });
         const nameInput = nameFieldContainer.createEl('input', {
             type: 'text',
             placeholder: 'e.g., date, location, notes'
@@ -3237,14 +3237,14 @@ export class ConnectionEditModal extends Modal {
 
         const valueFieldContainer = addPropContainer.createDiv({ cls: 'graph_copilot-entity-field' });
         valueFieldContainer.style.flex = '2';
-        valueFieldContainer.createEl('label', { text: 'Property Value' });
+        valueFieldContainer.createEl('label', { text: 'Property value' });
         const valueInput = valueFieldContainer.createEl('input', {
             type: 'text',
             placeholder: 'Enter value...'
         }) as HTMLInputElement;
         valueInput.addClass('graph_copilot-entity-input');
 
-        const addBtn = addPropContainer.createEl('button', { text: '+ Add' });
+        const addBtn = addPropContainer.createEl('button', { text: '+ add' });
         addBtn.style.cssText = 'padding: 8px 16px; margin-bottom: 2px;';
         addBtn.onclick = () => {
             const propName = nameInput.value.trim();
@@ -3274,7 +3274,7 @@ export class ConnectionEditModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const saveBtn = buttonContainer.createEl('button', {
-            text: 'Save Changes',
+            text: 'Save changes',
             cls: 'mod-cta'
         });
         saveBtn.onclick = () => this.handleNonFTMConnectionSave();

@@ -141,7 +141,7 @@ export class GraphView extends ItemView {
     }
 
     getDisplayText(): string {
-        return 'OSINTCopilot Graph';
+        return 'OSINTCopilot graph';
     }
 
     getIcon(): string {
@@ -197,7 +197,7 @@ export class GraphView extends ItemView {
                 color: var(--text-error);
             `;
             
-            const errorTitle = errorDiv.createEl('h3', { text: 'Failed to Load Graph' });
+            const errorTitle = errorDiv.createEl('h3', { text: 'Failed to load graph' });
             errorTitle.style.cssText = 'color: var(--text-error); margin-bottom: 10px;';
             
             const errorMsg = errorDiv.createEl('p', { 
@@ -305,12 +305,12 @@ export class GraphView extends ItemView {
         `;
 
         // Add Entity button
-        const addBtn = toolbar.createEl('button', { text: '+ Add Entity' });
+        const addBtn = toolbar.createEl('button', { text: '+ add entity' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openEntityCreator();
 
         // Connect button (node selection mode)
-        this.connectBtn = toolbar.createEl('button', { text: '🔗 Connect' });
+        this.connectBtn = toolbar.createEl('button', { text: '🔗 connect' });
         this.connectBtn.addClass('graph_copilot-connect-btn');
         this.connectBtn.onclick = () => this.toggleConnectionMode();
 
@@ -318,19 +318,19 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Box Select button
-        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ Box Select' });
+        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ box select' });
         this.boxSelectBtn.title = 'Enter box selection mode to select multiple items by dragging';
         this.boxSelectBtn.onclick = () => this.toggleBoxSelectMode();
 
         // Selection controls (shown when items are selected)
         // Clear Selection button (hidden by default)
-        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ Clear Selection' });
+        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ clear selection' });
         this.clearSelectionBtn.addClass('graph_copilot-clear-selection-btn');
         this.clearSelectionBtn.style.display = 'none';
         this.clearSelectionBtn.onclick = () => this.clearSelection();
 
         // Delete Selected button (hidden by default)
-        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 Delete Selected' });
+        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 delete selected' });
         this.deleteSelectedBtn.addClass('graph_copilot-delete-selected-btn');
         this.deleteSelectedBtn.style.display = 'none';
         this.deleteSelectedBtn.onclick = () => this.showDeleteConfirmation();
@@ -348,18 +348,18 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Undo/Redo buttons
-        this.undoBtn = toolbar.createEl('button', { text: '↶ Undo' });
+        this.undoBtn = toolbar.createEl('button', { text: '↶ undo' });
         this.undoBtn.addClass('graph_copilot-undo-btn');
         this.undoBtn.disabled = true;
         this.undoBtn.onclick = () => this.performUndo();
 
-        this.redoBtn = toolbar.createEl('button', { text: '↷ Redo' });
+        this.redoBtn = toolbar.createEl('button', { text: '↷ redo' });
         this.redoBtn.addClass('graph_copilot-redo-btn');
         this.redoBtn.disabled = true;
         this.redoBtn.onclick = () => this.performRedo();
 
         // History panel toggle button
-        const historyBtn = toolbar.createEl('button', { text: '📜 History' });
+        const historyBtn = toolbar.createEl('button', { text: '📜 history' });
         historyBtn.addClass('graph_copilot-history-btn');
         historyBtn.onclick = () => this.toggleHistoryPanel();
 
@@ -367,7 +367,7 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Rearrange button (was Refresh) - resets all node positions using automatic layout
-        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 Rearrange' });
+        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 rearrange' });
         rearrangeBtn.title = 'Rearrange all entities using automatic layout (resets current positions)';
         rearrangeBtn.onclick = async () => {
             // Show confirmation dialog
@@ -375,21 +375,21 @@ export class GraphView extends ItemView {
             if (!confirmed) return;
 
             rearrangeBtn.disabled = true;
-            rearrangeBtn.textContent = '🔄 Rearranging...';
+            rearrangeBtn.textContent = '🔄 rearranging...';
             await this.rearrangeGraph();
             rearrangeBtn.disabled = false;
-            rearrangeBtn.textContent = '🔄 Rearrange';
+            rearrangeBtn.textContent = '🔄 rearrange';
         };
 
 
         // Refresh button - reload entities while preserving positions
-        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
         refreshBtn.title = 'Refresh graph (reload entities while preserving zoom and positions)';
         refreshBtn.addClass('graph_copilot-refresh-btn');
         refreshBtn.onclick = async () => {
             refreshBtn.disabled = true;
             const originalText = refreshBtn.textContent;
-            refreshBtn.textContent = '↻ Refreshing...';
+            refreshBtn.textContent = '↻ refreshing...';
             
             try {
                 await this.refreshWithSavedPositions();
@@ -415,7 +415,7 @@ export class GraphView extends ItemView {
             }
         };
             // Fit button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit' });
+        const fitBtn = toolbar.createEl('button', { text: '⊡ fit' });
         fitBtn.title = 'Fit all entities in view';
         fitBtn.onclick = () => this.cy?.fit();
 
@@ -445,7 +445,7 @@ export class GraphView extends ItemView {
 
         if (this.connectBtn) {
             this.connectBtn.addClass('graph_copilot-connect-btn-active');
-            this.connectBtn.textContent = '✕ Cancel';
+            this.connectBtn.textContent = '✕ cancel';
         }
 
         if (this.statusIndicator) {
@@ -458,7 +458,7 @@ export class GraphView extends ItemView {
             this.container.addClass('graph_copilot-connection-mode');
         }
 
-        new Notice('Connection mode: Click the source node');
+        new Notice('Connection mode: click the source node');
     }
 
     /**
@@ -471,7 +471,7 @@ export class GraphView extends ItemView {
 
         if (this.connectBtn) {
             this.connectBtn.removeClass('graph_copilot-connect-btn-active');
-            this.connectBtn.textContent = '🔗 Connect';
+            this.connectBtn.textContent = '🔗 connect';
         }
 
         if (this.statusIndicator) {
@@ -513,7 +513,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.addClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ Exit Box Select';
+            this.boxSelectBtn.textContent = '⬚ exit box select';
         }
 
         if (this.cy) {
@@ -526,7 +526,7 @@ export class GraphView extends ItemView {
             this.container.addClass('graph_copilot-box-select-mode');
         }
 
-        new Notice('Box select mode: Drag to select multiple items');
+        new Notice('Box select mode: drag to select multiple items');
     }
 
     /**
@@ -537,7 +537,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.removeClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ Box Select';
+            this.boxSelectBtn.textContent = '⬚ box select';
         }
 
         if (this.cy) {
@@ -1030,7 +1030,7 @@ export class GraphView extends ItemView {
                 this.deleteSelectedBtn.textContent = `🗑 Delete Selected (${totalCount})`;
                 this.deleteSelectedBtn.style.display = 'block';
             } else {
-                this.deleteSelectedBtn.textContent = '🗑 Delete Selected';
+                this.deleteSelectedBtn.textContent = '🗑 delete selected';
                 this.deleteSelectedBtn.style.display = 'none';
             }
         }
@@ -1112,9 +1112,9 @@ export class GraphView extends ItemView {
 
         const warning = document.createElement('p');
         if (nodeCount > 0) {
-            warning.textContent = '⚠️ Entity deletions cannot be undone. Entity markdown files will be permanently deleted.';
+            warning.textContent = '⚠️ entity deletions cannot be undone. Entity Markdown files will be permanently deleted.';
         } else {
-            warning.textContent = '⚠️ The following items will be deleted:';
+            warning.textContent = '⚠️ the following items will be deleted:';
         }
         warning.style.cssText = 'margin: 0 0 15px 0; color: var(--text-warning);';
         dialog.appendChild(warning);
@@ -1292,7 +1292,7 @@ export class GraphView extends ItemView {
         `;
 
         const title = document.createElement('h3');
-        title.textContent = 'Delete Entity?';
+        title.textContent = 'Delete entity?';
         title.style.cssText = 'margin: 0 0 15px 0; color: var(--text-normal);';
         dialog.appendChild(title);
 
@@ -2110,7 +2110,7 @@ export class GraphView extends ItemView {
             `;
 
             const title = document.createElement('h3');
-            title.textContent = 'Rearrange Graph?';
+            title.textContent = 'Rearrange graph?';
             title.style.marginTop = '0';
             dialog.appendChild(title);
 
@@ -2549,7 +2549,7 @@ export class GraphView extends ItemView {
                 padding: 4px 8px;
                 text-transform: uppercase;
             `;
-            redoHeader.textContent = 'Redo Stack';
+            redoHeader.textContent = 'Redo stack';
             content.appendChild(redoHeader);
 
             [...redoStack].reverse().forEach((entry, index) => {
@@ -2569,7 +2569,7 @@ export class GraphView extends ItemView {
             text-align: center;
             margin: 4px 0;
         `;
-        currentMarker.textContent = '▶ Current State';
+        currentMarker.textContent = '▶ current state';
         content.appendChild(currentMarker);
 
         // Show undo stack (past actions) - reversed order (most recent first)
@@ -2581,7 +2581,7 @@ export class GraphView extends ItemView {
                 padding: 4px 8px;
                 text-transform: uppercase;
             `;
-            undoHeader.textContent = 'Undo Stack';
+            undoHeader.textContent = 'Undo stack';
             content.appendChild(undoHeader);
 
             [...undoStack].reverse().forEach((entry, index) => {
