@@ -205,7 +205,7 @@ export class ConversationService {
   }
 
   private generateId(): string {
-    return `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `conv-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
   }
 
   private generateTitle(firstMessage?: string): string {

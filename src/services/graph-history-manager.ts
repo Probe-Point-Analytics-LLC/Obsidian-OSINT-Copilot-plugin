@@ -109,7 +109,7 @@ export class GraphHistoryManager {
      * Generate a unique ID for history entries.
      */
     private generateId(): string {
-        return `hist_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `hist_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
     }
 
     /**

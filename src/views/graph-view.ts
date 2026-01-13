@@ -2133,26 +2133,32 @@ export class GraphView extends ItemView {
     /**
      * Rearrange all nodes using automatic layout (resets positions).
      */
-    async rearrangeGraph(): Promise<void> {
-        if (!this.cy) return;
-
-        // Clear saved positions
-        this.nodePositionsCache.clear();
-
-        // Run full layout
-        this.runLayout();
-
-        // Save new positions after layout completes
-        setTimeout(() => {
-            if (this.cy) {
-                this.cy.nodes().forEach((node: NodeSingular) => {
-                    const pos = node.position();
-                    this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
-                });
-                this.savePositions();
-                new Notice('Graph rearranged');
+    rearrangeGraph(): Promise<void> {
+        return new Promise((resolve) => {
+            if (!this.cy) {
+                resolve();
+                return;
             }
-        }, 600);
+
+            // Clear saved positions
+            this.nodePositionsCache.clear();
+
+            // Run full layout
+            this.runLayout();
+
+            // Save new positions after layout completes
+            setTimeout(() => {
+                if (this.cy) {
+                    this.cy.nodes().forEach((node: NodeSingular) => {
+                        const pos = node.position();
+                        this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
+                    });
+                    this.savePositions();
+                    new Notice('Graph rearranged');
+                }
+                resolve();
+            }, 600);
+        });
     }
 
     /**
