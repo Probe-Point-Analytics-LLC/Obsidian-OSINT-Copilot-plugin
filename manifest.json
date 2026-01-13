@@ -1,7 +1,7 @@
 {
   "id": "osint-copilot",
   "name": "OSINT Copilot",
-  "version": "v1.0.0",
+  "version": "1.0.0",
   "minAppVersion": "1.5.0",
   "description": "OSINT investigation plugin for SOC analysts and threat researchers to organize, analyze, and visualize intelligence data.",
   "author": "Probe Point Analytics",
