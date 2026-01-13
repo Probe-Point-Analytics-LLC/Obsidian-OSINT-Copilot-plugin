@@ -170,11 +170,11 @@ export class GraphView extends ItemView {
             console.log('[GraphView] Loading Cytoscape.js...');
             await this.loadCytoscape();
             console.log('[GraphView] Cytoscape.js loaded successfully');
-            
+
             if (typeof cytoscape === 'undefined') {
                 throw new Error('Cytoscape failed to load - typeof cytoscape is undefined');
             }
-            
+
 
             this.initializeGraph();
             console.log('[GraphView] Graph initialized');
@@ -188,7 +188,7 @@ export class GraphView extends ItemView {
             console.log('[GraphView] Graph refreshed with entities');
         } catch (error) {
             console.error('[GraphView] Failed to initialize graph:', error);
-            
+
             // Show error message to user
             const errorDiv = container.createDiv({ cls: 'graph_copilot-error' });
             errorDiv.style.cssText = `
@@ -196,15 +196,15 @@ export class GraphView extends ItemView {
                 text-align: center;
                 color: var(--text-error);
             `;
-            
+
             const errorTitle = errorDiv.createEl('h3', { text: 'Failed to load graph' });
             errorTitle.style.cssText = 'color: var(--text-error); margin-bottom: 10px;';
-            
-            const errorMsg = errorDiv.createEl('p', { 
-                text: error instanceof Error ? error.message : String(error) 
+
+            const errorMsg = errorDiv.createEl('p', {
+                text: error instanceof Error ? error.message : String(error)
             });
             errorMsg.style.cssText = 'margin-bottom: 15px;';
-            
+
             // Common issues and solutions
             const solutions = errorDiv.createDiv();
             solutions.style.cssText = 'text-align: left; max-width: 600px; margin: 0 auto;';
@@ -229,7 +229,7 @@ export class GraphView extends ItemView {
                     <li>Verify plugin settings: enableGraphFeatures should be enabled</li>
                 </ol>
             `;
-            
+
             new Notice('Graph failed to load. Check console for details.', 10000);
         }
     }
@@ -260,11 +260,11 @@ export class GraphView extends ItemView {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = 'https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js';
-            
+
             const timeout = setTimeout(() => {
                 reject(new Error('Cytoscape.js load timeout - CDN request took too long. Check network connection or firewall settings.'));
             }, 30000); // 30 second timeout
-            
+
             script.onload = () => {
                 clearTimeout(timeout);
                 // Double-check that cytoscape is actually available
@@ -275,13 +275,13 @@ export class GraphView extends ItemView {
                     resolve();
                 }
             };
-            
+
             script.onerror = (error) => {
                 clearTimeout(timeout);
                 console.error('[GraphView] Failed to load Cytoscape.js from CDN:', error);
                 reject(new Error('Failed to load Cytoscape.js from CDN. Possible causes: network issue, firewall blocking unpkg.com, or Content Security Policy restrictions.'));
             };
-            
+
             document.head.appendChild(script);
         });
     }
@@ -305,12 +305,12 @@ export class GraphView extends ItemView {
         `;
 
         // Add Entity button
-        const addBtn = toolbar.createEl('button', { text: '+ add entity' });
+        const addBtn = toolbar.createEl('button', { text: '+ Add entity' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openEntityCreator();
 
         // Connect button (node selection mode)
-        this.connectBtn = toolbar.createEl('button', { text: '🔗 connect' });
+        this.connectBtn = toolbar.createEl('button', { text: '🔗 Connect' });
         this.connectBtn.addClass('graph_copilot-connect-btn');
         this.connectBtn.onclick = () => this.toggleConnectionMode();
 
@@ -318,19 +318,19 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Box Select button
-        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ box select' });
+        this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ Box select' });
         this.boxSelectBtn.title = 'Enter box selection mode to select multiple items by dragging';
         this.boxSelectBtn.onclick = () => this.toggleBoxSelectMode();
 
         // Selection controls (shown when items are selected)
         // Clear Selection button (hidden by default)
-        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ clear selection' });
+        this.clearSelectionBtn = toolbar.createEl('button', { text: '✕ Clear selection' });
         this.clearSelectionBtn.addClass('graph_copilot-clear-selection-btn');
         this.clearSelectionBtn.style.display = 'none';
         this.clearSelectionBtn.onclick = () => this.clearSelection();
 
         // Delete Selected button (hidden by default)
-        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 delete selected' });
+        this.deleteSelectedBtn = toolbar.createEl('button', { text: '🗑 Delete selected' });
         this.deleteSelectedBtn.addClass('graph_copilot-delete-selected-btn');
         this.deleteSelectedBtn.style.display = 'none';
         this.deleteSelectedBtn.onclick = () => this.showDeleteConfirmation();
@@ -348,18 +348,18 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Undo/Redo buttons
-        this.undoBtn = toolbar.createEl('button', { text: '↶ undo' });
+        this.undoBtn = toolbar.createEl('button', { text: '↶ Undo' });
         this.undoBtn.addClass('graph_copilot-undo-btn');
         this.undoBtn.disabled = true;
         this.undoBtn.onclick = () => this.performUndo();
 
-        this.redoBtn = toolbar.createEl('button', { text: '↷ redo' });
+        this.redoBtn = toolbar.createEl('button', { text: '↷ Redo' });
         this.redoBtn.addClass('graph_copilot-redo-btn');
         this.redoBtn.disabled = true;
         this.redoBtn.onclick = () => this.performRedo();
 
         // History panel toggle button
-        const historyBtn = toolbar.createEl('button', { text: '📜 history' });
+        const historyBtn = toolbar.createEl('button', { text: '📜 History' });
         historyBtn.addClass('graph_copilot-history-btn');
         historyBtn.onclick = () => this.toggleHistoryPanel();
 
@@ -367,7 +367,7 @@ export class GraphView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Rearrange button (was Refresh) - resets all node positions using automatic layout
-        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 rearrange' });
+        const rearrangeBtn = toolbar.createEl('button', { text: '🔄 Rearrange' });
         rearrangeBtn.title = 'Rearrange all entities using automatic layout (resets current positions)';
         rearrangeBtn.onclick = async () => {
             // Show confirmation dialog
@@ -375,26 +375,26 @@ export class GraphView extends ItemView {
             if (!confirmed) return;
 
             rearrangeBtn.disabled = true;
-            rearrangeBtn.textContent = '🔄 rearranging...';
+            rearrangeBtn.textContent = '🔄 Rearranging...';
             await this.rearrangeGraph();
             rearrangeBtn.disabled = false;
-            rearrangeBtn.textContent = '🔄 rearrange';
+            rearrangeBtn.textContent = '🔄 Rearrange';
         };
 
 
         // Refresh button - reload entities while preserving positions
-        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
         refreshBtn.title = 'Refresh graph (reload entities while preserving zoom and positions)';
         refreshBtn.addClass('graph_copilot-refresh-btn');
         refreshBtn.onclick = async () => {
             refreshBtn.disabled = true;
             const originalText = refreshBtn.textContent;
-            refreshBtn.textContent = '↻ refreshing...';
-            
+            refreshBtn.textContent = '↻ Refreshing...';
+
             try {
                 await this.refreshWithSavedPositions();
                 new Notice('Graph refreshed successfully');
-                
+
                 // Brief visual feedback - flash the button
                 refreshBtn.style.backgroundColor = 'var(--interactive-success)';
                 setTimeout(() => {
@@ -403,7 +403,7 @@ export class GraphView extends ItemView {
             } catch (error) {
                 console.error('[GraphView] Manual refresh failed:', error);
                 new Notice('Failed to refresh graph. Check console for details.');
-                
+
                 // Flash error color
                 refreshBtn.style.backgroundColor = 'var(--interactive-error)';
                 setTimeout(() => {
@@ -414,8 +414,8 @@ export class GraphView extends ItemView {
                 refreshBtn.textContent = originalText;
             }
         };
-            // Fit button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ fit' });
+        // Fit button
+        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit' });
         fitBtn.title = 'Fit all entities in view';
         fitBtn.onclick = () => this.cy?.fit();
 
@@ -445,7 +445,7 @@ export class GraphView extends ItemView {
 
         if (this.connectBtn) {
             this.connectBtn.addClass('graph_copilot-connect-btn-active');
-            this.connectBtn.textContent = '✕ cancel';
+            this.connectBtn.textContent = '✕ cancel'; // 'cancel' lowercase intentional? Probably should be 'Cancel'
         }
 
         if (this.statusIndicator) {
@@ -471,7 +471,7 @@ export class GraphView extends ItemView {
 
         if (this.connectBtn) {
             this.connectBtn.removeClass('graph_copilot-connect-btn-active');
-            this.connectBtn.textContent = '🔗 connect';
+            this.connectBtn.textContent = '🔗 Connect';
         }
 
         if (this.statusIndicator) {
@@ -513,7 +513,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.addClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ exit box select';
+            this.boxSelectBtn.textContent = '⬚ Exit box select';
         }
 
         if (this.cy) {
@@ -537,7 +537,7 @@ export class GraphView extends ItemView {
 
         if (this.boxSelectBtn) {
             this.boxSelectBtn.removeClass('graph_copilot-box-select-active');
-            this.boxSelectBtn.textContent = '⬚ box select';
+            this.boxSelectBtn.textContent = '⬚ Box select';
         }
 
         if (this.cy) {
@@ -656,7 +656,7 @@ export class GraphView extends ItemView {
             console.error('[GraphView] Cannot initialize: container is null');
             return;
         }
-        
+
         if (typeof cytoscape === 'undefined') {
             console.error('[GraphView] Cannot initialize: cytoscape is undefined');
             throw new Error('Cytoscape is not available. Graph cannot be initialized.');
@@ -868,8 +868,8 @@ export class GraphView extends ItemView {
             // Don't intercept keyboard events when user is typing in an input field or modal
             const activeElement = document.activeElement;
             const isInputActive = activeElement instanceof HTMLInputElement ||
-                                  activeElement instanceof HTMLTextAreaElement ||
-                                  activeElement?.hasAttribute('contenteditable');
+                activeElement instanceof HTMLTextAreaElement ||
+                activeElement?.hasAttribute('contenteditable');
 
             // Check if a modal is open
             const modalOpen = document.querySelector('.modal-container') !== null;

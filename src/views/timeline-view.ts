@@ -96,7 +96,7 @@ export class TimelineView extends ItemView {
         `;
 
         // Add Event button
-        const addBtn = toolbar.createEl('button', { text: '+ add event' });
+        const addBtn = toolbar.createEl('button', { text: '+ Add event' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openEventCreator();
 
@@ -104,13 +104,13 @@ export class TimelineView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Refresh button
-        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
         refreshBtn.onclick = async () => {
             refreshBtn.disabled = true;
-            refreshBtn.textContent = '↻ loading...';
+            refreshBtn.textContent = '↻ Loading...';
             await this.refresh();
             refreshBtn.disabled = false;
-            refreshBtn.textContent = '↻ refresh';
+            refreshBtn.textContent = '↻ Refresh';
         };
 
         // Filter label

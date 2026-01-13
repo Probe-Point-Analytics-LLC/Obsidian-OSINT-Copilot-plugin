@@ -111,7 +111,7 @@ export class EntityCreationModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: this.entityId ? 'Update Entity' : 'Create Entity',
+            text: this.entityId ? 'Update entity' : 'Create entity',
             cls: 'mod-cta'
         });
         createBtn.onclick = () => this.handleCreate();

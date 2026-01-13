@@ -267,7 +267,7 @@ export class MapView extends ItemView {
         `;
 
         // Add Location button
-        const addBtn = toolbar.createEl('button', { text: '+ add location' });
+        const addBtn = toolbar.createEl('button', { text: '+ Add location' });
         addBtn.addClass('graph_copilot-add-entity-btn');
         addBtn.onclick = () => this.openLocationCreator();
 
@@ -275,15 +275,15 @@ export class MapView extends ItemView {
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
         // Refresh button
-        const refreshBtn = toolbar.createEl('button', { text: '↻ refresh' });
+        const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
         refreshBtn.onclick = async () => await this.refresh();
 
         // Fit all button
-        const fitBtn = toolbar.createEl('button', { text: '⊡ fit all' });
+        const fitBtn = toolbar.createEl('button', { text: '⊡ Fit all' });
         fitBtn.onclick = () => this.fitAllMarkers();
 
         // Geolocate button
-        const geolocateBtn = toolbar.createEl('button', { text: '📍 geolocate missing' });
+        const geolocateBtn = toolbar.createEl('button', { text: '📍 Geolocate missing' });
         geolocateBtn.onclick = () => this.showGeolocateMissingDialog();
 
         // Info label

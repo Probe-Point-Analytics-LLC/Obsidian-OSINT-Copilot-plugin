@@ -615,15 +615,15 @@ ${entity.properties.notes || ''}
             if (error instanceof GeocodingError) {
                 console.warn('[EntityManager] Geocoding failed:', error.type, error.message);
                 if (error.type === GeocodingErrorType.NotFound) {
-                    new Notice("⚠️ could not find coordinates for location. You can add them manually.");
+                    new Notice("⚠️ Could not find coordinates for location. You can add them manually.");
                 } else if (error.type === GeocodingErrorType.RateLimited) {
-                    new Notice("⚠️ geocoding rate limited. Coordinates can be added manually.");
+                    new Notice("⚠️ Geocoding rate limited. Coordinates can be added manually.");
                 } else {
                     new Notice(`⚠️ Geocoding failed: ${error.message}`);
                 }
             } else {
                 console.error('[EntityManager] Unexpected geocoding error:', error);
-                new Notice("⚠️ could not geocode location. You can add coordinates manually.");
+                new Notice("⚠️ Could not geocode location. You can add coordinates manually.");
             }
             // Return original properties without coordinates - entity creation continues
             return properties;
@@ -650,7 +650,7 @@ ${entity.properties.notes || ''}
         const hasCoords = entity.properties.latitude && entity.properties.longitude;
         if (hasCoords) {
             console.log('[EntityManager] Entity already has coordinates');
-            new Notice('📍 location already has coordinates.');
+            new Notice('📍 Location already has coordinates.');
             return true;
         }
 

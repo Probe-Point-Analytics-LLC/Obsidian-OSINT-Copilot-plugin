@@ -195,14 +195,14 @@ export default class VaultAIPlugin extends Plugin {
     // Add ribbon icons for all OSINT Copilot features (grouped together)
     // Chat icon is always shown, but requires license key to use
     // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
-    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot Chat (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", async (evt: MouseEvent) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
       await this.openChatView(forceNew);
     });
 
     // Graph features icons (Entity Graph, Timeline, Map) - shown when graph features are enabled
     if (this.settings.enableGraphFeatures) {
-      const graphRibbon = this.addRibbonIcon("git-fork", "Entity Graph (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", async (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
         await this.openGraphView(forceNew);
       });
@@ -212,7 +212,7 @@ export default class VaultAIPlugin extends Plugin {
         await this.openTimelineView(forceNew);
       });
 
-      const mapRibbon = this.addRibbonIcon("map-pin", "Location Map (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new pane)", async (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
         await this.openMapView(forceNew);
       });
