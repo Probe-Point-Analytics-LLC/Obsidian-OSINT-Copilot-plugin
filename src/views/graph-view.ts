@@ -369,16 +369,18 @@ export class GraphView extends ItemView {
         // Rearrange button (was Refresh) - resets all node positions using automatic layout
         const rearrangeBtn = toolbar.createEl('button', { text: '🔄 Rearrange' });
         rearrangeBtn.title = 'Rearrange all entities using automatic layout (resets current positions)';
-        rearrangeBtn.onclick = async () => {
-            // Show confirmation dialog
-            const confirmed = await this.showRearrangeConfirmation();
-            if (!confirmed) return;
+        rearrangeBtn.onclick = () => {
+            (async () => {
+                // Show confirmation dialog
+                const confirmed = await this.showRearrangeConfirmation();
+                if (!confirmed) return;
 
-            rearrangeBtn.disabled = true;
-            rearrangeBtn.textContent = '🔄 Rearranging...';
-            await this.rearrangeGraph();
-            rearrangeBtn.disabled = false;
-            rearrangeBtn.textContent = '🔄 Rearrange';
+                rearrangeBtn.disabled = true;
+                rearrangeBtn.textContent = '🔄 Rearranging...';
+                await this.rearrangeGraph();
+                rearrangeBtn.disabled = false;
+                rearrangeBtn.textContent = '🔄 Rearrange';
+            })();
         };
 
 
@@ -386,33 +388,35 @@ export class GraphView extends ItemView {
         const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
         refreshBtn.title = 'Refresh graph (reload entities while preserving zoom and positions)';
         refreshBtn.addClass('graph_copilot-refresh-btn');
-        refreshBtn.onclick = async () => {
-            refreshBtn.disabled = true;
-            const originalText = refreshBtn.textContent;
-            refreshBtn.textContent = '↻ Refreshing...';
+        refreshBtn.onclick = () => {
+            (async () => {
+                refreshBtn.disabled = true;
+                const originalText = refreshBtn.textContent;
+                refreshBtn.textContent = '↻ Refreshing...';
 
-            try {
-                await this.refreshWithSavedPositions();
-                new Notice('Graph refreshed successfully');
+                try {
+                    await this.refreshWithSavedPositions();
+                    new Notice('Graph refreshed successfully');
 
-                // Brief visual feedback - flash the button
-                refreshBtn.style.backgroundColor = 'var(--interactive-success)';
-                setTimeout(() => {
-                    refreshBtn.style.backgroundColor = '';
-                }, 300);
-            } catch (error) {
-                console.error('[GraphView] Manual refresh failed:', error);
-                new Notice('Failed to refresh graph. Check console for details.');
+                    // Brief visual feedback - flash the button
+                    refreshBtn.style.backgroundColor = 'var(--interactive-success)';
+                    setTimeout(() => {
+                        refreshBtn.style.backgroundColor = '';
+                    }, 300);
+                } catch (error) {
+                    console.error('[GraphView] Manual refresh failed:', error);
+                    new Notice('Failed to refresh graph. Check console for details.');
 
-                // Flash error color
-                refreshBtn.style.backgroundColor = 'var(--interactive-error)';
-                setTimeout(() => {
-                    refreshBtn.style.backgroundColor = '';
-                }, 300);
-            } finally {
-                refreshBtn.disabled = false;
-                refreshBtn.textContent = originalText;
-            }
+                    // Flash error color
+                    refreshBtn.style.backgroundColor = 'var(--interactive-error)';
+                    setTimeout(() => {
+                        refreshBtn.style.backgroundColor = '';
+                    }, 300);
+                } finally {
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = originalText;
+                }
+            })();
         };
         // Fit button
         const fitBtn = toolbar.createEl('button', { text: '⊡ Fit' });
@@ -1440,9 +1444,9 @@ export class GraphView extends ItemView {
         if (entityType === EntityType.Location || entityType === 'Address') {
             const entity = this.entityManager.getEntity(entityId);
             if (entity && !entity.properties.latitude && !entity.properties.longitude) {
-                const geolocateItem = this.createMenuItem('📍 Geolocate Address', async () => {
+                const geolocateItem = this.createMenuItem('📍 Geolocate Address', () => {
                     menu.remove();
-                    await this.geolocateEntity(entityId);
+                    this.geolocateEntity(entityId);
                 });
                 menu.appendChild(geolocateItem);
             }

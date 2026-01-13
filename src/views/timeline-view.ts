@@ -105,12 +105,14 @@ export class TimelineView extends ItemView {
 
         // Refresh button
         const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
-        refreshBtn.onclick = async () => {
-            refreshBtn.disabled = true;
-            refreshBtn.textContent = '↻ Loading...';
-            await this.refresh();
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = '↻ Refresh';
+        refreshBtn.onclick = () => {
+            (async () => {
+                refreshBtn.disabled = true;
+                refreshBtn.textContent = '↻ Loading...';
+                await this.refresh();
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = '↻ Refresh';
+            })();
         };
 
         // Filter label

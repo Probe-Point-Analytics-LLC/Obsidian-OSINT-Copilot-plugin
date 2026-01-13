@@ -195,26 +195,26 @@ export default class VaultAIPlugin extends Plugin {
     // Add ribbon icons for all OSINT Copilot features (grouped together)
     // Chat icon is always shown, but requires license key to use
     // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
-    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt: MouseEvent) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
-      await this.openChatView(forceNew);
+      this.openChatView(forceNew);
     });
 
     // Graph features icons (Entity Graph, Timeline, Map) - shown when graph features are enabled
     if (this.settings.enableGraphFeatures) {
-      const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        await this.openGraphView(forceNew);
+        this.openGraphView(forceNew);
       });
 
-      const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        await this.openTimelineView(forceNew);
+        this.openTimelineView(forceNew);
       });
 
-      const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new pane)", async (evt: MouseEvent) => {
+      const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new pane)", (evt: MouseEvent) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
-        await this.openMapView(forceNew);
+        this.openMapView(forceNew);
       });
     }
 
@@ -251,49 +251,49 @@ export default class VaultAIPlugin extends Plugin {
     this.addCommand({
       id: "open-chat-view",
       name: "Open chat",
-      callback: async () => await this.openChatView(),
+      callback: () => { this.openChatView(); },
     });
 
     this.addCommand({
       id: "open-chat-view-new-pane",
       name: "Open chat in new pane",
-      callback: async () => await this.openChatView(true),
+      callback: () => { this.openChatView(true); },
     });
 
     this.addCommand({
       id: "open-graph-view",
       name: "Open entity graph",
-      callback: async () => await this.openGraphView(),
+      callback: () => { this.openGraphView(); },
     });
 
     this.addCommand({
       id: "open-graph-view-new-pane",
       name: "Open entity graph in new pane",
-      callback: async () => await this.openGraphView(true),
+      callback: () => { this.openGraphView(true); },
     });
 
     this.addCommand({
       id: "open-timeline-view",
       name: "Open timeline",
-      callback: async () => await this.openTimelineView(),
+      callback: () => { this.openTimelineView(); },
     });
 
     this.addCommand({
       id: "open-timeline-view-new-pane",
       name: "Open timeline in new pane",
-      callback: async () => await this.openTimelineView(true),
+      callback: () => { this.openTimelineView(true); },
     });
 
     this.addCommand({
       id: "open-map-view",
       name: "Open location map",
-      callback: async () => await this.openMapView(),
+      callback: () => { this.openMapView(); },
     });
 
     this.addCommand({
       id: "open-map-view-new-pane",
       name: "Open location map in new pane",
-      callback: async () => await this.openMapView(true),
+      callback: () => { this.openMapView(true); },
     });
 
     // Utility commands
@@ -306,18 +306,20 @@ export default class VaultAIPlugin extends Plugin {
     this.addCommand({
       id: "reindex-vault",
       name: "Reindex vault",
-      callback: async () => {
-        await this.buildIndex();
-        new Notice("Vault reindexed successfully.");
+      callback: () => {
+        this.buildIndex().then(() => {
+          new Notice("Vault reindexed successfully.");
+        });
       },
     });
 
     this.addCommand({
       id: "reload-entities",
       name: "Reload entities from notes",
-      callback: async () => {
-        await this.entityManager.loadEntitiesFromNotes();
-        new Notice("Entities reloaded from notes.");
+      callback: () => {
+        this.entityManager.loadEntitiesFromNotes().then(() => {
+          new Notice("Entities reloaded from notes.");
+        });
       },
     });
 
@@ -2571,8 +2573,8 @@ class ChatView extends ItemView {
       }
 
       // Click to load conversation
-      convContent.addEventListener("click", async () => {
-        await this.loadConversation(conv.id);
+      convContent.addEventListener("click", () => {
+        this.loadConversation(conv.id);
       });
 
       // Actions (delete, rename)
@@ -2581,17 +2583,17 @@ class ChatView extends ItemView {
       const renameBtn = actions.createEl("button", { cls: "vault-ai-conv-action-btn" });
       renameBtn.innerHTML = "✏️";
       renameBtn.title = "Rename";
-      renameBtn.addEventListener("click", async (e) => {
+      renameBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        await this.renameConversation(conv.id, conv.title);
+        this.renameConversation(conv.id, conv.title);
       });
 
       const deleteBtn = actions.createEl("button", { cls: "vault-ai-conv-action-btn" });
       deleteBtn.innerHTML = "🗑️";
       deleteBtn.title = "Delete";
-      deleteBtn.addEventListener("click", async (e) => {
+      deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        await this.deleteConversation(conv.id);
+        this.deleteConversation(conv.id);
       });
     }
   }

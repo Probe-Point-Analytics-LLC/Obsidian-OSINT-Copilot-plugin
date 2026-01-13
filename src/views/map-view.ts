@@ -276,7 +276,7 @@ export class MapView extends ItemView {
 
         // Refresh button
         const refreshBtn = toolbar.createEl('button', { text: '↻ Refresh' });
-        refreshBtn.onclick = async () => await this.refresh();
+        refreshBtn.onclick = () => { this.refresh(); };
 
         // Fit all button
         const fitBtn = toolbar.createEl('button', { text: '⊡ Fit all' });
