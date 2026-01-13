@@ -408,7 +408,7 @@ export class MapView extends ItemView {
                             this.entityManager,
                             EntityType.Location,
                             (entityId) => {
-                                this.refresh();
+                                void this.refresh();
                             },
                             {
                                 latitude: e.latlng.lat,

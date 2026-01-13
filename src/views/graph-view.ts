@@ -716,7 +716,7 @@ export class GraphView extends ItemView {
             if (this.onEntityClick) {
                 this.onEntityClick(entityId);
             } else {
-                this.entityManager.openEntityNote(entityId);
+                void this.entityManager.openEntityNote(entityId);
             }
         });
 
@@ -781,7 +781,7 @@ export class GraphView extends ItemView {
 
             // Update cache and persist to storage
             this.nodePositionsCache.set(nodeId, { x: newPos.x, y: newPos.y });
-            this.savePositionsDebounced();
+            void this.savePositionsDebounced();
         });
 
         // Tooltip on hover - show map icon for Location entities

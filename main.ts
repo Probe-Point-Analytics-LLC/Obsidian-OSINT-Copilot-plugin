@@ -225,7 +225,7 @@ export default class VaultAIPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (file instanceof TFile) {
-          this.indexFile(file);
+          void this.indexFile(file);
         }
       })
     );
@@ -233,7 +233,7 @@ export default class VaultAIPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile) {
-          this.indexFile(file);
+          void this.indexFile(file);
         }
       })
     );
@@ -434,7 +434,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(GRAPH_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      await leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
+      void leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
       return leaf;
     }
@@ -518,7 +518,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(TIMELINE_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      await leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
+      void leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
     }
   }
@@ -541,14 +541,14 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(MAP_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      await leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
+      void leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
     }
   }
 
   onEntityClick(entityId: string) {
     // Open the entity's note when clicked in graph/timeline/map
-    this.entityManager.openEntityNote(entityId);
+    void this.entityManager.openEntityNote(entityId);
   }
 
   /**
@@ -1750,7 +1750,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(CHAT_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      await leaf.setViewState({
+      void leaf.setViewState({
         type: CHAT_VIEW_TYPE,
         active: true,
       });
@@ -2270,7 +2270,7 @@ class ChatView extends ItemView {
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.handleSend();
+        void this.handleSend();
       }
     });
 
@@ -2632,7 +2632,7 @@ class ChatView extends ItemView {
         ? conversation.localSearchMode
         : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode);
       this.plugin.conversationService.setCurrentConversationId(id);
-      this.render();
+      void this.render();
     } else {
       new Notice("Failed to load conversation");
     }
