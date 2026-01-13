@@ -1,9 +1,9 @@
 {
   "id": "osint-copilot",
   "name": "OSINT Copilot",
-  "version": "1.0.0",
+  "version": "v1.0.0",
   "minAppVersion": "1.5.0",
-  "description": "AI-powered OSINT investigation plugin with entity extraction, relationship mapping, dark web investigations, and interactive visualizations for SOC analysts and threat researchers.",
+  "description": "OSINT investigation plugin for SOC analysts and threat researchers to organize, analyze, and visualize intelligence data.",
   "author": "Probe Point Analytics",
   "authorUrl": "https://github.com/Probe-Point-Analytics-LLC/OSINT-copilot-plugin",
   "isDesktopOnly": false
