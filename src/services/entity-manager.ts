@@ -471,7 +471,7 @@ ${this.buildFTMPropertiesSection(entity, schemaName)}
 
 ## Notes
 
-${entity.properties.notes || ''}
+${(entity.properties.notes as string) || ''}
 `;
 
         // Check if file exists
@@ -507,7 +507,7 @@ ${entity.properties.notes || ''}
                 } else if (typeof value === 'boolean') {
                     lines.push(`${prop}: ${value}`);
                 } else {
-                    lines.push(`${prop}: ${value}`);
+                    lines.push(`${prop}: ${String(value)}`);
                 }
             }
         }
@@ -537,7 +537,7 @@ ${entity.properties.notes || ''}
             const label = propDef?.label || prop;
 
             if (value !== undefined && value !== null && value !== '') {
-                lines.push(`- **${label}**: ${value}`);
+                lines.push(`- **${label}**: ${String(value)}`);
             }
         }
 
@@ -549,7 +549,7 @@ ${entity.properties.notes || ''}
 
             const propDef = config.propertyDefinitions[prop];
             const label = propDef?.label || prop;
-            lines.push(`- **${label}**: ${value}`);
+            lines.push(`- **${label}**: ${String(value)}`);
         }
 
         return lines.length > 0 ? lines.join('\n') : '_No properties set_';
@@ -743,7 +743,7 @@ ${this.buildPropertiesSection(entity)}
 
 ## Notes
 
-${entity.properties.notes || ''}
+${(entity.properties.notes as string) || ''}
 `;
 
         // Check if file exists
@@ -777,7 +777,7 @@ ${entity.properties.notes || ''}
                     } else if (typeof value === 'boolean') {
                         lines.push(`${prop}: ${value}`);
                     } else {
-                        lines.push(`${prop}: ${value}`);
+                        lines.push(`${prop}: ${String(value)}`);
                     }
                 }
             }
@@ -792,7 +792,7 @@ ${entity.properties.notes || ''}
                     } else if (typeof value === 'boolean') {
                         lines.push(`${prop}: ${value}`);
                     } else {
-                        lines.push(`${prop}: ${value}`);
+                        lines.push(`${prop}: ${String(value)}`);
                     }
                 }
             }

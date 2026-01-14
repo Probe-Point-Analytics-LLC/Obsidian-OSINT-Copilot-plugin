@@ -1697,6 +1697,7 @@
 .leaflet-safari .leaflet-tile-container {
   width: 1600px;
   height: 1600px;
+  transform-origin: 0 0;
   -webkit-transform-origin: 0 0
 }
 
@@ -1767,6 +1768,8 @@
 }
 
 .leaflet-overlay-pane svg {
+  user-select: none;
+  -webkit-user-select: none;
   -moz-user-select: none
 }
 
@@ -2255,7 +2258,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
 }
 
 .leaflet-oldie .leaflet-popup-content-wrapper {
-  -ms-zoom: 1
+  zoom: 1;
+  -webkit-zoom: 1;
+  -ms-zoom: 1;
 }
 
 .leaflet-oldie .leaflet-popup-tip {

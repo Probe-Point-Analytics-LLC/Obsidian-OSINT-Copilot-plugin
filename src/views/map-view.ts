@@ -10,7 +10,7 @@ import { EntityCreationModal } from '../modals/entity-modal';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 
 // Leaflet types (simplified for bundling)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet library types not available
 declare const L: any;
 
 export const MAP_VIEW_TYPE = 'graph_copilot-map-view';
@@ -30,9 +30,9 @@ interface MapLocation {
 
 export class MapView extends ItemView {
     private entityManager: EntityManager;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet map instance
     private map: any = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet markers
     private markers: Map<string, any> = new Map();
     private container: HTMLElement | null = null;
     private onLocationClick: ((entityId: string) => void) | null = null;
@@ -84,17 +84,16 @@ export class MapView extends ItemView {
         this.initializeMap();
 
         // Wait for map to be ready before refreshing
-        setTimeout(async () => {
-            await this.refresh();
+        setTimeout(() => {
+            void this.refresh();
         }, 200);
     }
 
     async onClose(): Promise<void> {
         // Initialize handlers
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((this.map as any)._handlers) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (this.map as any)._handlers.forEach((handler: any) => {
+        if (this.map && this.map._handlers) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing internal Leaflet handlers
+            this.map._handlers.forEach((handler: any) => {
                 handler.enable();
             });
         }
