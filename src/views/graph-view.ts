@@ -7,6 +7,7 @@ import { App, ItemView, WorkspaceLeaf, Notice, TFile } from 'obsidian';
 import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
+import { ConfirmModal } from '../modals/confirm-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 
@@ -135,15 +136,17 @@ export class GraphView extends ItemView {
      */
     private setupHistoryCallbacks(): void {
         this.historyManager.setCallbacks({
-            onEntityCreate: async (entity: Entity) => {
+            onEntityCreate: (entity: Entity) => {
                 // This is called when redoing a create - entity already exists
+                return Promise.resolve();
             },
-            onEntityDelete: async (entityId: string) => {
+            onEntityDelete: (entityId: string) => {
                 // Delete entity from graph (not from disk - that's handled separately)
                 if (this.cy) {
                     this.cy.getElementById(entityId).remove();
                 }
                 this.entityManager.deleteEntityInMemory(entityId);
+                return Promise.resolve();
             },
             onEntityRestore: async (entity: Entity) => {
                 // Restore entity to disk and graph
@@ -155,15 +158,17 @@ export class GraphView extends ItemView {
                 await this.entityManager.updateEntityForHistory(entity);
                 this.updateEntityInGraph(entity);
             },
-            onConnectionCreate: async (connection: Connection) => {
+            onConnectionCreate: (connection: Connection) => {
                 // This is called when redoing a create
+                return Promise.resolve();
             },
-            onConnectionDelete: async (connectionId: string) => {
+            onConnectionDelete: (connectionId: string) => {
                 // Delete connection from graph
                 if (this.cy) {
                     this.cy.getElementById(connectionId).remove();
                 }
                 this.entityManager.deleteConnection(connectionId);
+                return Promise.resolve();
             },
             onConnectionRestore: async (connection: Connection) => {
                 // Restore connection
@@ -267,27 +272,31 @@ export class GraphView extends ItemView {
             // Common issues and solutions
             const solutions = errorDiv.createDiv();
             solutions.setCssProps({ 'text-align': 'left', 'max-width': '600px', margin: '0 auto' });
-            solutions.innerHTML = `
-                <p><strong>Possible causes:</strong></p>
-                <ul>
-                    <li><strong>CDN blocked:</strong> Cytoscape.js cannot be loaded from unpkg.com CDN. Check:
-                        <ul>
-                            <li>Browser extensions (ad blockers, privacy tools)</li>
-                            <li>Corporate firewall or network restrictions</li>
-                            <li>Content Security Policy (CSP) settings</li>
-                        </ul>
-                    </li>
-                    <li><strong>Network issues:</strong> Check your internet connection</li>
-                    <li><strong>Entity Manager:</strong> Check console for EntityManager initialization errors</li>
-                </ul>
-                <p><strong>To debug:</strong></p>
-                <ol>
-                    <li>Open Developer Tools (Ctrl+Shift+I)</li>
-                    <li>Check Console tab for errors</li>
-                    <li>Check Network tab for failed requests to unpkg.com</li>
-                    <li>Verify plugin settings: enableGraphFeatures should be enabled</li>
-                </ol>
-            `;
+
+            solutions.createEl('p').createEl('strong', { text: 'Possible causes:' });
+            const ul = solutions.createEl('ul');
+            const li1 = ul.createEl('li');
+            li1.createEl('strong', { text: 'CDN blocked:' });
+            li1.appendText(' Cytoscape.js cannot be loaded from unpkg.com CDN. Check:');
+            const subUl = li1.createEl('ul');
+            subUl.createEl('li', { text: 'Browser extensions (ad blockers, privacy tools)' });
+            subUl.createEl('li', { text: 'Corporate firewall or network restrictions' });
+            subUl.createEl('li', { text: 'Content Security Policy (CSP) settings' });
+
+            const li2 = ul.createEl('li');
+            li2.createEl('strong', { text: 'Network issues' });
+            li2.appendText(' Check your internet connection');
+
+            const li3 = ul.createEl('li');
+            li3.createEl('strong', { text: 'Entity manager' });
+            li3.appendText(' Check console for EntityManager initialization errors');
+
+            solutions.createEl('p').createEl('strong', { text: 'To debug:' });
+            const ol = solutions.createEl('ol');
+            ol.createEl('li', { text: 'Open Developer Tools (Ctrl+Shift+I)' });
+            ol.createEl('li', { text: 'Check console tab for errors' });
+            ol.createEl('li', { text: 'Check network tab for failed requests to unpkg.com' });
+            ol.createEl('li', { text: 'Verify plugin settings: enableGraphFeatures should be enabled' });
 
             new Notice('Graph failed to load. Check console for details.', 10000);
         }
@@ -1517,22 +1526,24 @@ export class GraphView extends ItemView {
             if (entity && entity.properties.start_date) {
                 const isOnTimeline = entity.properties.add_to_timeline === true;
                 const timelineLabel = isOnTimeline ? '📅 Remove from Timeline' : '📅 Add to Timeline';
-                const timelineItem = this.createMenuItem(timelineLabel, async () => {
-                    try {
-                        await this.entityManager.updateEntity(entityId, {
-                            add_to_timeline: !isOnTimeline
-                        });
-                        new Notice(isOnTimeline ? 'Removed from Timeline' : 'Added to Timeline');
-                        // Update the node in the graph
-                        const updatedEntity = this.entityManager.getEntity(entityId);
-                        if (updatedEntity) {
-                            this.updateEntityInGraph(updatedEntity);
+                const timelineItem = this.createMenuItem(timelineLabel, () => {
+                    void (async () => {
+                        try {
+                            await this.entityManager.updateEntity(entityId, {
+                                add_to_timeline: !isOnTimeline
+                            });
+                            new Notice(isOnTimeline ? 'Removed from Timeline' : 'Added to Timeline');
+                            // Update the node in the graph
+                            const updatedEntity = this.entityManager.getEntity(entityId);
+                            if (updatedEntity) {
+                                this.updateEntityInGraph(updatedEntity);
+                            }
+                        } catch (error) {
+                            console.error('[GraphView] Failed to toggle timeline status:', error);
+                            new Notice('Failed to update timeline status');
                         }
-                    } catch (error) {
-                        console.error('[GraphView] Failed to toggle timeline status:', error);
-                        new Notice('Failed to update timeline status');
-                    }
-                    menu.remove();
+                        menu.remove();
+                    })();
                 });
                 menu.appendChild(timelineItem);
             }
@@ -1692,9 +1703,9 @@ export class GraphView extends ItemView {
         }
 
         // Delete Relationship option
-        const deleteItem = this.createMenuItem('🗑 Delete Relationship', async () => {
+        const deleteItem = this.createMenuItem('🗑 Delete Relationship', () => {
             menu.remove();
-            await this.deleteRelationship(connectionId, relationship, sourceLabel, targetLabel);
+            void this.deleteRelationship(connectionId, relationship, sourceLabel, targetLabel);
         });
         deleteItem.setCssProps({ color: 'var(--text-error)' });
         menu.appendChild(deleteItem);
@@ -1723,22 +1734,30 @@ export class GraphView extends ItemView {
             return;
         }
 
-        // Show confirmation
-        const confirmDelete = confirm(`Delete relationship "${relationship}" between "${sourceLabel}" and "${targetLabel}"?`);
-        if (!confirmDelete) return;
+        new ConfirmModal(
+            this.app,
+            'Delete Relationship',
+            `Are you sure you want to delete the relationship "${relationship}" between "${sourceLabel}" and "${targetLabel}"?`,
+            () => {
+                void (async () => {
+                    // Record in history before deleting
+                    this.historyManager.recordRelationshipDelete(connection);
 
-        // Record in history before deleting
-        this.historyManager.recordRelationshipDelete(connection);
+                    // Delete from entity manager (with note update)
+                    await this.entityManager.deleteConnectionWithNote(connectionId);
 
-        // Delete from entity manager (with note update)
-        await this.entityManager.deleteConnectionWithNote(connectionId);
+                    // Remove from graph
+                    if (this.cy) {
+                        this.cy.getElementById(connectionId).remove();
+                    }
 
-        // Remove from graph
-        if (this.cy) {
-            this.cy.getElementById(connectionId).remove();
-        }
+                    new Notice(`Deleted relationship: ${relationship}`);
+                })();
+            },
+            undefined,
+            true
+        ).open();
 
-        new Notice(`Deleted relationship: ${relationship}`);
     }
 
     /**
@@ -2556,7 +2575,8 @@ export class GraphView extends ItemView {
             'justify-content': 'space-between',
             'align-items': 'center'
         });
-        header.innerHTML = '<span>📜 Edit History</span>';
+        const historyTitle = header.createEl('span', { text: '📜 Edit history' });
+        historyTitle.setCssProps({ fontWeight: 'bold' });
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '✕';

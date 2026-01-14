@@ -1,4 +1,3 @@
-/* eslint-disable obsidianmd/no-static-styles-assignment */
 /**
  * Entity Creation Modal - allows users to create entities with a form UI.
  * Now supports both legacy EntityType and FTM schema format.
@@ -35,8 +34,7 @@ export const COMMON_RELATIONSHIPS = [
 export class EntityCreationModal extends Modal {
     private entityManager: EntityManager;
     private entityType: EntityType;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private properties: Record<string, any> = {};
+    private properties: Record<string, unknown> = {};
     private onEntityCreated: ((entityId: string) => void) | null;
     private geocodingService: GeocodingService;
     private geocodeStatusEl: HTMLElement | null = null;
@@ -47,8 +45,7 @@ export class EntityCreationModal extends Modal {
         entityManager: EntityManager,
         entityType: EntityType,
         onEntityCreated?: (entityId: string) => void,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        initialProperties: Record<string, any> = {},
+        initialProperties: Record<string, unknown> = {},
         private entityId?: string
     ) {
         super(app);
@@ -157,10 +154,10 @@ export class EntityCreationModal extends Modal {
     private async handleGeocode(): Promise<void> {
         if (!this.geocodeBtn || !this.geocodeStatusEl) return;
 
-        const address = this.properties.address || '';
-        const city = this.properties.city || '';
-        const state = this.properties.state || '';
-        const country = this.properties.country || '';
+        const address = (this.properties.address as string) || '';
+        const city = (this.properties.city as string) || '';
+        const state = (this.properties.state as string) || '';
+        const country = (this.properties.country as string) || '';
 
         // Validate that we have at least some address info
         if (!address && !city && !country) {
@@ -306,7 +303,12 @@ export class EntityCreationModal extends Modal {
         } else if (propertyName === 'add_to_timeline' || propertyName === 'tampered') {
             // Boolean toggle button with visual feedback
             const toggleContainer = fieldContainer.createDiv({ cls: 'graph_copilot-toggle-container' });
-            toggleContainer.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-top: 4px;';
+            toggleContainer.setCssProps({
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                marginTop: '4px'
+            });
 
             // Hidden checkbox for form state
             input = toggleContainer.createEl('input', {
@@ -320,25 +322,25 @@ export class EntityCreationModal extends Modal {
                 cls: 'graph_copilot-toggle-btn'
             });
             toggleBtn.type = 'button';
-            toggleBtn.style.cssText = `
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                padding: 10px 20px;
-                font-size: 14px;
-                font-weight: 500;
-                border-radius: 6px;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                border: 2px solid var(--background-modifier-border);
-                background: var(--background-secondary);
-                color: var(--text-muted);
-            `;
+            toggleBtn.setCssProps({
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 20px',
+                fontSize: '14px',
+                fontWeight: '500',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                border: '2px solid var(--background-modifier-border)',
+                background: 'var(--background-secondary)',
+                color: 'var(--text-muted)'
+            });
 
             // Icon and text
             const icon = toggleBtn.createSpan({ cls: 'toggle-icon' });
             icon.textContent = '📅';
-            icon.style.fontSize = '16px';
+            icon.setCssProps({ fontSize: '16px' });
 
             const btnText = toggleBtn.createSpan({ cls: 'toggle-text' });
             btnText.textContent = 'Add to timeline';
@@ -346,21 +348,25 @@ export class EntityCreationModal extends Modal {
             // Update button appearance based on state
             const updateButtonState = (checked: boolean) => {
                 if (checked) {
-                    toggleBtn.style.background = 'var(--interactive-accent)';
-                    toggleBtn.style.borderColor = 'var(--interactive-accent)';
-                    toggleBtn.style.color = 'white';
+                    toggleBtn.setCssProps({
+                        background: 'var(--interactive-accent)',
+                        borderColor: 'var(--interactive-accent)',
+                        color: 'white'
+                    });
                     btnText.textContent = 'On timeline ✓';
                 } else {
-                    toggleBtn.style.background = 'var(--background-secondary)';
-                    toggleBtn.style.borderColor = 'var(--background-modifier-border)';
-                    toggleBtn.style.color = 'var(--text-muted)';
+                    toggleBtn.setCssProps({
+                        background: 'var(--background-secondary)',
+                        borderColor: 'var(--background-modifier-border)',
+                        color: 'var(--text-muted)'
+                    });
                     btnText.textContent = 'Add to timeline';
                 }
             };
 
             // Initialize state
             const initialValue = this.properties[propertyName] !== undefined
-                ? this.properties[propertyName]
+                ? Boolean(this.properties[propertyName])
                 : (!this.entityId && propertyName === 'add_to_timeline');
 
             input.checked = initialValue;
@@ -378,8 +384,10 @@ export class EntityCreationModal extends Modal {
             // Hover effect
             toggleBtn.addEventListener('mouseenter', () => {
                 if (!(input as HTMLInputElement).checked) {
-                    toggleBtn.style.borderColor = 'var(--interactive-accent)';
-                    toggleBtn.style.color = 'var(--text-normal)';
+                    toggleBtn.setCssProps({
+                        borderColor: 'var(--interactive-accent)',
+                        color: 'var(--text-normal)'
+                    });
                 }
             });
             toggleBtn.addEventListener('mouseleave', () => {
@@ -444,8 +452,8 @@ export class EntityCreationModal extends Modal {
         const labelField = config.labelField;
 
         // Only validate that entity name is not generic (if provided)
-        if (this.properties[labelField] && this.properties[labelField].trim() !== '') {
-            const nameValidation = validateEntityName(this.properties[labelField], this.entityType);
+        if (this.properties[labelField] && (this.properties[labelField] as string).trim() !== '') {
+            const nameValidation = validateEntityName(this.properties[labelField] as string, this.entityType);
             if (!nameValidation.isValid) {
                 new Notice(nameValidation.error || 'Invalid entity name');
                 return;
@@ -496,10 +504,10 @@ export class EntityCreationModal extends Modal {
 
         try {
             const result = await this.geocodingService.geocodeAddressWithRetry(
-                this.properties.address,
-                this.properties.city,
-                this.properties.state,
-                this.properties.country,
+                this.properties.address as string,
+                this.properties.city as string,
+                this.properties.state as string,
+                this.properties.country as string,
                 (attempt, maxAttempts, delaySeconds) => {
                     this.setGeocodeStatus('loading', `Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
                 }
@@ -585,14 +593,16 @@ export class EntityTypeSelectorModal extends Modal {
             const config = ENTITY_CONFIGS[type];
 
             const typeBtn = gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
-            typeBtn.style.borderLeftColor = config.color;
+            typeBtn.setCssProps({ borderLeftColor: config.color });
 
             const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
-            icon.style.backgroundColor = config.color;
-            icon.style.fontSize = '20px';
-            icon.style.display = 'flex';
-            icon.style.alignItems = 'center';
-            icon.style.justifyContent = 'center';
+            icon.setCssProps({
+                backgroundColor: config.color,
+                fontSize: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            });
             icon.textContent = getEntityIcon(type);
 
             const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });

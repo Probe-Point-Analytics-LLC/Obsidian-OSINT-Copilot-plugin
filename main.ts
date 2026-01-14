@@ -35,6 +35,7 @@ import { ConversationService, Conversation, ConversationMetadata, ConversationMe
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
+import { ConfirmModal } from './src/modals/confirm-modal';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -189,7 +190,7 @@ export default class VaultAIPlugin extends Plugin {
           leaf,
           this.entityManager,
           (entityId) => this.onEntityClick(entityId),
-          (entityId) => this.showEntityOnMap(entityId)
+          (entityId) => { void this.showEntityOnMap(entityId); }
         );
       }
     );
@@ -339,8 +340,7 @@ export default class VaultAIPlugin extends Plugin {
     this.addSettingTab(new VaultAISettingTab(this.app, this));
   }
 
-  async onunload() {
-
+  onunload() {
 
 
 
@@ -446,7 +446,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(GRAPH_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      void leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
       return leaf;
     }
@@ -530,7 +530,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(TIMELINE_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      void leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
     }
   }
@@ -553,7 +553,7 @@ export default class VaultAIPlugin extends Plugin {
     const leaf = this.getMainEditorLeaf(MAP_VIEW_TYPE, forceNew);
 
     if (leaf) {
-      void leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
+      await leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
     }
   }
@@ -1804,7 +1804,7 @@ class AskModal extends Modal {
     // Buttons
     const buttonContainer = contentEl.createDiv();
     const askButton = buttonContainer.createEl("button", { text: "Ask" });
-    askButton.addEventListener("click", () => this.handleAsk());
+    askButton.addEventListener("click", () => { void this.handleAsk(); });
 
     const closeButton = buttonContainer.createEl("button", { text: "Close" });
     closeButton.addEventListener("click", () => this.close());
@@ -1835,7 +1835,7 @@ class AskModal extends Modal {
       // Display answer
       this.answerContainer.innerHTML = "";
       const answerPre = this.answerContainer.createEl("pre");
-      answerPre.textContent = result.answer;
+      answerPre.setText(result.answer);
 
       // Copy button
       const copyButton = this.answerContainer.createEl("button", {
@@ -1854,12 +1854,14 @@ class AskModal extends Modal {
         for (const note of result.notes) {
           const noteItem = this.notesContainer.createDiv("vault-ai-note-item");
           noteItem.textContent = note.path;
-          noteItem.addEventListener("click", async () => {
-            const file = this.app.vault.getAbstractFileByPath(note.path);
-            if (file instanceof TFile) {
-              await this.app.workspace.getLeaf().openFile(file);
-              this.close();
-            }
+          noteItem.addEventListener("click", () => {
+            void (async () => {
+              const file = this.app.vault.getAbstractFileByPath(note.path);
+              if (file instanceof TFile) {
+                await this.app.workspace.getLeaf().openFile(file);
+                this.close();
+              }
+            })();
           });
         }
 
@@ -2128,7 +2130,7 @@ class ChatView extends ItemView {
 
     // Toggle sidebar button
     const toggleSidebarBtn = header.createEl("button", { cls: "vault-ai-sidebar-toggle" });
-    toggleSidebarBtn.innerHTML = "☰";
+    toggleSidebarBtn.setText("☰");
     toggleSidebarBtn.title = "Toggle conversation history";
     toggleSidebarBtn.addEventListener("click", () => {
       this.sidebarVisible = !this.sidebarVisible;
@@ -2145,8 +2147,8 @@ class ChatView extends ItemView {
 
     // New Chat button
     const newChatBtn = buttonGroup.createEl("button", { text: "New chat", cls: "vault-ai-new-chat-btn" });
-    newChatBtn.addEventListener("click", async () => {
-      await this.startNewConversation();
+    newChatBtn.addEventListener("click", () => {
+      void this.startNewConversation();
     });
 
     // === Main Mode Selection Dropdown (Mutually Exclusive - can be "none" for Graph only Mode) ===
@@ -2275,7 +2277,9 @@ class ChatView extends ItemView {
     const modeDisclaimer = this.getModeDisclaimer();
     if (modeDisclaimer) {
       const disclaimerEl = inputContainer.createDiv("vault-ai-mode-disclaimer");
-      disclaimerEl.innerHTML = modeDisclaimer;
+      disclaimerEl.createSpan({ text: modeDisclaimer.icon + " " });
+      disclaimerEl.createEl("strong", { text: modeDisclaimer.title + " " });
+      disclaimerEl.createSpan({ text: modeDisclaimer.text });
     }
 
     this.inputEl = inputContainer.createEl("textarea", {
@@ -2304,35 +2308,71 @@ class ChatView extends ItemView {
    * Get the mode disclaimer text based on current mode settings.
    * Returns HTML string or null if no disclaimer needed.
    */
-  private getModeDisclaimer(): string | null {
+  /**
+   * Get the mode disclaimer text based on current mode settings.
+   * Returns object with content parts or null if no disclaimer needed.
+   */
+  private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
     if (this.isGraphOnlyMode()) {
-      return "🏷️ <strong>Graph Generation Mode:</strong> Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat.";
+      return {
+        icon: "🏷️",
+        title: "Graph Generation Mode:",
+        text: "Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat."
+      };
     }
 
     if (this.osintSearchMode) {
       if (this.graphGenerationMode) {
-        return "🔎 <strong>Leak Search + Graph Gen:</strong> Search leaked databases and automatically create entities from the results.";
+        return {
+          icon: "🔎",
+          title: "Leak Search + Graph Gen:",
+          text: "Search leaked databases and automatically create entities from the results."
+        };
       }
-      return "🔎 <strong>Leak Search:</strong> Search multiple leaked databases for information about people, emails, phones, and more.";
+      return {
+        icon: "🔎",
+        title: "Leak Search:",
+        text: "Search multiple leaked databases for information about people, emails, phones, and more."
+      };
     }
 
     if (this.darkWebMode) {
       if (this.graphGenerationMode) {
-        return "🕵️ <strong>Dark Web + Graph Gen:</strong> Investigate dark web sources and automatically create entities from findings.";
+        return {
+          icon: "🕵️",
+          title: "Dark Web + Graph Gen:",
+          text: "Investigate dark web sources and automatically create entities from findings."
+        };
       }
-      return "🕵️ <strong>Dark Web:</strong> Search dark web sources for leaked data and threat intelligence.";
+      return {
+        icon: "🕵️",
+        title: "Dark Web:",
+        text: "Search dark web sources for leaked data and threat intelligence."
+      };
     }
 
     if (this.reportGenerationMode) {
       if (this.graphGenerationMode) {
-        return "📄 <strong>Persons&Companies + Graph Gen:</strong> Generate comprehensive reports and automatically create entities from the content.";
+        return {
+          icon: "📄",
+          title: "Persons&Companies + Graph Gen:",
+          text: "Generate comprehensive reports and automatically create entities from the content."
+        };
       }
-      return "📄 <strong>Persons&Companies:</strong> Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags";
+      return {
+        icon: "📄",
+        title: "Persons&Companies:",
+        text: "Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags"
+      };
     }
 
     if (this.localSearchMode) {
       if (this.graphGenerationMode) {
-        return "🔍 <strong>Local Search + Graph Gen:</strong> Search your vault and automatically create entities from AI responses.";
+        return {
+          icon: "🔍",
+          title: "Local Search + Graph Gen:",
+          text: "Search your vault and automatically create entities from AI responses."
+        };
       }
       return null; // Default mode, no disclaimer needed
     }
@@ -2457,12 +2497,27 @@ class ChatView extends ItemView {
     if (newDisclaimer) {
       if (disclaimerEl) {
         // Update existing disclaimer
-        disclaimerEl.innerHTML = newDisclaimer;
+        disclaimerEl.empty();
+        disclaimerEl.createSpan({ text: newDisclaimer.icon + " " });
+        disclaimerEl.createEl("strong", { text: newDisclaimer.title + " " });
+        disclaimerEl.createSpan({ text: newDisclaimer.text });
       } else {
         // Create new disclaimer element (insert at the beginning of input container)
         disclaimerEl = document.createElement("div");
         disclaimerEl.className = "vault-ai-mode-disclaimer";
-        disclaimerEl.innerHTML = newDisclaimer;
+
+        const disclaimerSpan = document.createElement("span");
+        disclaimerSpan.textContent = newDisclaimer.icon + " ";
+        disclaimerEl.appendChild(disclaimerSpan);
+
+        const disclaimerStrong = document.createElement("strong");
+        disclaimerStrong.textContent = newDisclaimer.title + " ";
+        disclaimerEl.appendChild(disclaimerStrong);
+
+        const disclaimerText = document.createElement("span");
+        disclaimerText.textContent = newDisclaimer.text;
+        disclaimerEl.appendChild(disclaimerText);
+
         inputContainer.insertBefore(disclaimerEl, inputContainer.firstChild);
       }
     } else {
@@ -2601,7 +2656,7 @@ class ChatView extends ItemView {
       const actions = convItem.createDiv("vault-ai-conversation-actions");
 
       const renameBtn = actions.createEl("button", { cls: "vault-ai-conv-action-btn" });
-      renameBtn.innerHTML = "✏️";
+      renameBtn.setText("✏️");
       renameBtn.title = "Rename";
       renameBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -2609,7 +2664,7 @@ class ChatView extends ItemView {
       });
 
       const deleteBtn = actions.createEl("button", { cls: "vault-ai-conv-action-btn" });
-      deleteBtn.innerHTML = "🗑️";
+      deleteBtn.setText("🗑️");
       deleteBtn.title = "Delete";
       deleteBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -2677,39 +2732,47 @@ class ChatView extends ItemView {
   }
 
   async deleteConversation(id: string) {
-    const confirmed = confirm("Are you sure you want to delete this conversation?");
-    if (!confirmed) return;
+    new ConfirmModal(
+      this.app,
+      "Delete Conversation",
+      "Are you sure you want to delete this conversation?",
+      async () => {
+        const success = await this.plugin.conversationService.deleteConversation(id);
 
-    const success = await this.plugin.conversationService.deleteConversation(id);
+        // Clear current conversation if it was deleted
+        if (this.currentConversation && this.currentConversation.id === id) {
+          this.currentConversation = null;
+          this.chatHistory = [];
+        }
 
-    // Clear current conversation if it was deleted
-    if (this.currentConversation && this.currentConversation.id === id) {
-      this.currentConversation = null;
-      this.chatHistory = [];
-    }
+        // Always refresh the UI (the service already updated its internal list)
+        this.renderConversationList();
+        await this.renderMessages();
 
-    // Always refresh the UI (the service already updated its internal list)
-    this.renderConversationList();
-    await this.renderMessages();
-
-    if (success) {
-      new Notice("Conversation deleted");
-    } else {
-      new Notice("Failed to delete conversation");
-    }
+        if (success) {
+          new Notice("Conversation deleted");
+        } else {
+          new Notice("Failed to delete conversation");
+        }
+      },
+      undefined,
+      true // destructive
+    ).open();
   }
 
-  async renameConversation(id: string, currentTitle: string) {
-    new RenameConversationModal(this.app, currentTitle, async (newTitle: string) => {
-      const success = await this.plugin.conversationService.renameConversation(id, newTitle);
-      if (success) {
-        if (this.currentConversation && this.currentConversation.id === id) {
-          this.currentConversation.title = newTitle;
+  renameConversation(id: string, currentTitle: string) {
+    new RenameConversationModal(this.app, currentTitle, (newTitle: string) => {
+      void (async () => {
+        const success = await this.plugin.conversationService.renameConversation(id, newTitle);
+        if (success) {
+          if (this.currentConversation && this.currentConversation.id === id) {
+            this.currentConversation.title = newTitle;
+          }
+          await this.plugin.conversationService.loadConversationList();
+          this.renderConversationList();
+          new Notice("Conversation renamed");
         }
-        await this.plugin.conversationService.loadConversationList();
-        this.renderConversationList();
-        new Notice("Conversation renamed");
-      }
+      })();
     }).open();
   }
 
@@ -2790,12 +2853,14 @@ class ChatView extends ItemView {
             text: note.path,
             cls: "vault-ai-note-link",
           });
-          noteLink.addEventListener("click", async (e) => {
+          noteLink.addEventListener("click", (e) => {
             e.preventDefault();
-            const file = this.app.vault.getAbstractFileByPath(note.path);
-            if (file instanceof TFile) {
-              await this.app.workspace.getLeaf().openFile(file);
-            }
+            void (async () => {
+              const file = this.app.vault.getAbstractFileByPath(note.path);
+              if (file instanceof TFile) {
+                await this.app.workspace.getLeaf().openFile(file);
+              }
+            })();
           });
         }
       }
@@ -2860,12 +2925,14 @@ class ChatView extends ItemView {
             cursor: pointer;
           `;
           noteBtn.title = "Open entity note";
-          noteBtn.addEventListener("click", async (e) => {
+          noteBtn.addEventListener("click", (e) => {
             e.preventDefault();
-            const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-            if (file instanceof TFile) {
-              await this.app.workspace.getLeaf().openFile(file);
-            }
+            void (async () => {
+              const file = this.app.vault.getAbstractFileByPath(entity.filePath);
+              if (file instanceof TFile) {
+                await this.app.workspace.getLeaf().openFile(file);
+              }
+            })();
           });
 
           // Open in Graph View button
@@ -2883,9 +2950,9 @@ class ChatView extends ItemView {
             cursor: pointer;
           `;
           graphBtn.title = "View in graph";
-          graphBtn.addEventListener("click", async (e) => {
+          graphBtn.addEventListener("click", (e) => {
             e.preventDefault();
-            await this.plugin.openGraphViewWithEntity(entity.id);
+            void this.plugin.openGraphViewWithEntity(entity.id);
           });
         }
 
@@ -2939,15 +3006,17 @@ class ChatView extends ItemView {
         });
 
         // Add click handler to open the report
-        reportButton.addEventListener("click", async (e) => {
+        reportButton.addEventListener("click", (e) => {
           e.preventDefault();
-          const file = this.app.vault.getAbstractFileByPath(item.reportFilePath!);
-          if (file instanceof TFile) {
-            await this.app.workspace.getLeaf().openFile(file);
-            new Notice(`Opened report: ${item.reportFilePath}`);
-          } else {
-            new Notice(`Companies&People file not found: ${item.reportFilePath}`);
-          }
+          void (async () => {
+            const file = this.app.vault.getAbstractFileByPath(item.reportFilePath!);
+            if (file instanceof TFile) {
+              await this.app.workspace.getLeaf().openFile(file);
+              new Notice(`Opened report: ${item.reportFilePath}`);
+            } else {
+              new Notice(`Companies&People file not found: ${item.reportFilePath}`);
+            }
+          })();
         });
 
         // Add file path label below button
@@ -4286,7 +4355,7 @@ class ChatView extends ItemView {
           // Schedule next poll with adaptive interval
           const nextInterval = getPollingInterval(elapsedMs);
           elapsedMs += nextInterval;
-          const timeoutId = window.setTimeout(poll, nextInterval);
+          const timeoutId = window.setTimeout(() => { void poll(); }, nextInterval);
           this.pollingIntervals.set(jobId, timeoutId);
         } else if (status === "completed") {
           // Stop polling
@@ -4333,7 +4402,7 @@ class ChatView extends ItemView {
           const retryMsg = `Network interrupted (${errorType}), retrying... (${elapsedSecs}s elapsed, attempt ${consecutiveErrors}/${maxConsecutiveErrors})`;
           console.debug(`[OSINT Copilot] ${retryMsg}`);
 
-          const timeoutId = window.setTimeout(poll, nextInterval);
+          const timeoutId = window.setTimeout(() => { void poll(); }, nextInterval);
           this.pollingIntervals.set(jobId, timeoutId);
         } else {
           // Too many errors, stop polling and show error
@@ -4354,7 +4423,7 @@ class ChatView extends ItemView {
     // Start first poll after initial interval
     const initialInterval = getPollingInterval(0);
     elapsedMs = initialInterval;
-    const timeoutId = window.setTimeout(poll, initialInterval);
+    const timeoutId = window.setTimeout(() => { void poll(); }, initialInterval);
     this.pollingIntervals.set(jobId, timeoutId);
   }
 
