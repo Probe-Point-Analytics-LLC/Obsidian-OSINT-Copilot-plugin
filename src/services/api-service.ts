@@ -85,8 +85,8 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
     maxRetries: 7,              // Increased from 3 to 7 for better resilience
     baseDelayMs: 1000,          // Start with 1 second delay
     maxDelayMs: 32000,          // Cap at 32 seconds max delay
-    baseTimeoutMs: 45000,       // 45 second base timeout (increased from 30s)
-    maxTimeoutMs: 120000,       // 2 minute max timeout for slow connections
+    baseTimeoutMs: 60000,       // 60 second base timeout (increased from 45s)
+    maxTimeoutMs: 300000,       // 5 minute max timeout to match server settings
     timeoutMultiplierOnTimeout: 1.5  // Increase timeout by 50% after timeout error
 };
 
@@ -419,6 +419,111 @@ export class GraphApiService {
             return Math.min(increasedTimeout, this.retryConfig.maxTimeoutMs);
         }
         return baseTimeout;
+    }
+
+    /**
+     * Extract text from a URL via the backend API.
+     */
+    async extractTextFromUrl(url: string): Promise<string> {
+        if (!this.isOnline) {
+            await this.checkHealth();
+            if (!this.isOnline) throw new Error('OSINT Copilot API is offline.');
+        }
+
+        const response = await this.fetchWithTimeout(
+            `${this.baseUrl}/api/extract-text`,
+            {
+                method: 'POST',
+                headers: this.getHeaders(),
+                body: JSON.stringify({ url })
+            },
+            60000
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            try {
+                const json = JSON.parse(errorText);
+                throw new Error(json.error || errorText);
+            } catch {
+                throw new Error(`Server error (${response.status})`);
+            }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const json = await response.json() as any;
+        if (json.success) return json.text;
+        throw new Error(json.error || 'Failed to extract text from URL');
+    }
+
+    /**
+     * Extract text from a file via the backend API.
+     * Supports .md, .txt, .pdf, .docx, .doc
+     */
+    async extractTextFromFile(file: File): Promise<string> {
+        // Check file size (limit to 10MB to avoid backend issues)
+        const maxSize = 10 * 1024 * 1024;
+        if (file.size > maxSize) {
+            throw new Error(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Limit is 10MB.`);
+        }
+
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = async () => {
+                try {
+                    const result = reader.result as string;
+                    // result is a data URL like "data:application/pdf;base64,JVBERi0x..."
+
+                    if (!this.isOnline) {
+                        // If API is invalid, try to check health first
+                        await this.checkHealth();
+                        if (!this.isOnline) {
+                            throw new Error('OSINT Copilot API is offline. Cannot process file.');
+                        }
+                    }
+
+                    const response = await this.fetchWithTimeout(
+                        `${this.baseUrl}/api/extract-text`,
+                        {
+                            method: 'POST',
+                            headers: this.getHeaders(),
+                            body: JSON.stringify({
+                                filename: file.name,
+                                content_base64: result
+                            })
+                        },
+                        60000 // 60s timeout for file processing
+                    );
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        try {
+                            const errorJson = JSON.parse(errorText);
+                            throw new Error(errorJson.error || errorText);
+                        } catch {
+                            throw new Error(`Server error (${response.status}): ${errorText}`);
+                        }
+                    }
+
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const json = await response.json() as any;
+                    if (json.success) {
+                        resolve(json.text);
+                    } else {
+                        throw new Error(json.error || 'Failed to extract text');
+                    }
+
+                } catch (error) {
+                    reject(error);
+                }
+            };
+
+            reader.onerror = () => reject(new Error('Failed to read file'));
+
+            // Read as Data URL (Base64)
+            reader.readAsDataURL(file);
+        });
     }
 
     /**
