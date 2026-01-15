@@ -2325,7 +2325,7 @@ class ChatView extends ItemView {
     inputContainer.addEventListener("dragenter", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (this.graphGenerationMode) this.dragOverlay.addClass("active");
+      this.dragOverlay.addClass("active");
     });
 
     inputContainer.addEventListener("dragleave", (e) => {
@@ -2346,7 +2346,7 @@ class ChatView extends ItemView {
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
 
-      if (this.graphGenerationMode && e.dataTransfer && e.dataTransfer.files.length > 0) {
+      if (e.dataTransfer && e.dataTransfer.files.length > 0) {
         this.handleDroppedFile(e.dataTransfer.files[0]);
       }
     });
@@ -2446,8 +2446,8 @@ class ChatView extends ItemView {
 
   updateUploadButtonVisibility() {
     if (this.uploadButtonEl) {
-      // Show only if Graph Generation is enabled
-      this.uploadButtonEl.style.display = this.graphGenerationMode ? "block" : "none";
+      // Always show upload button to allow adding file content to chat in any mode
+      this.uploadButtonEl.style.display = "block";
     }
   }
 
