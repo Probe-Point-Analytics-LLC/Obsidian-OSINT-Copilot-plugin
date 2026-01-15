@@ -2341,13 +2341,34 @@ class ChatView extends ItemView {
       e.stopPropagation();
     });
 
-    inputContainer.addEventListener("drop", (e) => {
+    inputContainer.addEventListener("drop", async (e) => {
       e.preventDefault();
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
 
-      if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+      // Handle external files (OS drag and drop)
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         this.handleDroppedFile(e.dataTransfer.files[0]);
+        return;
+      }
+
+      // Handle internal Obsidian files (drag from sidebar)
+      // Obsidian typically puts the file path in 'text/plain' or 'application/vnd.obsidian.file'
+      if (e.dataTransfer) {
+        // Try getting text/plain which often contains the file path
+        const data = e.dataTransfer.getData("text/plain");
+        if (data) {
+          // Check if it's a file path in the vault
+          const abstractFile = this.app.vault.getAbstractFileByPath(data);
+          if (abstractFile instanceof TFile) {
+            await this.handleDroppedAbstractFile(abstractFile);
+            return;
+          }
+        }
+
+        // Also try standard custom event check if available (fallback)
+        // Some drag events might offer 'application/vnd.obsidian.file'
+        // If needed, we can expand here.
       }
     });
 
@@ -2503,22 +2524,13 @@ class ChatView extends ItemView {
     }
 
     try {
-      // Reuse upload logic - create a synthetic event or just call extraction directly
-      const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = `Extracting text from ${file.name}...`;
       this.inputEl.disabled = true;
 
       new Notice(`Extracting text from ${file.name}...`);
 
       const text = await this.plugin.graphApiService.extractTextFromFile(file);
-
-      const currentText = this.inputEl.value;
-      if (currentText) {
-        this.inputEl.value = currentText + "\n\n" + text;
-      } else {
-        this.inputEl.value = text;
-      }
-
+      this.appendExtractedText(text);
       new Notice(`Text extracted from ${file.name}`);
 
     } catch (error) {
@@ -2528,6 +2540,60 @@ class ChatView extends ItemView {
       this.inputEl.disabled = false;
       this.updateInputPlaceholder();
       this.inputEl.focus();
+    }
+  }
+
+  /**
+   * Handle dropped internal file (TFile) from Obsidian Vault
+   */
+  async handleDroppedAbstractFile(file: TFile) {
+    if (!file) return;
+
+    const allowedExtensions = ['md', 'txt', 'pdf', 'docx', 'doc'];
+    if (!allowedExtensions.includes(file.extension)) {
+      new Notice(`File type .${file.extension} not supported.`);
+      return;
+    }
+
+    try {
+      this.inputEl.placeholder = `Processing ${file.name}...`;
+      this.inputEl.disabled = true;
+      new Notice(`Processing ${file.name}...`);
+
+      let text = "";
+
+      // For text files, read directly
+      if (['md', 'txt'].includes(file.extension)) {
+        text = await this.app.vault.read(file);
+      } else {
+        // For binary files (PDF, DOCX), read as binary and send to API
+        const arrayBuffer = await this.app.vault.readBinary(file);
+        // Create a synthetic File object to reuse API method
+        const blob = new Blob([arrayBuffer]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const syntheticFile = new File([blob], file.name, { type: 'application/octet-stream' });
+        text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
+      }
+
+      this.appendExtractedText(text);
+      new Notice(`Text extracted from ${file.name}`);
+
+    } catch (error) {
+      console.error("Internal file drop error:", error);
+      new Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.inputEl.disabled = false;
+      this.updateInputPlaceholder();
+      this.inputEl.focus();
+    }
+  }
+
+  private appendExtractedText(text: string) {
+    const currentText = this.inputEl.value;
+    if (currentText) {
+      this.inputEl.value = currentText + "\n\n" + text;
+    } else {
+      this.inputEl.value = text;
     }
   }
 
