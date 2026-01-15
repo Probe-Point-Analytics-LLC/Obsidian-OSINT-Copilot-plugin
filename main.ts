@@ -2325,7 +2325,12 @@ class ChatView extends ItemView {
     inputContainer.addEventListener("dragenter", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.dragOverlay.addClass("active");
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+      if (!this.dragOverlay.hasClass("active")) {
+        this.dragOverlay.addClass("active");
+      }
     });
 
     inputContainer.addEventListener("dragleave", (e) => {
@@ -2341,6 +2346,9 @@ class ChatView extends ItemView {
       e.stopPropagation();
       if (e.dataTransfer) {
         e.dataTransfer.dropEffect = 'copy';
+      }
+      if (!this.dragOverlay.hasClass("active")) {
+        this.dragOverlay.addClass("active");
       }
     });
 
