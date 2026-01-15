@@ -2339,6 +2339,9 @@ class ChatView extends ItemView {
     inputContainer.addEventListener("dragover", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
     });
 
     inputContainer.addEventListener("drop", async (e) => {
