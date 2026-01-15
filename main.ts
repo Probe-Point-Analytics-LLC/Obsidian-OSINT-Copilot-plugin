@@ -3309,26 +3309,15 @@ class ChatView extends ItemView {
       });
     }
     // Don't remove results container if no new results - keep the last known results
-
-    // Scroll to bottom
-    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
   }
 
   async handleSend() {
-    const query = this.inputEl.value.trim();
-    if (!query) {
-      new Notice("Please enter a question.");
-      return;
-    }
-
-    if (!this.plugin.isAuthenticated()) {
-      new Notice("License key required for AI features. Please configure your license key in settings.");
-      return;
-    }
+    const value = this.inputEl.value.trim();
+    if (!value) return;
 
     // Check for URL in Graph Generation Mode
-    if (this.isGraphOnlyMode() && query.startsWith('http')) {
-      const isUrlHandled = await this.handleUrlExtraction(query);
+    if (this.isGraphOnlyMode() && value.startsWith('http')) {
+      const isUrlHandled = await this.handleUrlExtraction(value);
       if (isUrlHandled) {
         this.inputEl.value = ""; // Clear input if URL was handled
         await this.saveCurrentConversation(); // Save conversation after URL handling
@@ -3337,14 +3326,17 @@ class ChatView extends ItemView {
       // If not handled (returned false), continue normal flow
     }
 
-    // Add user message
-    this.chatHistory.push({
-      role: "user",
-      content: query,
-    });
-
-    // Clear input
     this.inputEl.value = "";
+
+    if (!this.plugin.isAuthenticated()) {
+      new Notice("License key required for AI features. Please configure your license key in settings.");
+      return;
+    }
+
+
+
+    // Add user message
+    this.chatHistory.push({ role: "user", content: value });
 
     // Save conversation after user message
     await this.saveCurrentConversation();
@@ -3352,16 +3344,16 @@ class ChatView extends ItemView {
     // Route to appropriate handler based on mode
     if (this.isGraphOnlyMode()) {
       // Graph only Mode: Extract entities from user input without AI chat
-      await this.handleGraphOnlyMode(query);
+      await this.handleGraphOnlyMode(value);
     } else if (this.osintSearchMode) {
-      await this.handleOSINTSearch(query);
+      await this.handleOSINTSearch(value);
     } else if (this.darkWebMode) {
-      await this.handleDarkWebInvestigation(query);
+      await this.handleDarkWebInvestigation(value);
     } else if (this.reportGenerationMode) {
-      await this.handleReportGeneration(query);
+      await this.handleReportGeneration(value);
     } else {
       // Default: Local Search Mode (normal chat)
-      await this.handleNormalChat(query);
+      await this.handleNormalChat(value);
     }
 
     // Save conversation after assistant response
@@ -3399,7 +3391,7 @@ class ChatView extends ItemView {
         const delaySeconds = Math.round(nextDelayMs / 1000);
         let reasonText = 'Network interrupted';
         if (reason === 'timeout') {
-          reasonText = 'Request takes longer than expected, please wait';
+          reasonText = 'Request takes longer than usual, please wait';
         } else if (reason === 'network') {
           reasonText = 'Network connection lost';
         } else if (reason.startsWith('server-error')) {
@@ -3760,7 +3752,7 @@ class ChatView extends ItemView {
         const delaySeconds = Math.round(nextDelayMs / 1000);
         let reasonText = 'Network interrupted';
         if (reason === 'timeout') {
-          reasonText = 'Request takes longer than expected, please wait';
+          reasonText = 'Request takes longer than usual, please wait';
         } else if (reason === 'network') {
           reasonText = 'Network connection lost';
         } else if (reason.startsWith('server-error')) {
@@ -4112,7 +4104,7 @@ class ChatView extends ItemView {
         const delaySeconds = Math.round(nextDelayMs / 1000);
         let reasonText = 'Network interrupted';
         if (reason === 'timeout') {
-          reasonText = 'Request takes longer than expected, please wait';
+          reasonText = 'Request takes longer than usual, please wait';
         } else if (reason === 'network') {
           reasonText = 'Network connection lost';
         } else if (reason.startsWith('server-error')) {
