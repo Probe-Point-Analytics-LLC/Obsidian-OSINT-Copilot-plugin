@@ -2353,9 +2353,17 @@ class ChatView extends ItemView {
       }
 
       // Handle internal Obsidian files (drag from sidebar)
-      // Obsidian typically puts the file path in 'text/plain' or 'application/vnd.obsidian.file'
+
+      // Method 1: Check internal dragManager (Scanning for internal state)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dragManager = (this.app as any).dragManager;
+      if (dragManager && dragManager.draggable && dragManager.draggable.type === 'file' && dragManager.draggable.file instanceof TFile) {
+        await this.handleDroppedAbstractFile(dragManager.draggable.file);
+        return;
+      }
+
       if (e.dataTransfer) {
-        // Try getting text/plain which often contains the file path
+        // Method 2: Check text/plain which often contains the file path
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           // Check if it's a file path in the vault
@@ -2365,10 +2373,6 @@ class ChatView extends ItemView {
             return;
           }
         }
-
-        // Also try standard custom event check if available (fallback)
-        // Some drag events might offer 'application/vnd.obsidian.file'
-        // If needed, we can expand here.
       }
     });
 
