@@ -17,14 +17,24 @@ import {
   RequestUrlResponse,
   CachedMetadata,
   Component,
+  ButtonComponent,
 } from "obsidian";
 
 interface ApiKeyInfo {
   plan?: string;
   remaining_quota?: number;
+  remaining_credits?: number;
   active?: boolean;
   expires_at?: string;
   is_trial?: boolean;
+  permissions?: {
+    allow_web_access: boolean;
+    allow_plugin_access: boolean;
+    allow_chat_view: boolean;
+    allow_graph_automation: boolean;
+    allow_custom_chat_config: boolean;
+    allow_local_agent: boolean;
+  };
 }
 
 // Graph plugin imports
@@ -36,6 +46,7 @@ import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
+import { CustomTypesService } from './src/services/custom-types-service';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -54,6 +65,26 @@ interface VaultAISettings {
   autoOpenGraphOnEntityCreation: boolean;
   // Conversation settings
   conversationFolder: string;
+  // Custom API settings
+  apiProvider: 'default' | 'openai'; // Kept for backward compat, though now unused for custom chat
+  customCheckpoints: CustomCheckpoint[];
+  permissions?: {
+    allow_web_access: boolean;
+    allow_plugin_access: boolean;
+    allow_chat_view: boolean;
+    allow_graph_automation: boolean;
+    allow_custom_chat_config: boolean;
+    allow_local_agent: boolean;
+  };
+}
+
+export interface CustomCheckpoint {
+  id: string;
+  name: string;
+  url: string;
+  apiKey: string;
+  model: string;
+  type?: 'openai' | 'mindsdb';
 }
 
 // Default models - hardcoded, not user-configurable
@@ -64,7 +95,7 @@ const ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 // DarkWeb dark web API uses gpt-5-mini for best results with dark web content
 const DARKWEB_MODEL = "gpt-5-mini";
 
-interface IndexedNote {
+export interface IndexedNote {
   path: string;
   content: string;
   tags: string[];
@@ -96,12 +127,15 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   autoOpenGraphOnEntityCreation: false,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
+  // Custom API defaults
+  apiProvider: 'default',
+  customCheckpoints: []
 };
 
 const REPORT_API_BASE_URL = "https://api.osint-copilot.com";
 // const REPORT_API_BASE_URL = "http://localhost:8000";
 
-const CHAT_VIEW_TYPE = "vault-ai-chat-view";
+export const CHAT_VIEW_TYPE = "vault-ai-chat-view";
 
 interface ReportProgress {
   message: string;
@@ -120,14 +154,23 @@ export default class VaultAIPlugin extends Plugin {
   entityManager!: EntityManager;
   graphApiService!: GraphApiService;
   conversationService!: ConversationService;
+  customTypesService!: CustomTypesService;
 
   async onload() {
     await this.loadSettings();
 
     // Check license key on load
+    // Check license key on load
     if (!this.settings.reportApiKey) {
       new Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
+    } else {
+      // Verify permissions on load
+      this.verifyPermissions();
     }
+
+    // Initialize custom types service (load schemas before entity manager)
+    this.customTypesService = new CustomTypesService(this.app);
+    await this.customTypesService.initialize();
 
     // Initialize graph plugin components
     this.entityManager = new EntityManager(this.app, this.settings.entityBasePath);
@@ -135,6 +178,14 @@ export default class VaultAIPlugin extends Plugin {
       this.settings.graphApiUrl,
       this.settings.reportApiKey
     );
+    // Pass custom API settings
+    // Pass custom API settings
+    this.graphApiService.setSettings({
+      apiProvider: 'default',
+      customApiUrl: '',
+      customApiKey: '',
+      customModel: ''
+    });
 
     // Initialize conversation service
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
@@ -313,13 +364,23 @@ export default class VaultAIPlugin extends Plugin {
     this.addCommand({
       id: "ask-vault",
       name: "Ask (remote)",
-      callback: () => this.openAskModal(),
+      callback: () => {
+        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
+          new Notice("Your plan does not include plugin access.");
+          return;
+        }
+        this.openAskModal();
+      },
     });
 
     this.addCommand({
       id: "reindex-vault",
       name: "Reindex vault",
       callback: () => {
+        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
+          new Notice("Your plan does not include plugin access.");
+          return;
+        }
         void this.buildIndex().then(() => {
           new Notice("Vault reindexed successfully.");
         });
@@ -330,6 +391,10 @@ export default class VaultAIPlugin extends Plugin {
       id: "reload-entities",
       name: "Reload entities from notes",
       callback: () => {
+        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
+          new Notice("Your plan does not include plugin access.");
+          return;
+        }
         void this.entityManager.loadEntitiesFromNotes().then(() => {
           new Notice("Entities reloaded from notes.");
         });
@@ -356,15 +421,54 @@ export default class VaultAIPlugin extends Plugin {
     if (this.graphApiService) {
       this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
       this.graphApiService.setApiKey(this.settings.reportApiKey);
+      this.graphApiService.setSettings({
+        apiProvider: 'default', // Backward compat defaults
+        customApiUrl: '',
+        customApiKey: '',
+        customModel: ''
+      });
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
     }
+
+    // Refresh all chat views to update mode dropdowns
+    this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => {
+      if (leaf.view instanceof ChatView) {
+        leaf.view.refresh();
+      }
+    });
   }
 
   isAuthenticated(): boolean {
     // AI features require a valid license key
     return !!this.settings.reportApiKey;
+  }
+
+  async verifyPermissions() {
+    if (!this.settings.reportApiKey) return;
+
+    try {
+      const response = await requestUrl({
+        url: `${REPORT_API_BASE_URL}/api/key/info`,
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.settings.reportApiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.status === 200) {
+        const data = response.json as ApiKeyInfo;
+        if (data.permissions) {
+          this.settings.permissions = data.permissions;
+          await this.saveData(this.settings);
+          console.debug('OSINTCopilot: Permissions updated', this.settings.permissions);
+        }
+      }
+    } catch (error) {
+      console.warn('OSINTCopilot: Failed to verify permissions', error);
+    }
   }
 
   // ============================================================================
@@ -427,6 +531,11 @@ export default class VaultAIPlugin extends Plugin {
    *                 This allows multiple views to be open simultaneously.
    */
   async openGraphView(forceNew: boolean = false) {
+    if (this.settings.permissions && this.settings.permissions.allow_graph_automation === false) {
+      new Notice("Your plan does not include access to Graph Automation features. Please upgrade.");
+      return;
+    }
+
     if (!this.settings.enableGraphFeatures) {
       new Notice('Graph features are disabled. Enable them in settings → osint copilot → enable graph features', 5000);
       console.warn('[VaultAIPlugin] Attempted to open graph view but graph features are disabled');
@@ -833,10 +942,11 @@ export default class VaultAIPlugin extends Plugin {
     const msg = error.message.toLowerCase();
     const transientPatterns = [
       'network', 'fetch', 'failed to fetch', 'net::err_',
-      'err_network_changed', 'network_changed', // Explicitly handle network change errors
+      'err_network_changed', 'network_changed',
       'connection', 'timeout', 'timed out', 'econnreset',
       'econnrefused', 'enotfound', 'socket', 'dns',
-      'abort', 'aborted' // Handle aborted requests
+      'abort', 'aborted',
+      '502', '503', '504', 'service unavailable', 'temporarily unavailable'
     ];
     return transientPatterns.some(pattern => msg.includes(pattern));
   }
@@ -981,7 +1091,8 @@ export default class VaultAIPlugin extends Plugin {
     query: string,
     onDelta?: (text: string) => void,
     preloadedNotes?: IndexedNote[],
-    onRetry?: (attempt: number, maxAttempts: number) => void
+    onRetry?: (attempt: number, maxAttempts: number) => void,
+    additionalContext?: string
   ): Promise<{ fullAnswer: string; notes: IndexedNote[] }> {
     if (!this.isAuthenticated()) {
       throw new Error("License key required for AI features. Please configure your license key in settings.");
@@ -989,7 +1100,7 @@ export default class VaultAIPlugin extends Plugin {
 
     const contextNotes = preloadedNotes ?? this.retrieveNotes(query);
 
-    if (contextNotes.length === 0) {
+    if (contextNotes.length === 0 && !additionalContext) {
       const noNotesMsg = "No relevant notes found for your query.";
       onDelta?.(noNotesMsg);
       return {
@@ -1014,6 +1125,11 @@ export default class VaultAIPlugin extends Plugin {
           ? note.content.substring(0, 1500) + "..."
           : note.content;
       contextText += `Content:\n${excerpt}\n\n`;
+    }
+
+    // Append additional context (e.g., Knowledge Graph connections)
+    if (additionalContext) {
+      contextText += `\n\n${additionalContext}\n\n`;
     }
 
     const messages: ChatMessage[] = [
@@ -1139,11 +1255,11 @@ export default class VaultAIPlugin extends Plugin {
         }
       }
 
-      statusCallback?.(`Companies&People generation started (Job ID: ${jobId}). Processing...`);
+      statusCallback?.(`Companies&People generation started (Job ID: ${jobId}). Processing... This might take up to 5 minutes, don't close the tab.`);
 
       // Step 2: Poll for job status with adaptive polling and retry logic
       let attempts = 0;
-      const maxElapsedMs = 5 * 60 * 1000; // 5 minutes max timeout
+      const maxElapsedMs = 20 * 60 * 1000; // 20 minutes max timeout (increased for deep research)
       let elapsedMs = 0;
       let jobStatus = "processing";
       let reportFilename = "";
@@ -1188,12 +1304,36 @@ export default class VaultAIPlugin extends Plugin {
           consecutiveNetworkErrors = 0;
 
           // Parse and forward progress and intermediate results
+          console.debug(`[OSINT Copilot] Polling status for job ${jobId}:`, statusData);
           if (statusData.progress) {
             statusCallback?.(
               statusData.status,
               {
                 message: statusData.progress.message || "Processing...",
                 percent: statusData.progress.percent || 0,
+              },
+              statusData.intermediate_results
+            );
+          } else if (jobStatus === "processing") {
+            // SYNTHETIC PROGRESS: If backend doesn't provide progress, estimate based on time
+            // Curve: 0-60s (0-30%), 60-180s (30-70%), 180s+ (70-95%)
+            let syntheticPercent = 5;
+            const elapsedSecs = Math.round(elapsedMs / 1000);
+
+            if (elapsedSecs < 60) {
+              syntheticPercent = 5 + Math.round((elapsedSecs / 60) * 25); // 5 -> 30
+            } else if (elapsedSecs < 180) {
+              syntheticPercent = 30 + Math.round(((elapsedSecs - 60) / 120) * 40); // 30 -> 70
+            } else {
+              syntheticPercent = 70 + Math.round(((elapsedSecs - 180) / 300) * 25); // 70 -> 95
+              syntheticPercent = Math.min(syntheticPercent, 95); // Cap at 95%
+            }
+
+            statusCallback?.(
+              statusData.status,
+              {
+                message: `Processing report... (${elapsedSecs}s elapsed)`,
+                percent: syntheticPercent,
               },
               statusData.intermediate_results
             );
@@ -1264,6 +1404,7 @@ export default class VaultAIPlugin extends Plugin {
           } else if (jobStatus === "failed") {
             // Parse the error message for user-friendly display
             const backendError = statusData.error || "Unknown error";
+            console.error(`[OSINT Copilot] Job ${jobId} failed with error:`, backendError);
 
             // Check for common backend issues
             if (backendError.toLowerCase().includes("ssl") ||
@@ -1306,6 +1447,9 @@ export default class VaultAIPlugin extends Plugin {
         }
       }
 
+      const elapsedSecsTotal = Math.round(elapsedMs / 1000);
+      console.info(`[OSINT Copilot] Polling loop finished for job ${jobId}. Final status: ${jobStatus}, Elapsed: ${elapsedSecsTotal}s`);
+
       // Check if job completed or response is ready (for answers)
       // Note: response_ready case is handled inside the loop and returns early
       if (jobStatus !== "completed") {
@@ -1321,7 +1465,7 @@ export default class VaultAIPlugin extends Plugin {
       for (let downloadAttempt = 1; downloadAttempt <= maxDownloadRetries; downloadAttempt++) {
         try {
           const downloadResponse: RequestUrlResponse = await requestUrl({
-            url: `${baseUrl}/api/download-report/${jobId}`,
+            url: `${baseUrl}/api/download-report/${jobId}/md`,
             method: "GET",
             headers: {
               Authorization: `Bearer ${reportApiKey}`,
@@ -1453,12 +1597,12 @@ export default class VaultAIPlugin extends Plugin {
    * This is the primary method used for entity extraction - it returns both
    * the entity name and its classified type in a single LLM call.
    */
-  async extractEntityFromQuery(query: string): Promise<{
+  async extractEntitiesFromQuery(query: string): Promise<Array<{
     name: string | null;
     type: "person" | "company" | "asset" | "event" | "location" | "unknown";
-  }> {
+  }>> {
     const system =
-      "Extract the main entity mentioned in the user's query and classify it as one of: person | company | asset | event | location. Respond ONLY in JSON: {\"name\":\"<entity name or null>\",\"type\":\"person|company|asset|event|location|unknown\"}. Use English only.";
+      "Extract the main entities mentioned in the user's query and classify each as one of: person | company | asset | event | location. Respond ONLY in JSON with a list of objects: [{\"name\":\"<entity name>\",\"type\":\"person|company|asset|event|location|unknown\"}]. If no specific entities are found, return an empty list []. Use English only.";
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -1466,50 +1610,42 @@ export default class VaultAIPlugin extends Plugin {
     ];
 
     try {
-      const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL); // Use OpenAI model for entity extraction
-
-      // Debug logging
-      //console.debug("[extractEntityFromQuery] Raw response:", text);
+      const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL);
 
       // Try strict JSON parse
       const match = text.trim();
-      let obj: unknown = null;
+      let list: any[] = [];
       try {
-        obj = JSON.parse(match);
-        //console.debug("[extractEntityFromQuery] Parsed JSON:", obj);
+        list = JSON.parse(match);
       } catch (parseError) {
-        //console.warn("[extractEntityFromQuery] JSON parse failed, trying regex:", parseError);
         // Best-effort: find JSON substring
-        const m = match.match(/\{[\s\S]*\}/);
+        const m = match.match(/\[[\s\S]*\]/);
         if (m) {
           try {
-            obj = JSON.parse(m[0]);
-            //console.debug("[extractEntityFromQuery] Parsed JSON from regex:", obj);
+            list = JSON.parse(m[0]);
           } catch (e) {
-            //console.error("[extractEntityFromQuery] Regex parse also failed:", e);
+            console.error("[extractEntitiesFromQuery] Regex parse failed:", e);
           }
         }
       }
 
-      if (!obj) {
-        //  console.error("[extractEntityFromQuery] No valid JSON found in response:", match);
-        return { name: null, type: "unknown" };
+      if (!Array.isArray(list)) {
+        return [];
       }
 
       const allowed = ["person", "company", "asset", "event", "location", "unknown"];
-      const data = obj as Record<string, unknown>;
-      const t = (String(data?.type) || "unknown").toLowerCase();
-      const type = allowed.includes(t) ? (t as "person" | "company" | "asset" | "event" | "location" | "unknown") : "unknown";
-      const nameVal =
-        typeof data?.name === "string" && data.name.trim().length > 0
-          ? data.name.trim()
-          : null;
-
-      console.debug("[extractEntityFromQuery] Extracted:", { name: nameVal, type });
-      return { name: nameVal, type };
+      return list.map(item => {
+        const t = (String(item?.type) || "unknown").toLowerCase();
+        const type = allowed.includes(t) ? (t as any) : "unknown";
+        const nameVal =
+          typeof item?.name === "string" && item.name.trim().length > 0
+            ? item.name.trim()
+            : null;
+        return { name: nameVal, type };
+      });
     } catch (error) {
-      console.error("[extractEntityFromQuery] Error:", error);
-      return { name: null, type: "unknown" };
+      console.error("[extractEntitiesFromQuery] Error:", error);
+      return [];
     }
   }
 
@@ -1739,6 +1875,10 @@ export default class VaultAIPlugin extends Plugin {
    *                 This allows multiple views to be open simultaneously.
    */
   async openChatView(forceNew: boolean = false) {
+    if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
+      new Notice("Your plan does not include access to the Chat View/Local Agent. Please upgrade to Local Agent or Plugin Own Data plan.");
+      return;
+    }
     // License key validation - Chat feature requires a valid license key
     if (!this.settings.reportApiKey) {
       new Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8000);
@@ -1974,7 +2114,7 @@ interface CreatedEntityInfo {
   filePath: string;
 }
 
-interface ChatHistoryItem {
+export interface ChatHistoryItem {
   role: "user" | "assistant";
   content: string;
   notes?: IndexedNote[];
@@ -1986,9 +2126,10 @@ interface ChatHistoryItem {
   createdEntities?: CreatedEntityInfo[]; // For entity generation - clickable graph view links
   connectionsCreated?: number; // Number of relationships created
   reportFilePath?: string; // For report generation - path to the generated report file
+  usedEntities?: { id: string, label: string, type: string }[]; // Pinpointed graph entities
 }
 
-class ChatView extends ItemView {
+export class ChatView extends ItemView {
   plugin: VaultAIPlugin;
   chatHistory: ChatHistoryItem[] = [];
   inputEl!: HTMLTextAreaElement;
@@ -1997,12 +2138,14 @@ class ChatView extends ItemView {
   conversationListEl!: HTMLDivElement;
   // Main modes (mutually exclusive - only one can be active, or all can be off for Entity-Only Mode)
   localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
+  customChatMode: boolean = false; // Custom OpenAI-compatible chat mode
+  activeCheckpointId: string | undefined; // Selected custom checkpoint ID
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
-  osintSearchMode: boolean = false; // Leak Search mode
+  osintSearchMode: boolean = false; // Digital Footprint mode
   // Mode dropdown element (replaces individual toggle checkboxes)
   modeDropdown!: HTMLSelectElement;
-  // Leak Search options
+  // Digital Footprint options
   osintSearchOptionsVisible: boolean = false;
   osintSearchCountry: 'RU' | 'UA' | 'BY' | 'KZ' = 'RU';
   osintSearchMaxProviders: number = 3;
@@ -2010,11 +2153,17 @@ class ChatView extends ItemView {
   // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
   graphGenerationMode: boolean = true;
   graphGenerationToggle!: HTMLInputElement;
+  entityGenContainer!: HTMLElement;  // Container for the toggle - hidden when Graph mode selected
   pollingIntervals: Map<string, number> = new Map();
   currentConversation: Conversation | null = null;
   sidebarVisible: boolean = true;
   uploadButtonEl!: HTMLElement;
+  urlButtonEl!: HTMLElement; // URL extraction button
   dragOverlay!: HTMLElement;
+  // Attached files display
+  attachmentsContainer!: HTMLElement;
+  // Stores attached files - content is extracted only when sending
+  attachedFiles: { file: TFile | File; extracted: boolean; content?: string }[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: VaultAIPlugin) {
     super(leaf);
@@ -2074,7 +2223,8 @@ class ChatView extends ItemView {
       jobId: m.jobId,
       status: m.status,
       progress: m.progress as { message: string, percent: number } | undefined,
-      reportFilePath: m.reportFilePath
+      reportFilePath: m.reportFilePath,
+      usedEntities: m.usedEntities
     }));
   }
 
@@ -2087,7 +2237,8 @@ class ChatView extends ItemView {
       jobId: h.jobId,
       status: h.status,
       progress: h.progress,
-      reportFilePath: h.reportFilePath
+      reportFilePath: h.reportFilePath,
+      usedEntities: h.usedEntities
     }));
   }
 
@@ -2108,6 +2259,10 @@ class ChatView extends ItemView {
     this.currentConversation.osintSearchMode = this.osintSearchMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
+  }
+
+  async refresh() {
+    await this.render();
   }
 
   async render() {
@@ -2169,67 +2324,128 @@ class ChatView extends ItemView {
     this.modeDropdown.id = "vault-ai-mode-dropdown";
 
     // Add mode options
-    const modeOptions = [
+    // Add mode options
+    const modeOptions: { value: string; label: string; mode: string; checkpointId?: string }[] = [];
+
+    // Add custom checkpoints dynamically
+    this.plugin.settings.customCheckpoints.forEach((cp) => {
+      modeOptions.push({
+        value: `custom-${cp.id}`,
+        label: `💬 ${cp.name}`,
+        mode: "customChatMode",
+        checkpointId: cp.id,
+      });
+    });
+
+    // Validate activeCheckpointId - if it doesn't exist anymore, reset it
+    if (this.activeCheckpointId && !this.plugin.settings.customCheckpoints.find(c => c.id === this.activeCheckpointId)) {
+      this.activeCheckpointId = undefined;
+      // If we were in custom mode, either switch to first available or disable custom mode
+      if (this.customChatMode) {
+        if (this.plugin.settings.customCheckpoints.length > 0) {
+          this.activeCheckpointId = this.plugin.settings.customCheckpoints[0].id;
+        } else {
+          this.customChatMode = false;
+          this.localSearchMode = true; // Fallback to local search
+        }
+      }
+    }
+
+    // Add standard options
+    modeOptions.push(
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
       { value: "report", label: "📄 Companies&People", mode: "reportGenerationMode" },
-      { value: "osint", label: "🔎 Leak Search", mode: "osintSearchMode" },
-    ];
+      { value: "osint", label: "🔎 Digital Footprint", mode: "osintSearchMode" },
+    );
 
     for (const option of modeOptions) {
       const optEl = this.modeDropdown.createEl("option", {
         text: option.label,
         value: option.value,
       });
-      // Set selected based on current mode - check Graph only first since it's the default
-      if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
+      // Set selected based on current mode
+      if (option.mode === "customChatMode") {
+        if (this.customChatMode && this.activeCheckpointId === option.checkpointId) {
+          optEl.selected = true;
+        } else if (this.customChatMode && !this.activeCheckpointId && option.checkpointId === this.plugin.settings.customCheckpoints[0]?.id) {
+          // Fallback: if custom mode is on but no ID set, select first
+          this.activeCheckpointId = option.checkpointId;
+          optEl.selected = true;
+        }
+      }
+      else if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
       else if (option.value === "local" && this.localSearchMode) optEl.selected = true;
       else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
       else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
       else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
     }
 
+    // Settings shortcut button
+    const settingsBtn = buttonGroup.createEl("button", {
+      text: "⚙️",
+      cls: "vault-ai-settings-btn",
+      attr: { "aria-label": "Open Settings" }
+    });
+    settingsBtn.addEventListener("click", () => {
+      // @ts-ignore
+      this.app.setting.open();
+      // @ts-ignore
+      this.app.setting.openTabById(this.plugin.manifest.id);
+    });
+
     // Handle mode selection
     this.modeDropdown.addEventListener("change", () => {
       const selectedValue = this.modeDropdown.value;
 
       // Reset all modes
+      this.customChatMode = false;
       this.localSearchMode = false;
       this.darkWebMode = false;
       this.reportGenerationMode = false;
       this.osintSearchMode = false;
 
       // Enable selected mode
-      switch (selectedValue) {
-        case "local":
-          this.localSearchMode = true;
-          new Notice("Local search mode enabled");
-          break;
-        case "darkweb":
-          this.darkWebMode = true;
-          new Notice("Dark web mode enabled");
-          break;
-        case "report":
-          this.reportGenerationMode = true;
-          new Notice("Companies&people mode enabled");
-          break;
-        case "osint":
-          this.osintSearchMode = true;
-          new Notice("Leak search mode enabled");
-          break;
-        case "none":
-          // All modes off - Graph only Mode if graph generation is on
-          if (this.graphGenerationMode) {
-            new Notice("Graph only mode enabled - extract entities from your text");
-          } else {
-            // Enable graph generation automatically for Graph Generation mode
-            this.graphGenerationMode = true;
-            this.graphGenerationToggle.checked = true;
-            this.updateGraphGenerationLabel();
-            new Notice("Graph only mode enabled - extract entities from your text");
-          }
-          break;
+      // Enable selected mode
+      if (selectedValue.startsWith("custom-")) {
+        const cpId = selectedValue.replace("custom-", "");
+        this.customChatMode = true;
+        this.activeCheckpointId = cpId;
+        const cpName = this.plugin.settings.customCheckpoints.find(c => c.id === cpId)?.name || "Custom Chat";
+        new Notice(`${cpName} enabled`);
+      } else {
+        this.activeCheckpointId = undefined; // Reset if switching away
+        switch (selectedValue) {
+          case "local":
+            this.localSearchMode = true;
+            new Notice("Local search mode enabled");
+            break;
+          case "darkweb":
+            this.darkWebMode = true;
+            new Notice("Dark web mode enabled");
+            break;
+          case "report":
+            this.reportGenerationMode = true;
+            new Notice("Companies&people mode enabled");
+            break;
+          case "osint":
+            this.osintSearchMode = true;
+            new Notice("Leak search mode enabled");
+            break;
+          case "none":
+            // All modes off - Graph only Mode if graph generation is on
+            if (this.graphGenerationMode) {
+              new Notice("Graph only mode enabled - extract entities from your text");
+            } else {
+              // Enable graph generation automatically for Graph Generation mode
+              this.graphGenerationMode = true;
+              this.graphGenerationToggle.checked = true;
+              this.updateGraphGenerationLabel();
+              new Notice("Graph only mode enabled - extract entities from your text");
+            }
+            break;
+        }
       }
 
       this.updateAllModeLabels();
@@ -2238,14 +2454,16 @@ class ChatView extends ItemView {
       this.updateInputPlaceholder();
       this.updateModeDisclaimer();
       this.updateUploadButtonVisibility();
+      this.updateUrlButtonVisibility();
+      this.updateGraphToggleVisibility();
     });
 
     // === Graph Generation Toggle (Independent - enables Graph only Mode when all main modes are off) ===
-    const entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
-    entityGenContainer.addClass("vault-ai-toggle-container");
-    entityGenContainer.setAttribute("title", "Extract entities (works with any mode, or alone for graph only mode)");
+    this.entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
+    this.entityGenContainer.addClass("vault-ai-toggle-container");
+    this.entityGenContainer.setAttribute("title", "Extract entities (works with any mode, or alone for graph only mode)");
 
-    this.graphGenerationToggle = entityGenContainer.createEl("input", {
+    this.graphGenerationToggle = this.entityGenContainer.createEl("input", {
       type: "checkbox",
       cls: "vault-ai-entity-gen-checkbox",
     });
@@ -2258,6 +2476,7 @@ class ChatView extends ItemView {
       this.updateInputPlaceholder();
       this.updateModeDisclaimer();
       this.updateUploadButtonVisibility();
+      this.updateUrlButtonVisibility();
       if (this.isGraphOnlyMode()) {
         new Notice("Graph only mode enabled - extract entities from your text");
       } else if (this.graphGenerationMode) {
@@ -2267,11 +2486,14 @@ class ChatView extends ItemView {
       }
     });
 
-    const entityGenLabel = entityGenContainer.createEl("label", {
+    const entityGenLabel = this.entityGenContainer.createEl("label", {
       text: this.getGraphGenLabelText(),
       cls: this.graphGenerationMode ? "vault-ai-entity-gen-label active" : "vault-ai-entity-gen-label",
     });
     entityGenLabel.htmlFor = "graph-gen-mode-toggle";
+
+    // Hide toggle if Graph Generation mode is selected from dropdown
+    this.updateGraphToggleVisibility();
 
     // Messages container
     this.messagesContainer = chatArea.createDiv("vault-ai-chat-messages");
@@ -2305,7 +2527,15 @@ class ChatView extends ItemView {
     });
     fileInput.addEventListener("change", (e) => void this.handleFileUpload(e));
 
-    this.uploadButtonEl = inputContainer.createEl("button", {
+    // Attachments container - shows attached files below input
+    this.attachmentsContainer = inputContainer.createDiv("vault-ai-attachments");
+    this.attachedFiles = []; // Reset on render
+
+    // Action Row for Buttons (Upload, URL, Send)
+    const actionRow = inputContainer.createDiv("vault-ai-action-row");
+
+    // Upload Button
+    this.uploadButtonEl = actionRow.createEl("button", {
       text: "📎",
       cls: "vault-ai-upload-btn",
       attr: {
@@ -2317,12 +2547,36 @@ class ChatView extends ItemView {
     this.updateUploadButtonVisibility();
     this.uploadButtonEl.addEventListener("click", () => fileInput.click());
 
+    // URL Button
+    this.urlButtonEl = actionRow.createEl("button", {
+      text: "🔗",
+      cls: "vault-ai-url-btn",
+      attr: {
+        "aria-label": "Extract from URL",
+        "title": "Extract content from web URL for graph generation"
+      }
+    });
+    this.urlButtonEl.addEventListener("click", () => this.showUrlInputModal());
+    this.updateUrlButtonVisibility();
+
+    // Spacer to push Send button to the right
+    const spacer = actionRow.createDiv("vault-ai-action-spacer");
+    spacer.style.flexGrow = "1";
+
+    // Send Button
+    const sendBtn = actionRow.createEl("button", {
+      text: this.osintSearchMode ? "Search" : "Send",
+      cls: "vault-ai-send-btn"
+    });
+    sendBtn.addEventListener("click", () => void this.handleSend());
+
     // Drag and Drop Overlay
     this.dragOverlay = inputContainer.createDiv("vault-ai-drag-overlay");
     this.dragOverlay.createDiv({ text: "Drop file to extract text", cls: "vault-ai-drag-text" });
 
-    // Drag events on the input container
+    // Drag events on the input container - only enabled in Graph Only mode
     inputContainer.addEventListener("dragenter", (e) => {
+      if (!this.isGraphOnlyMode()) return;  // Only allow drag in Graph Only mode
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) {
@@ -2334,6 +2588,7 @@ class ChatView extends ItemView {
     });
 
     inputContainer.addEventListener("dragleave", (e) => {
+      if (!this.isGraphOnlyMode()) return;
       e.preventDefault();
       e.stopPropagation();
       if (!inputContainer.contains(e.relatedTarget as Node)) {
@@ -2342,6 +2597,7 @@ class ChatView extends ItemView {
     });
 
     inputContainer.addEventListener("dragover", (e) => {
+      if (!this.isGraphOnlyMode()) return;  // Only allow drag in Graph Only mode
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) {
@@ -2356,6 +2612,12 @@ class ChatView extends ItemView {
       e.preventDefault();
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
+
+      // Only process drops in Graph Only mode
+      if (!this.isGraphOnlyMode()) {
+        new Notice("File drop only available in Graph Generation mode");
+        return;
+      }
 
       // Handle external files (OS drag and drop)
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -2387,9 +2649,6 @@ class ChatView extends ItemView {
       }
     });
 
-    const sendBtn = inputContainer.createEl("button", { text: this.osintSearchMode ? "Search" : "Send" });
-    sendBtn.addEventListener("click", () => void this.handleSend());
-
     // Handle Enter key (Shift+Enter for new line)
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -2398,7 +2657,7 @@ class ChatView extends ItemView {
       }
     });
 
-    // Leak Search Options Panel (shown when Leak Search mode is active)
+    // Digital Footprint Options Panel (shown when Digital Footprint mode is active)
     if (this.osintSearchMode) {
       this.renderOSINTSearchOptions(inputContainer);
     }
@@ -2425,13 +2684,13 @@ class ChatView extends ItemView {
       if (this.graphGenerationMode) {
         return {
           icon: "🔎",
-          title: "Leak Search + Graph Gen:",
+          title: "Digital Footprint + Graph Gen:",
           text: "Search leaked databases and automatically create entities from the results."
         };
       }
       return {
         icon: "🔎",
-        title: "Leak Search:",
+        title: "Digital Footprint:",
         text: "Search multiple leaked databases for information about people, emails, phones, and more."
       };
     }
@@ -2482,8 +2741,193 @@ class ChatView extends ItemView {
 
   updateUploadButtonVisibility() {
     if (this.uploadButtonEl) {
-      // Always show upload button to allow adding file content to chat in any mode
-      this.uploadButtonEl.style.display = "block";
+      // Only show upload button in Graph Generation mode (Graph Only mode)
+      if (this.isGraphOnlyMode()) {
+        this.uploadButtonEl.style.display = "block";
+      } else {
+        this.uploadButtonEl.style.display = "none";
+      }
+    }
+  }
+
+  updateUrlButtonVisibility() {
+    if (this.urlButtonEl) {
+      // Only show URL button in Graph Generation mode (Graph Only mode)
+      if (this.isGraphOnlyMode()) {
+        this.urlButtonEl.style.display = "block";
+      } else {
+        this.urlButtonEl.style.display = "none";
+      }
+    }
+  }
+
+  /**
+   * Show modal for URL input to extract content from webpage.
+   * Extracted content is sent directly to graph generation.
+   */
+  showUrlInputModal() {
+    // Create modal overlay
+    const overlay = document.createElement("div");
+    overlay.className = "vault-ai-modal-overlay";
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    `;
+
+    // Create modal
+    const modal = document.createElement("div");
+    modal.className = "vault-ai-url-modal";
+    modal.style.cssText = `
+      background: var(--background-primary);
+      border-radius: 8px;
+      padding: 20px;
+      min-width: 400px;
+      max-width: 600px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    `;
+
+    modal.innerHTML = `
+      <h3 style="margin-top: 0; margin-bottom: 15px;">🔗 Extract from URL</h3>
+      <p style="color: var(--text-muted); margin-bottom: 15px; font-size: 0.9em;">
+        Paste a URL to extract article content and generate entities.
+      </p>
+      <input type="url" id="url-input" placeholder="https://medium.com/@author/article..." 
+        style="width: 100%; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 4px; background: var(--background-secondary); color: var(--text-normal); margin-bottom: 15px;" />
+      <div id="url-status" style="color: var(--text-muted); margin-bottom: 15px; min-height: 20px;"></div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="url-cancel" style="padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; background: var(--background-modifier-border);">Cancel</button>
+        <button id="url-extract" style="padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; background: var(--interactive-accent); color: white;">Extract & Generate</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const urlInput = modal.querySelector("#url-input") as HTMLInputElement;
+    const statusEl = modal.querySelector("#url-status") as HTMLElement;
+    const cancelBtn = modal.querySelector("#url-cancel") as HTMLButtonElement;
+    const extractBtn = modal.querySelector("#url-extract") as HTMLButtonElement;
+
+    // Focus input
+    urlInput.focus();
+
+    // Close modal function
+    const closeModal = () => {
+      overlay.remove();
+    };
+
+    // Cancel button
+    cancelBtn.addEventListener("click", closeModal);
+
+    // Click outside to close
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    // Escape key to close
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeModal();
+        document.removeEventListener("keydown", escHandler);
+      }
+    };
+    document.addEventListener("keydown", escHandler);
+
+    // Extract button
+    extractBtn.addEventListener("click", async () => {
+      const url = urlInput.value.trim();
+
+      if (!url) {
+        statusEl.textContent = "❌ Please enter a URL";
+        statusEl.style.color = "var(--text-error)";
+        return;
+      }
+
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        statusEl.textContent = "❌ URL must start with http:// or https://";
+        statusEl.style.color = "var(--text-error)";
+        return;
+      }
+
+      // Disable buttons and show loading
+      extractBtn.disabled = true;
+      cancelBtn.disabled = true;
+      extractBtn.textContent = "Extracting...";
+      statusEl.textContent = "🔗 Fetching content from URL...";
+      statusEl.style.color = "var(--text-muted)";
+
+      try {
+        // Extract text from URL
+        const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+
+        if (!extractedText || extractedText.trim().length === 0) {
+          throw new Error("No content could be extracted from this URL");
+        }
+
+        // Close modal
+        closeModal();
+
+        // Show user message in chat with just the URL
+        const displayUrl = url.length > 60 ? url.substring(0, 60) + "..." : url;
+        this.chatHistory.push({ role: "user", content: `🔗 ${displayUrl}` });
+        await this.renderMessages();
+
+        // Send extracted content directly to graph generation
+        new Notice(`Extracted content from URL. Processing entities...`);
+        await this.handleGraphOnlyMode(extractedText);
+
+        // Save conversation
+        await this.saveCurrentConversation();
+
+      } catch (error) {
+        console.error("URL extraction error:", error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
+          statusEl.textContent = "❌ Request timed out. Try a simpler page.";
+        } else if (errorMsg.includes("429")) {
+          statusEl.textContent = "❌ Server busy. Please wait and try again.";
+        } else {
+          statusEl.textContent = `❌ ${errorMsg}`;
+        }
+        statusEl.style.color = "var(--text-error)";
+
+        // Re-enable buttons
+        extractBtn.disabled = false;
+        cancelBtn.disabled = false;
+        extractBtn.textContent = "Extract & Generate";
+      }
+    });
+
+    // Enter key to submit
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        extractBtn.click();
+      }
+    });
+  }
+
+  /**
+   * Hide/show the Graph Generation toggle based on mode selection.
+   * When "Graph Generation" is selected from the dropdown, the toggle is redundant.
+   */
+  updateGraphToggleVisibility() {
+    if (this.entityGenContainer) {
+      // Hide toggle when Graph Generation mode is selected from dropdown (value="none")
+      // Show toggle for other modes (so user can optionally enable graph gen alongside main mode)
+      if (this.modeDropdown && this.modeDropdown.value === "none") {
+        this.entityGenContainer.style.display = "none";
+      } else {
+        this.entityGenContainer.style.display = "flex";
+      }
     }
   }
 
@@ -2496,35 +2940,18 @@ class ChatView extends ItemView {
     // Clear input to allow re-uploading same file
     target.value = '';
 
-    try {
-      // Show loading state
-      const originalPlaceholder = this.inputEl.placeholder;
-      this.inputEl.placeholder = `Extracting text from ${file.name}...`;
-      this.inputEl.disabled = true;
-
-      new Notice(`Extracting text from ${file.name}...`);
-
-      const text = await this.plugin.graphApiService.extractTextFromFile(file);
-
-      // Populate input
-      const currentText = this.inputEl.value;
-      if (currentText) {
-        this.inputEl.value = currentText + "\n\n" + text;
-      } else {
-        this.inputEl.value = text;
-      }
-
-      new Notice(`Text extracted from ${file.name}`);
-
-    } catch (error) {
-      console.error("File upload error:", error);
-      new Notice(`Error processing file: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      // Restore UI
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
+    // Validate file type
+    const allowedExtensions = ['.md', '.txt', '.pdf', '.docx', '.doc'];
+    const ext = "." + file.name.split('.').pop()?.toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+      new Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+      return;
     }
+
+    // Store file for deferred extraction - do NOT extract now
+    this.attachedFiles.push({ file, extracted: false });
+    this.renderAttachments();
+    new Notice(`Attached: ${file.name}`);
   }
 
   async handleDroppedFile(file: File) {
@@ -2570,36 +2997,58 @@ class ChatView extends ItemView {
       return;
     }
 
-    try {
-      this.inputEl.placeholder = `Processing ${file.name}...`;
-      this.inputEl.disabled = true;
-      new Notice(`Processing ${file.name}...`);
+    // Store file for deferred extraction - do NOT extract now
+    this.attachedFiles.push({ file, extracted: false });
+    this.renderAttachments();
+    new Notice(`Attached: ${file.name}`);
+  }
 
-      let text = "";
+  /**
+   * Render the attached files display.
+   */
+  private renderAttachments() {
+    this.attachmentsContainer.empty();
 
-      // For text files, read directly
-      if (['md', 'txt'].includes(file.extension)) {
-        text = await this.app.vault.read(file);
+    if (this.attachedFiles.length === 0) {
+      return;
+    }
+
+    for (let i = 0; i < this.attachedFiles.length; i++) {
+      const attachment = this.attachedFiles[i];
+      const attachmentEl = this.attachmentsContainer.createDiv("vault-ai-attachment-item");
+
+      // File icon and name
+      const fileInfo = attachmentEl.createDiv("vault-ai-attachment-info");
+      fileInfo.createSpan({ text: "📄 ", cls: "vault-ai-attachment-icon" });
+      fileInfo.createSpan({ text: attachment.file.name, cls: "vault-ai-attachment-name" });
+
+      // Preview snippet or pending extraction message
+      if (attachment.extracted && attachment.content) {
+        const preview = attachment.content.substring(0, 100).replace(/\n/g, ' ').trim();
+        if (preview) {
+          attachmentEl.createDiv({
+            text: preview + (attachment.content.length > 100 ? '...' : ''),
+            cls: "vault-ai-attachment-preview"
+          });
+        }
       } else {
-        // For binary files (PDF, DOCX), read as binary and send to API
-        const arrayBuffer = await this.app.vault.readBinary(file);
-        // Create a synthetic File object to reuse API method
-        const blob = new Blob([arrayBuffer]);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const syntheticFile = new File([blob], file.name, { type: 'application/octet-stream' });
-        text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
+        // Show pending message for deferred extraction
+        attachmentEl.createDiv({
+          text: "📋 Ready to extract on send",
+          cls: "vault-ai-attachment-preview"
+        });
       }
 
-      this.appendExtractedText(text);
-      new Notice(`Text extracted from ${file.name}`);
-
-    } catch (error) {
-      console.error("Internal file drop error:", error);
-      new Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
+      // Remove button
+      const removeBtn = attachmentEl.createEl("button", {
+        text: "✕",
+        cls: "vault-ai-attachment-remove",
+        attr: { "aria-label": "Remove attachment", "title": "Remove attachment" }
+      });
+      removeBtn.addEventListener("click", () => {
+        this.attachedFiles.splice(i, 1);
+        this.renderAttachments();
+      });
     }
   }
 
@@ -2643,7 +3092,7 @@ class ChatView extends ItemView {
   }
 
   /**
-   * Render the Leak Search options panel.
+   * Render the Digital Footprint options panel.
    */
   private renderOSINTSearchOptions(container: HTMLElement) {
     const optionsPanel = container.createDiv("vault-ai-osint-search-options");
@@ -2715,7 +3164,7 @@ class ChatView extends ItemView {
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
   }
 
   // Show notice when entering Graph only Mode
@@ -2790,7 +3239,7 @@ class ChatView extends ItemView {
     }
 
     // Also update the send button text based on mode
-    const sendBtn = inputContainer.querySelector("button");
+    const sendBtn = inputContainer.querySelector(".vault-ai-send-btn");
     if (sendBtn) {
       sendBtn.textContent = this.osintSearchMode ? "Search" : "Send";
     }
@@ -2827,7 +3276,9 @@ class ChatView extends ItemView {
   updateAllModeLabels() {
     // Update mode dropdown selection
     if (this.modeDropdown) {
-      if (this.localSearchMode) {
+      if (this.customChatMode && this.activeCheckpointId) {
+        this.modeDropdown.value = `custom-${this.activeCheckpointId}`;
+      } else if (this.localSearchMode) {
         this.modeDropdown.value = "local";
       } else if (this.darkWebMode) {
         this.modeDropdown.value = "darkweb";
@@ -3127,6 +3578,68 @@ class ChatView extends ItemView {
         }
       }
 
+      // Show Used Graph Entities (Advanced Graph Search)
+      if (item.role === "assistant" && item.usedEntities && item.usedEntities.length > 0) {
+        const entitiesDiv = messageDiv.createDiv("vault-ai-used-entities");
+        entitiesDiv.style.marginTop = "8px";
+        entitiesDiv.createEl("small", { text: "Graph Sources:" });
+
+        const chipsContainer = entitiesDiv.createDiv("vault-ai-entity-chips-container");
+        chipsContainer.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 4px;
+        `;
+
+        for (const usedEntity of item.usedEntities) {
+          const fullEntity = this.plugin.entityManager.getEntity(usedEntity.id);
+          if (!fullEntity) continue;
+
+          const chip = chipsContainer.createDiv("vault-ai-entity-chip");
+          chip.style.cssText = `
+                display: inline-flex;
+                align-items: center;
+                padding: 2px 8px;
+                border-radius: 12px;
+                background: var(--background-modifier-border);
+                font-size: 11px;
+                cursor: pointer;
+                border: 1px solid var(--background-modifier-border-hover);
+                transition: background 0.2s;
+            `;
+          chip.setAttribute("aria-label", `Open ${fullEntity.label}`);
+
+          // Icon based on type (simple mapping if helper not available)
+          const iconSpan = chip.createEl("span", { text: "🔗" });
+          iconSpan.style.marginRight = "4px";
+          iconSpan.style.opacity = "0.7";
+
+          chip.createEl("span", { text: fullEntity.label });
+
+          chip.addEventListener("mouseenter", () => {
+            chip.style.background = "var(--background-modifier-hover)";
+          });
+          chip.addEventListener("mouseleave", () => {
+            chip.style.background = "var(--background-modifier-border)";
+          });
+
+          chip.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (fullEntity.filePath) {
+              void (async () => {
+                const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath!);
+                if (file instanceof TFile) {
+                  await this.app.workspace.getLeaf().openFile(file);
+                } else {
+                  new Notice("Linked note file not found");
+                }
+              })();
+            }
+          });
+        }
+      }
+
       // Show created entities with clickable graph view links
       if (item.role === "assistant" && item.createdEntities && item.createdEntities.length > 0) {
         const entitiesDiv = messageDiv.createDiv("vault-ai-created-entities");
@@ -3394,7 +3907,7 @@ class ChatView extends ItemView {
 
   async handleSend() {
     const value = this.inputEl.value.trim();
-    if (!value) return;
+    if (!value && this.attachedFiles.length === 0) return;
 
     // Check for URL in Graph Generation Mode
     if (this.isGraphOnlyMode() && value.startsWith('http')) {
@@ -3414,31 +3927,206 @@ class ChatView extends ItemView {
       return;
     }
 
+    // Build processed value - keep file content separate from chat display
+    let displayValue = value; // What user sees in chat
+    let processingValue = value; // What gets sent to graph generation (includes file content)
+    const processedFileNames: string[] = []; // Track file names for display
 
+    if (this.attachedFiles.length > 0) {
+      // Store files for processing, then clear UI immediately for better feedback
+      const filesToProcess = [...this.attachedFiles];
+      this.attachedFiles = [];
+      this.renderAttachments(); // Clear attachment chips immediately
 
-    // Add user message
-    this.chatHistory.push({ role: "user", content: value });
+      // Show extraction progress in a placeholder message
+      const fileCount = filesToProcess.length;
+      const extractionMsgIndex = this.chatHistory.length;
+      this.chatHistory.push({
+        role: "assistant",
+        content: `📄 Extracting text from ${fileCount} file${fileCount > 1 ? 's' : ''}...`
+      });
+      await this.renderMessages();
+
+      // Extract text from attached files NOW (deferred extraction)
+      const extractedContents: string[] = [];
+      let extractedCount = 0;
+      let failedCount = 0;
+
+      // Process files sequentially to avoid rate limits
+      for (const attachment of filesToProcess) {
+        const fileName = attachment.file.name;
+
+        // Update progress message
+        this.chatHistory[extractionMsgIndex].content =
+          `📄 Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
+        await this.renderMessages();
+
+        try {
+          let text = "";
+
+          if (attachment.extracted && attachment.content) {
+            // Already extracted
+            text = attachment.content;
+          } else if (attachment.file instanceof TFile) {
+            // TFile from Obsidian vault - read directly for text files, API for binary
+            const ext = attachment.file.extension;
+            if (['md', 'txt'].includes(ext)) {
+              text = await this.app.vault.read(attachment.file);
+            } else {
+              // Show special message for PDF/binary files
+              this.chatHistory[extractionMsgIndex].content =
+                `📄 Processing ${fileName}... (this may take a moment for large files)`;
+              await this.renderMessages();
+
+              const arrayBuffer = await this.app.vault.readBinary(attachment.file);
+              const blob = new Blob([arrayBuffer]);
+              const syntheticFile = new File([blob], attachment.file.name, { type: 'application/octet-stream' });
+              text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
+            }
+          } else {
+            // Native File object from upload button
+            const ext = fileName.split('.').pop()?.toLowerCase() || '';
+            if (!['md', 'txt'].includes(ext)) {
+              this.chatHistory[extractionMsgIndex].content =
+                `📄 Processing ${fileName}... (this may take a moment for large files)`;
+              await this.renderMessages();
+            }
+            text = await this.plugin.graphApiService.extractTextFromFile(attachment.file);
+          }
+
+          extractedContents.push(`\n\n--- Content from ${fileName} ---\n${text}`);
+          processedFileNames.push(fileName);
+          extractedCount++;
+
+        } catch (error) {
+          failedCount++;
+          console.error(`Error extracting ${fileName}:`, error);
+
+          // Provide user-friendly error message based on error type
+          let userMessage = `Could not extract text from ${fileName}`;
+          const errorStr = error instanceof Error ? error.message : String(error);
+
+          if (errorStr.includes('timed out') || errorStr.includes('timeout') || errorStr.includes('AbortError')) {
+            userMessage = `${fileName}: File too large or server busy. Try a smaller file.`;
+          } else if (errorStr.includes('429') || errorStr.includes('Too Many Requests')) {
+            userMessage = `${fileName}: Server busy (rate limited). Please wait and try again.`;
+          } else if (errorStr.includes('too large')) {
+            userMessage = `${fileName}: ${errorStr}`;
+          }
+
+          new Notice(userMessage, 5000);
+        }
+      }
+
+      // Update or remove the extraction message
+      if (extractedCount > 0) {
+        // Remove the extraction progress message
+        this.chatHistory.splice(extractionMsgIndex, 1);
+      } else {
+        // All failed - show error message
+        this.chatHistory[extractionMsgIndex].content =
+          `❌ Failed to extract text from ${failedCount} file${failedCount > 1 ? 's' : ''}. Please try again.`;
+        await this.renderMessages();
+        return;
+      }
+
+      // Add extracted content ONLY to processingValue (not displayed in chat)
+      processingValue = processingValue + extractedContents.join('\n');
+
+      // For display, just show file names (not the content)
+      if (processedFileNames.length > 0) {
+        const fileList = processedFileNames.map(f => `📎 ${f}`).join('\n');
+        displayValue = displayValue ? `${displayValue}\n\n${fileList}` : fileList;
+      }
+
+      // Show success notice if any files were processed
+      if (extractedCount > 0 && failedCount === 0) {
+        new Notice(`Extracted text from ${extractedCount} file${extractedCount > 1 ? 's' : ''}`);
+      } else if (extractedCount > 0 && failedCount > 0) {
+        new Notice(`Extracted ${extractedCount} file${extractedCount > 1 ? 's' : ''}, ${failedCount} failed`);
+      }
+    }
+
+    // Add user message to chat (shows file names, NOT content)
+    this.chatHistory.push({ role: "user", content: displayValue });
 
     // Save conversation after user message
     await this.saveCurrentConversation();
 
     // Route to appropriate handler based on mode
+    // Pass processingValue (includes file content) to handlers, not displayValue
     if (this.isGraphOnlyMode()) {
       // Graph only Mode: Extract entities from user input without AI chat
-      await this.handleGraphOnlyMode(value);
+      await this.handleGraphOnlyMode(processingValue);
+    } else if (this.customChatMode) {
+      await this.handleCustomChat(processingValue);
     } else if (this.osintSearchMode) {
-      await this.handleOSINTSearch(value);
+      await this.handleOSINTSearch(processingValue);
     } else if (this.darkWebMode) {
-      await this.handleDarkWebInvestigation(value);
+      await this.handleDarkWebInvestigation(processingValue);
     } else if (this.reportGenerationMode) {
-      await this.handleReportGeneration(value);
+      await this.handleReportGeneration(processingValue);
     } else {
       // Default: Local Search Mode (normal chat)
-      await this.handleNormalChat(value);
+      await this.handleNormalChat(processingValue);
     }
 
     // Save conversation after assistant response
     await this.saveCurrentConversation();
+  }
+
+  async handleCustomChat(query: string) {
+    const assistantIndex = this.chatHistory.length;
+
+    // Initial user message placeholder
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: "Waiting for custom provider...", percent: 10 }
+    });
+    await this.renderMessages();
+
+    // Helper to update progress
+    const updateProgress = (message: string, percent: number) => {
+      this.chatHistory[assistantIndex].progress = { message, percent };
+      this.updateProgressBar(assistantIndex, { message, percent });
+    };
+
+    updateProgress("Sending to custom provider...", 30);
+
+    try {
+      // Call the custom provider (OpenAI compatible)
+      // Pass system prompt from settings or default
+
+      const checkpoint = this.plugin.settings.customCheckpoints.find(c => c.id === this.activeCheckpointId);
+
+      const aiResponse = await this.plugin.graphApiService.chatWithCustomProvider(
+        query,
+        this.plugin.settings.systemPrompt,
+        checkpoint ? {
+          customApiUrl: checkpoint.url,
+          customApiKey: checkpoint.apiKey,
+          customModel: checkpoint.model,
+          type: checkpoint.type || 'openai'
+        } : undefined
+      );
+
+      // Display the response
+      this.chatHistory[assistantIndex].content = aiResponse;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+
+      // If Graph Generation is ALSO enabled, feed the custom AI response into the graph extractor
+      if (this.graphGenerationMode) {
+        // Pass the AI response as "text to process", but keep original query for context
+        await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
+      }
+    } catch (error) {
+      console.error("Custom chat error:", error);
+      this.chatHistory[assistantIndex].content = `Error calling custom provider: ${error instanceof Error ? error.message : String(error)}`;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    }
   }
 
   /**
@@ -3485,11 +4173,18 @@ class ChatView extends ItemView {
 
       updateProgress("Sending text to AI for entity extraction...", 30);
 
-      // Call the API to extract entities from the user's input with retry callback
-      const result: ProcessTextResponse = await this.plugin.graphApiService.processText(
+      // Chunk progress callback to show user which chunk is being processed
+      const onChunkProgress = (chunkIndex: number, totalChunks: number, message: string) => {
+        const chunkPercent = 30 + Math.round((chunkIndex / totalChunks) * 20);
+        updateProgress(`📦 ${message}`, chunkPercent);
+      };
+
+      // Call the API to extract entities - uses chunking for large texts
+      const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         inputText,
         existingEntities,
         undefined,
+        onChunkProgress,
         onRetry
       );
 
@@ -3703,92 +4398,182 @@ class ChatView extends ItemView {
     let baseStatusText = "";
 
     try {
-      updateProgress("Extracting entity from query...", 15);
+      updateProgress("Extracting entities from query...", 15);
 
-      // 1) Extract entity (name + type) via LLM
-      const extracted = await this.plugin.extractEntityFromQuery(query);
-      const entityMsg =
-        extracted.type === "unknown"
-          ? "Entity defined. Starting local search."
-          : extracted.name
-            ? `Entity defined (${extracted.type}: ${extracted.name}). Starting local search.`
-            : `Entity defined (${extracted.type}). Starting local search.`;
+      // 1) Extract entities (multi-entity support)
+      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query);
+
+      let entityMsg = "No specific entities identified. Searching vault...";
+      if (extractedEntities.length > 0) {
+        const names = extractedEntities
+          .filter(e => e.name)
+          .map(e => `${e.type}: ${e.name}`)
+          .join(", ");
+        entityMsg = `Entities defined (${names}). Searching vault & graph...`;
+      }
+
       this.chatHistory[assistantIndex].content = entityMsg;
-      updateProgress("Entity extracted, searching vault...", 30);
+      updateProgress("Entities extracted, searching vault...", 30);
 
-      // 2) Local search using extracted entity name if available
-      const searchTerm = extracted.name && extracted.name.length > 0 ? extracted.name : query;
-      const notes = this.plugin.retrieveNotes(searchTerm);
-      if (notes.length === 0) {
-        this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-        this.chatHistory[assistantIndex].content =
-          entityMsg + "\n\nNo relevant notes found.";
+      // 2) Local search (Notes)
+      // Base search uses the original query
+      let notes = this.plugin.retrieveNotes(query);
+
+      // Merge unique notes if we want to search by entity name specifically?
+      // For now, let's keep it simple and stick to the query, as retrieveNotes does fuzzy matching.
+      // If result count is low, we could try searching for specific entity names.
+      if (notes.length < 3 && extractedEntities.length > 0) {
+        for (const entity of extractedEntities) {
+          if (entity.name) {
+            const extraNotes = this.plugin.retrieveNotes(entity.name);
+            // Deduplicate by path
+            const existingPaths = new Set(notes.map(n => n.path));
+            for (const note of extraNotes) {
+              if (!existingPaths.has(note.path)) {
+                notes.push(note);
+                existingPaths.add(note.path);
+              }
+            }
+          }
+        }
+      }
+
+      // 3) Graph Context & Pinpointing Preparation
+      updateProgress("Checking Knowledge Graph...", 40);
+      let graphContext = "";
+      const graphEntityIds = new Set<string>(); // IDs of entities included in context
+
+      if (extractedEntities.length > 0) {
+        const addedConnections = new Set<string>();
+
+        for (const extracted of extractedEntities) {
+          if (!extracted.name) continue;
+          const entity = this.plugin.entityManager.findEntityByLabel(extracted.name);
+
+          if (entity) {
+            // Get connections
+            const connections = this.plugin.entityManager.getConnectionsForEntity(entity.id);
+
+            for (const conn of connections) {
+              const source = this.plugin.entityManager.getEntity(conn.fromEntityId);
+              const target = this.plugin.entityManager.getEntity(conn.toEntityId);
+
+              if (source && target) {
+                // Include IDs in context so the AI can cite them
+                const triple = `[${source.label}] (ID:${source.id}) --(${conn.relationship})--> [${target.label}] (ID:${target.id})`;
+
+                if (!addedConnections.has(triple)) {
+                  graphContext += "- " + triple + "\n";
+                  addedConnections.add(triple);
+                  graphEntityIds.add(source.id);
+                  graphEntityIds.add(target.id);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      let additionalContext = "";
+      if (graphContext.length > 0) {
+        additionalContext = "Knowledge Graph Connections:\n" + graphContext +
+          "\nIMPORTANT INSTRUCTION: If you use any relationship facts from the 'Knowledge Graph Connections' section above to answer the user's question, you MUST cite the Entity IDs used at the very end of your response. Use this exact format: `[[USED_ENTITY_ID: <ID>]]`. List each used entity ID. Do not output this for note citations, ONLY for graph entities found in the Knowledge Graph section.\n";
+      }
+
+      if (notes.length === 0 && graphContext.length === 0) {
+        this.chatHistory[assistantIndex].progress = undefined;
+        this.chatHistory[assistantIndex].content = entityMsg + "\n\nNo relevant notes or graph connections found.";
         this.chatHistory[assistantIndex].notes = [];
         await this.renderMessages();
         return;
       }
 
-      updateProgress(`Found ${notes.length} notes, preparing context...`, 45);
+      updateProgress(`Found ${notes.length} notes & ${graphEntityIds.size} related entities...`, 50);
 
       // Update with process messages (English)
       baseStatusText =
         entityMsg +
-        `\n\nFound ${notes.length} relevant notes. Selecting key excerpts...\nDrafting the answer...\n\n`;
+        `\n\nFound ${notes.length} relevant notes and ${graphEntityIds.size} graph connections.\nDrafting the answer...\n\n`;
       this.chatHistory[assistantIndex].content = baseStatusText;
       this.chatHistory[assistantIndex].notes = notes;
       await this.renderMessages();
 
-      updateProgress("Generating response...", 55);
+      updateProgress("Generating response...", 60);
 
-      // 3) Stream model answer over the prepared context
+      // 4) Stream model answer
       const contentEl = getLastAssistantContentEl();
       let streamed = "";
-      let streamProgress = 55;
+      let streamProgress = 60;
 
-      // Retry callback to show status to user
       const onRetry = (attempt: number, maxAttempts: number) => {
         updateProgress(`Network interrupted. Retrying... (${attempt}/${maxAttempts})`, streamProgress);
         this.chatHistory[assistantIndex].content = baseStatusText + `⚠️ Network interrupted. Retrying... (${attempt}/${maxAttempts})`;
         void this.renderMessages();
-        // Reset streamed content for retry
-        streamed = "";
       };
 
-      const { fullAnswer, notes: finalNotes } = await this.plugin.askVaultStream(
-        searchTerm,
-        (delta: string) => {
-          streamed += delta;
-          // Update progress during streaming (55% to 90%)
-          streamProgress = Math.min(90, 55 + Math.round((streamed.length / 2000) * 35));
-          updateProgress("Generating response...", streamProgress);
-          if (contentEl) {
-            contentEl.textContent = baseStatusText + streamed;
-            // Keep scroll at bottom during stream
-            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-          } else {
-            // Fallback: update history and re-render
-            this.chatHistory[assistantIndex].content = baseStatusText + streamed;
-            void this.renderMessages();
+      const onDelta = (delta: string) => {
+        streamed += delta;
+        // Simple progress simulation based on length
+        if (streamProgress < 95) {
+          streamProgress += 0.5;
+          updateProgress("Streaming response...", Math.min(95, streamProgress));
+        }
+
+        // Update UI
+        if (contentEl) {
+          // We can optionally hide the [[USED_ENTITY_ID:...]] tags in real-time if desired, 
+          // but let's just show raw output for now and clean up at the end.
+          MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          // Scroll to bottom
+          const scrollContainer = this.messagesContainer.parentElement;
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
           }
-        },
-        notes,
-        onRetry
-      );
+        }
+      };
 
-      updateProgress("Finalizing response...", 95);
+      const result = await this.plugin.askVaultStream(query, onDelta, notes, onRetry, additionalContext);
 
-      // Finalize message and attach notes - clear progress bar
-      let finalContent = baseStatusText + fullAnswer;
-      this.chatHistory[assistantIndex].content = finalContent;
-      this.chatHistory[assistantIndex].notes = finalNotes;
-      this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
+      // 5) Post-process response for Pinpointing
+      let finalContent = result.fullAnswer;
+      const usedEntityIds = new Set<string>();
+
+      // Extract used entity IDs
+      const idRegex = /\[\[USED_ENTITY_ID:\s*([a-zA-Z0-9-]+)\]\]/g;
+      let match;
+      while ((match = idRegex.exec(finalContent)) !== null) {
+        usedEntityIds.add(match[1]);
+      }
+
+      // Remove tags from content
+      finalContent = finalContent.replace(idRegex, "").trim();
+
+      // Build usedEntities array
+      const usedEntities: { id: string, label: string, type: string }[] = [];
+      for (const id of usedEntityIds) {
+        const entity = this.plugin.entityManager.getEntity(id);
+        if (entity) {
+          usedEntities.push({
+            id: entity.id,
+            label: entity.label,
+            type: entity.type
+          });
+        }
+      }
+
+      this.chatHistory[assistantIndex].content = finalContent; // Clean content
+      this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].usedEntities = usedEntities; // Pinpointed entities
+
+      await this.saveCurrentConversation();
       await this.renderMessages();
 
       // Graph Generation Mode: Extract and create entities from the AI response
       if (this.graphGenerationMode) {
-        await this.processGraphGeneration(assistantIndex, fullAnswer, query, finalContent);
+        await this.processGraphGeneration(assistantIndex, result.fullAnswer, query, finalContent);
       }
     } catch (error) {
+      console.error("Chat error:", error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[assistantIndex].content = `Error: ${errorMsg}\n\n💡 Tip: Your message was saved. You can try sending it again.`;
@@ -4032,7 +4817,8 @@ class ChatView extends ItemView {
     const messageIndex = this.chatHistory.length;
     this.chatHistory.push({
       role: "assistant",
-      content: "📄 Starting report generation...",
+      content: "📄 Generating report, 3-6 mins, don\'t close the tab",
+      progress: { message: "Initializing research...", percent: 5 }
     });
     await this.renderMessages();
 
@@ -4044,10 +4830,17 @@ class ChatView extends ItemView {
         this.currentConversation,
         (status: string, progress?: { message: string; percent: number }, intermediateResults?: string[]) => {
           // Build status message with progress and intermediate results
-          let statusMessage = `📄 ${status}`;
+          let statusDisplay = status;
+          if (status === "processing") statusDisplay = "Generating report...";
+          if (status === "queued") statusDisplay = "Queued for processing...";
+
+          let statusMessage = `📄 ${statusDisplay}`;
 
           if (progress) {
             statusMessage = `📄 ${progress.message}`;
+            console.info(`[OSINT Copilot] Report progress update: ${progress.percent}% - ${progress.message}`);
+          } else {
+            console.info(`[OSINT Copilot] Report status update: ${status}`);
           }
 
           // Update the processing message in real-time
@@ -4138,7 +4931,7 @@ class ChatView extends ItemView {
   }
 
   /**
-   * Handle Leak Search Mode: AI-powered multi-provider OSINT search.
+   * Handle Digital Footprint Mode: AI-powered multi-provider OSINT search.
    */
   async handleOSINTSearch(query: string) {
     // Add processing placeholder with progress bar
@@ -4162,8 +4955,8 @@ class ChatView extends ItemView {
       if (!this.plugin.settings.reportApiKey) {
         this.chatHistory[messageIndex].progress = undefined;
         this.chatHistory[messageIndex].content =
-          `🔎 **Leak Search Failed**\n\n` +
-          `**Error:** License key required for Leak Search.\n\n` +
+          `🔎 **Digital Footprint Failed**\n\n` +
+          `**Error:** License key required for Digital Footprint.\n\n` +
           `Please configure your API key in Settings → OSINT Copilot → API Key.`;
         await this.renderMessages();
         new Notice("License key required for leak search. Configure in settings.");
@@ -4224,7 +5017,7 @@ class ChatView extends ItemView {
       }
 
     } catch (error) {
-      console.error('[ChatView] Leak Search error:', error);
+      console.error('[ChatView] Digital Footprint error:', error);
       this.chatHistory[messageIndex].progress = undefined;
 
       let errorMessage = error instanceof Error ? error.message : String(error);
@@ -4239,11 +5032,11 @@ class ChatView extends ItemView {
       }
 
       this.chatHistory[messageIndex].content =
-        `🔎 **Leak Search Failed**\n\n` +
+        `🔎 **Digital Footprint Failed**\n\n` +
         `**Query:** ${query}\n\n` +
         `**Error:** ${errorMessage}${suggestion}`;
       await this.renderMessages();
-      new Notice(`Leak Search failed: ${errorMessage}`);
+      new Notice(`Digital Footprint failed: ${errorMessage}`);
     }
   }
 
@@ -4255,7 +5048,7 @@ class ChatView extends ItemView {
     this.chatHistory[messageIndex].progress = undefined;
 
     // Build the result content
-    let content = `🔎 **Leak Search Results**\n\n`;
+    let content = `🔎 **Digital Footprint Results**\n\n`;
     content += `**Query:** ${query}\n`;
     content += `⏱️ ${(result.execution_time_ms / 1000).toFixed(1)}s | 📊 ${result.total_results} result(s)\n\n`;
 
@@ -4307,7 +5100,7 @@ class ChatView extends ItemView {
    * Converts the JSON results into a text format suitable for the AI entity extraction.
    */
   private formatOSINTResultsForEntityExtraction(query: string, result: AISearchResponse): string {
-    let text = `Leak Search Results for query: "${query}"\n\n`;
+    let text = `Digital Footprint Results for query: "${query}"\n\n`;
 
     // Include detected entities from the search
     if (result.detected_entities && result.detected_entities.length > 0) {
@@ -4407,7 +5200,7 @@ class ChatView extends ItemView {
             const lowerError = errorText.toLowerCase();
             if (lowerError.includes("quota") || lowerError.includes("exceeded")) {
               throw new Error(
-                "Investigation quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
+                "Investigation credits exhausted. Please upgrade your plan or wait for credit renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
               );
             }
             if (lowerError.includes("expired")) {
@@ -4694,7 +5487,9 @@ class ChatView extends ItemView {
 
   async fetchDarkWebResults(jobId: string, messageIndex: number, query: string) {
     try {
-      const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/summary/${jobId}`;
+      // Strip darkweb_ prefix if present (backend expects clean UUID)
+      const cleanJobId = jobId.startsWith('darkweb_') ? jobId.replace('darkweb_', '') : jobId;
+      const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/summary/${cleanJobId}`;
       const response: RequestUrlResponse = await requestUrl({
         url: endpoint,
         method: "GET",
@@ -4846,6 +5641,238 @@ class VaultAISettingTab extends PluginSettingTab {
         text.inputEl.setCssProps({ width: "100%" });
       });
 
+    // Custom Chat Configuration
+    if (this.plugin.settings.permissions && this.plugin.settings.permissions.allow_custom_chat_config) {
+      containerEl.createEl("h3", { text: "Custom Chat Configuration" });
+      containerEl.createEl("p", {
+        text: "Configure LLM providers for the 'Custom Chat' mode. Add multiple checkpoints (e.g., local models, different providers) and select them in the chat view.",
+        cls: "setting-item-description"
+      });
+
+      const checkpointsContainer = containerEl.createDiv("vault-ai-checkpoints-container");
+      checkpointsContainer.style.marginBottom = "20px";
+
+      // "Add New / Edit" Section
+      const addSection = containerEl.createDiv("vault-ai-add-checkpoint");
+      addSection.style.borderTop = "1px solid var(--background-modifier-border)";
+      addSection.style.paddingTop = "10px";
+      const addHeader = addSection.createEl("h4", { text: "Add New Checkpoint" });
+
+      // State for inputs
+      let newName = "";
+      let newUrl = "http://localhost:11434/v1";
+      let newKey = "";
+      let newModel = "";
+      let newType: 'openai' | 'mindsdb' = 'openai';
+      let editingId: string | null = null; // Track if we are editing
+
+      // References to components for updating values programmatically
+      let nameInput: any;
+      let urlInput: any;
+      let keyInput: any;
+      let modelInput: any;
+      let typeDropdown: any;
+      let actionButton: any;
+
+      const resetForm = () => {
+        editingId = null;
+        newName = "";
+        newUrl = "http://localhost:11434/v1";
+        newKey = "";
+        newModel = "";
+        newType = 'openai';
+
+        if (nameInput) nameInput.setValue("");
+        if (urlInput) urlInput.setValue("http://localhost:11434/v1");
+        if (keyInput) keyInput.setValue("");
+        if (modelInput) modelInput.setValue("");
+        if (typeDropdown) typeDropdown.setValue("openai");
+
+        addHeader.setText("Add New Checkpoint");
+        if (actionButton) actionButton.setButtonText("Add Checkpoint");
+      };
+
+      // Render list with Edit/Delete
+      const renderCheckpoints = () => {
+        checkpointsContainer.empty();
+
+        if (this.plugin.settings.customCheckpoints.length === 0) {
+          checkpointsContainer.createEl("p", { text: "No checkpoints configured.", cls: "setting-item-description" });
+        }
+
+        this.plugin.settings.customCheckpoints.forEach((checkpoint, index) => {
+          const checkpointEl = checkpointsContainer.createDiv("vault-ai-checkpoint-item");
+          checkpointEl.style.display = "flex";
+          checkpointEl.style.alignItems = "center";
+          checkpointEl.style.marginBottom = "10px";
+          checkpointEl.style.padding = "10px";
+          checkpointEl.style.background = "var(--background-secondary)";
+          checkpointEl.style.borderRadius = "5px";
+          checkpointEl.style.gap = "10px";
+
+          // Compact display: Name (Type - Model)
+          const infoEl = checkpointEl.createDiv();
+          infoEl.style.flex = "1";
+          infoEl.createEl("strong", { text: checkpoint.name });
+          const typeLabel = checkpoint.type === 'mindsdb' ? 'MindsDB' : 'OpenAI';
+          infoEl.createEl("span", { text: ` (${typeLabel}: ${checkpoint.model})`, cls: "setting-item-description" });
+          infoEl.createEl("div", { text: checkpoint.url, cls: "setting-item-description" }).style.fontSize = "0.8em";
+
+          // Edit button
+          new ButtonComponent(checkpointEl)
+            .setIcon("pencil")
+            .setTooltip("Edit")
+            .onClick(() => {
+              // Populate form
+              editingId = checkpoint.id;
+              newName = checkpoint.name;
+              newUrl = checkpoint.url;
+              newKey = checkpoint.apiKey;
+              newModel = checkpoint.model;
+              newType = checkpoint.type || 'openai';
+
+              if (nameInput) nameInput.setValue(newName);
+              if (urlInput) urlInput.setValue(newUrl);
+              if (keyInput) keyInput.setValue(newKey);
+              if (modelInput) modelInput.setValue(newModel);
+              if (typeDropdown) typeDropdown.setValue(newType);
+
+              addHeader.setText("Edit Checkpoint");
+              if (actionButton) actionButton.setButtonText("Update Checkpoint");
+              if (actionButton) actionButton.setCta();
+            });
+
+          // Delete button
+          new ButtonComponent(checkpointEl)
+            .setIcon("trash")
+            .setTooltip("Delete")
+            .setWarning()
+            .onClick(async () => {
+              if (confirm(`Delete checkpoint "${checkpoint.name}"?`)) {
+                this.plugin.settings.customCheckpoints.splice(index, 1);
+                await this.plugin.saveSettings();
+                renderCheckpoints();
+                // If we were editing this one, cancel edit
+                if (editingId === checkpoint.id) {
+                  resetForm();
+                }
+              }
+            });
+        });
+      };
+
+      renderCheckpoints();
+
+      new Setting(addSection)
+        .setName("Name")
+        .setDesc("Display name")
+        .addText(text => {
+          nameInput = text;
+          text.setPlaceholder("My Custom LLM").onChange(v => newName = v);
+        });
+
+      new Setting(addSection)
+        .setName("Provider Type")
+        .setDesc("Protocol to use")
+        .addDropdown(dropdown => {
+          typeDropdown = dropdown;
+          dropdown
+            .addOption('openai', 'OpenAI Compatible (Default)')
+            .addOption('mindsdb', 'MindsDB (SQL via HTTP)')
+            .setValue(newType)
+            .onChange((v: string) => {
+              const val = v as 'openai' | 'mindsdb';
+              newType = val;
+              if (newType === 'mindsdb' && newUrl.includes('localhost')) {
+                newUrl = 'http://127.0.0.1:47334';
+                if (urlInput) urlInput.setValue(newUrl);
+              }
+            });
+        });
+
+      new Setting(addSection)
+        .setName("API URL")
+        .setDesc("Base URL. For MindsDB, use the root (e.g. http://127.0.0.1:47334). For OpenAI, the full path is constructed automatically unless specified.")
+        .addText(text => {
+          urlInput = text;
+          text.setValue(newUrl).setPlaceholder("http://localhost:11434/v1").onChange(v => newUrl = v);
+        });
+
+      new Setting(addSection)
+        .setName("API Key")
+        .setDesc("Optional")
+        .addText(text => {
+          keyInput = text;
+          text.setPlaceholder("sk-...").onChange(v => newKey = v);
+        });
+
+      new Setting(addSection)
+        .setName("Model / Agent Name")
+        .setDesc("Model ID or Agent Name")
+        .addText(text => {
+          modelInput = text;
+          text.setPlaceholder("llama3 or my_agent").onChange(v => newModel = v);
+        });
+
+      new Setting(addSection)
+        .addButton(btn => {
+          actionButton = btn;
+          btn
+            .setButtonText("Add Checkpoint")
+            .setCta()
+            .onClick(async () => {
+              if (!newName || !newUrl || !newModel) {
+                new Notice("Name, URL, and Model are required.");
+                return;
+              }
+
+              if (editingId) {
+                // Update existing
+                const index = this.plugin.settings.customCheckpoints.findIndex(c => c.id === editingId);
+                if (index !== -1) {
+                  this.plugin.settings.customCheckpoints[index] = {
+                    ...this.plugin.settings.customCheckpoints[index],
+                    name: newName,
+                    url: newUrl,
+                    apiKey: newKey,
+                    model: newModel,
+                    type: newType
+                  };
+                  new Notice("Checkpoint updated!");
+                }
+              } else {
+                // Add new
+                this.plugin.settings.customCheckpoints.push({
+                  id: Date.now().toString(),
+                  name: newName,
+                  url: newUrl,
+                  apiKey: newKey,
+                  model: newModel,
+                  type: newType
+                });
+                new Notice("Checkpoint added!");
+              }
+
+              await this.plugin.saveSettings();
+              renderCheckpoints();
+              resetForm();
+            });
+        });
+
+      new Setting(addSection)
+        .addButton(btn => btn
+          .setButtonText("Clear / Cancel")
+          .onClick(() => {
+            resetForm();
+          }));
+    } else {
+      containerEl.createEl("h3", { text: "Custom Chat Configuration" });
+      containerEl.createEl("p", {
+        text: "This feature is available in 'Plugin Own Data' plan.",
+        cls: "setting-item-description"
+      }).style.color = "var(--text-muted)";
+    }
+
     new Setting(containerEl).setName("Backend API").setHeading();
 
     // Dashboard Link
@@ -4910,7 +5937,7 @@ class VaultAISettingTab extends PluginSettingTab {
           });
 
           // Safe values
-          const quota = info.remaining_quota ?? 0;
+          const quota = info.remaining_credits ?? info.remaining_quota ?? 0;
           const isActive = info.active ?? false;
           const isTrial = info.is_trial ?? false;
 
@@ -4921,8 +5948,8 @@ class VaultAISettingTab extends PluginSettingTab {
 
           // Quota
           const quotaDiv = infoGrid.createDiv();
-          quotaDiv.createEl("strong", { text: "Remaining quota: " });
-          const quotaSpan = quotaDiv.createSpan({ text: `${quota} reports` });
+          quotaDiv.createEl("strong", { text: "Remaining credits: " });
+          const quotaSpan = quotaDiv.createSpan({ text: `${quota} credits` });
           if (quota <= 0) {
             quotaSpan.setCssProps({ color: "var(--text-error)", "font-weight": "bold" });
           } else if (quota <= 5) {
@@ -4971,7 +5998,7 @@ class VaultAISettingTab extends PluginSettingTab {
               "border-left": "4px solid var(--text-error)"
             });
             const text1 = quotaWarning.createEl("p", {
-              text: "⚠️ quota exhausted",
+              text: "⚠️ credits exhausted",
             });
             text1.setCssProps({
               margin: "0 0 8px 0",
@@ -4980,7 +6007,7 @@ class VaultAISettingTab extends PluginSettingTab {
             });
 
             const text2 = quotaWarning.createEl("p", {
-              text: "You have no remaining report credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews.",
+              text: "You have no remaining credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews.",
             });
             text2.setCssProps({ margin: "0 0 10px 0", "font-size": "0.9em" });
             const upgradeLink = quotaWarning.createEl("a", {
@@ -5001,7 +6028,7 @@ class VaultAISettingTab extends PluginSettingTab {
               "border-radius": "5px"
             });
             const p = lowQuotaWarning.createEl("p", {
-              text: `⚠️ Low quota: Only ${quota} report credits remaining.`,
+              text: `⚠️ Low credits: Only ${quota} credits remaining.`,
             });
             p.setCssProps({
               margin: "0",

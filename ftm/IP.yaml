@@ -1,0 +1,34 @@
+name: IP
+label: IP Address
+plural: IP Addresses
+description: An Internet Protocol address (IPv4 or IPv6).
+extends: Thing
+properties:
+  ip:
+    label: IP Address
+    type: string
+    description: The numeric IP address string.
+    required: true
+  version:
+    label: IP Version
+    type: string
+    description: IPv4 or IPv6.
+    options:
+      - IPv4
+      - IPv6
+  asn:
+    label: ASN
+    type: string
+    description: Autonomous System Number.
+  isp:
+    label: ISP
+    type: string
+    description: Internet Service Provider.
+  hostname:
+    label: Hostname
+    type: string
+    description: Reverse DNS hostname.
+featured:
+  - ip
+  - version
+  - isp

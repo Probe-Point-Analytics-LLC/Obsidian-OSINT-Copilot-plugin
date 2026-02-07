@@ -1,0 +1,56 @@
+Evidence:
+  extends:
+    - Thing
+  label: Evidence
+  plural: Evidence
+  description: >
+    Evidence collected during an OSINT investigation.
+  matchable: false
+  featured:
+    - title
+    - source
+    - dateCollected
+    - relevance
+  required:
+    - title
+  caption:
+    - title
+    - source
+  properties:
+    title:
+      label: "Title"
+      description: "Title or name of the evidence"
+      type: string
+    description:
+      label: "Description"
+      description: "Detailed description of the evidence"
+      type: text
+    source:
+      label: "Source"
+      description: "Where this evidence was collected from"
+      type: string
+    dateCollected:
+      label: "Date Collected"
+      description: "When this evidence was collected"
+      type: date
+    relevance:
+      label: "Relevance"
+      description: "How relevant this evidence is to the investigation"
+      type: string
+    attachmentPath:
+      label: "Attachment"
+      description: "Path to an attached file in the vault"
+      type: string
+    tampered:
+      label: "Tampered"
+      description: "Whether the evidence may have been tampered with"
+      type: boolean
+    verifiedBy:
+      label: "Verified By"
+      description: "Who verified this evidence"
+      type: string
+    notes:
+      label: "Notes"
+      description: "Additional notes about this evidence"
+      type: text
+  color: "#9E9E9E"

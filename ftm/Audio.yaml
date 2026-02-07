@@ -3,22 +3,39 @@ Audio:
     - Document
   label: Audio
   plural: Audio files
+  description: >
+    An audio file for investigation.
   matchable: false
-  generated: true
+  generated: false
   featured:
     - title
     - fileName
-    - mimeType
-    - parent
+    - filePath
+    - duration
+  required:
+    - title
   caption:
     - fileName
     - title
   properties:
+    filePath:
+      label: "File Path"
+      description: "Path to the audio file in the vault"
+      type: string
     duration:
       label: "Duration"
-      description: "Duration of the audio in ms"
+      description: "Duration of the audio in seconds"
       type: number
+    dateRecorded:
+      label: "Date Recorded"
+      description: "When the audio was recorded"
+      type: date
+    source:
+      label: "Source"
+      description: "Source of the audio"
+      type: string
     samplingRate:
       label: "Sampling Rate"
       description: "Sampling rate of the audio in Hz"
       type: number
+  color: "#009688"

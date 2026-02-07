@@ -13,7 +13,7 @@
  */
 
 import { requestUrl, RequestUrlResponse } from 'obsidian';
-import { Entity, ProcessTextResponse } from '../entities/types';
+import { Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
 
 export interface ApiHealthResponse {
     status: string;
@@ -82,13 +82,21 @@ export type RetryCallback = (attempt: number, maxAttempts: number, reason: strin
  * Default retry configuration with robust settings for unstable networks.
  */
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-    maxRetries: 7,              // Increased from 3 to 7 for better resilience
+    maxRetries: 3,              // Reduced retries since we have proper timeouts now
     baseDelayMs: 1000,          // Start with 1 second delay
-    maxDelayMs: 32000,          // Cap at 32 seconds max delay
-    baseTimeoutMs: 60000,       // 60 second base timeout (increased from 45s)
-    maxTimeoutMs: 300000,       // 5 minute max timeout to match server settings
-    timeoutMultiplierOnTimeout: 1.5  // Increase timeout by 50% after timeout error
+    maxDelayMs: 10000,          // Cap at 10 seconds max delay
+    baseTimeoutMs: 90000,       // 90 second timeout - MUST be under Cloudflare's 100s limit
+    maxTimeoutMs: 90000,        // 90 second max - stay under Cloudflare limit
+    timeoutMultiplierOnTimeout: 1.0  // Don't increase timeout (Cloudflare caps at 100s)
 };
+
+// Local interface to avoid circular dependency with main.ts
+export interface ApiSettings {
+    apiProvider: 'default' | 'openai';
+    customApiUrl: string;
+    customApiKey: string;
+    customModel: string;
+}
 
 /**
  * API Service for AI-powered entity extraction.
@@ -108,11 +116,19 @@ export class GraphApiService {
     private apiKey: string;
     private isOnline: boolean = false;
     private retryConfig: RetryConfig;
+    private settings: ApiSettings | null = null;
 
     constructor(baseUrl: string = 'https://api.osint-copilot.com', apiKey: string = '') {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.retryConfig = { ...DEFAULT_RETRY_CONFIG };
+    }
+
+    /**
+     * Update settings.
+     */
+    setSettings(settings: ApiSettings): void {
+        this.settings = settings;
     }
 
     /**
@@ -164,6 +180,32 @@ export class GraphApiService {
      * Uses Obsidian's requestUrl to bypass CORS restrictions.
      */
     async checkHealth(): Promise<ApiHealthResponse | null> {
+        // If using custom API, check that instead
+        if (this.settings?.apiProvider === 'openai') {
+            try {
+                // Determine health check URL (some providers support /health, others may need a simple completion)
+                // For now, we'll try a fast call to /models or just assume online if URL is reachable
+                const response = await requestUrl({
+                    url: this.settings.customApiUrl.replace(/\/v1\/?$/, '') + '/v1/models',
+                    method: 'GET',
+                    headers: this.settings.customApiKey ? { 'Authorization': `Bearer ${this.settings.customApiKey}` } : {},
+                    throw: false
+                });
+
+                if (response.status >= 200 && response.status < 300) {
+                    this.isOnline = true;
+                    return { status: 'ok', openai_configured: true, version: 'custom' };
+                }
+                // Fallback: assume online if we didn't get a connection error
+                this.isOnline = true;
+                return { status: 'ok', openai_configured: true };
+            } catch (e) {
+                console.debug('[GraphApiService] Custom API unavailable:', e);
+                this.isOnline = false;
+                return null;
+            }
+        }
+
         try {
             // Try the health endpoint first using Obsidian's requestUrl (bypasses CORS)
             const response: RequestUrlResponse = await requestUrl({
@@ -423,42 +465,54 @@ export class GraphApiService {
 
     /**
      * Extract text from a URL via the backend API.
+     * Uses Obsidian's requestUrl directly for maximum reliability.
+     * Returns full text - chunking happens in processText for large texts.
      */
     async extractTextFromUrl(url: string): Promise<string> {
-        if (!this.isOnline) {
-            await this.checkHealth();
-            if (!this.isOnline) throw new Error('OSINT Copilot API is offline.');
-        }
+        console.debug('[GraphApiService] extractTextFromUrl called with:', url);
 
-        const response = await this.fetchWithTimeout(
-            `${this.baseUrl}/api/extract-text`,
-            {
+        try {
+            console.debug('[GraphApiService] Making request to:', `${this.baseUrl}/api/extract-text`);
+
+            const response = await requestUrl({
+                url: `${this.baseUrl}/api/extract-text`,
                 method: 'POST',
                 headers: this.getHeaders(),
-                body: JSON.stringify({ url })
-            },
-            60000
-        );
+                body: JSON.stringify({ url }),
+                throw: false
+            });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            try {
-                const json = JSON.parse(errorText);
-                throw new Error(json.error || errorText);
-            } catch {
-                throw new Error(`Server error (${response.status})`);
+            console.debug('[GraphApiService] Response status:', response.status);
+
+            if (response.status < 200 || response.status >= 300) {
+                console.error('[GraphApiService] extractTextFromUrl error:', response.status, response.text);
+                try {
+                    const errorJson = JSON.parse(response.text);
+                    throw new Error(errorJson.error || `Server error (${response.status})`);
+                } catch {
+                    throw new Error(`Server error (${response.status})`);
+                }
             }
-        }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const json = await response.json() as any;
-        if (json.success) return json.text;
-        throw new Error(json.error || 'Failed to extract text from URL');
+            const json = response.json as { success?: boolean; text?: string; error?: string };
+            console.debug('[GraphApiService] Response json success:', json.success);
+
+            if (json.success && json.text) {
+                console.debug('[GraphApiService] Extracted text length:', json.text.length);
+                return json.text;
+            }
+
+            throw new Error(json.error || 'Failed to extract text from URL');
+        } catch (error) {
+            console.error('[GraphApiService] extractTextFromUrl exception:', error);
+            throw error;
+        }
     }
 
     /**
      * Extract text from a file via the backend API.
      * Supports .md, .txt, .pdf, .docx, .doc
+     * Includes retry logic with exponential backoff for timeouts and rate limits.
      */
     async extractTextFromFile(file: File): Promise<string> {
         // Check file size (limit to 10MB to avoid backend issues)
@@ -475,44 +529,92 @@ export class GraphApiService {
                     const result = reader.result as string;
                     // result is a data URL like "data:application/pdf;base64,JVBERi0x..."
 
-                    if (!this.isOnline) {
-                        // If API is invalid, try to check health first
-                        await this.checkHealth();
-                        if (!this.isOnline) {
-                            throw new Error('OSINT Copilot API is offline. Cannot process file.');
-                        }
-                    }
+                    // Skip health check - just try the extraction directly.
+                    // If the API is truly unavailable, the retry logic will catch it.
+                    // This avoids blocking on health check timeouts.
 
-                    const response = await this.fetchWithTimeout(
-                        `${this.baseUrl}/api/extract-text`,
-                        {
-                            method: 'POST',
-                            headers: this.getHeaders(),
-                            body: JSON.stringify({
-                                filename: file.name,
-                                content_base64: result
-                            })
-                        },
-                        60000 // 60s timeout for file processing
-                    );
+                    // Retry logic for file extraction
+                    const maxRetries = 3;
+                    const baseTimeout = 120000; // 120s timeout for file processing
+                    let lastError: unknown = null;
 
-                    if (!response.ok) {
-                        const errorText = await response.text();
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
                         try {
-                            const errorJson = JSON.parse(errorText);
-                            throw new Error(errorJson.error || errorText);
-                        } catch {
-                            throw new Error(`Server error (${response.status}): ${errorText}`);
+                            console.debug(`[GraphApiService] File extraction attempt ${attempt}/${maxRetries}: ${file.name}`);
+
+                            const response = await this.fetchWithTimeout(
+                                `${this.baseUrl}/api/extract-text`,
+                                {
+                                    method: 'POST',
+                                    headers: this.getHeaders(),
+                                    body: JSON.stringify({
+                                        filename: file.name,
+                                        content_base64: result
+                                    })
+                                },
+                                baseTimeout
+                            );
+
+                            if (!response.ok) {
+                                const errorText = await response.text();
+
+                                // Handle rate limiting with retry
+                                if (response.status === 429 && attempt < maxRetries) {
+                                    const delayMs = this.calculateBackoffDelay(attempt);
+                                    console.debug(`[GraphApiService] Rate limited, retrying in ${delayMs}ms...`);
+                                    await new Promise(r => setTimeout(r, delayMs));
+                                    continue;
+                                }
+
+                                // Handle 5xx errors with retry
+                                if (response.status >= 500 && attempt < maxRetries) {
+                                    const delayMs = this.calculateBackoffDelay(attempt);
+                                    console.debug(`[GraphApiService] Server error, retrying in ${delayMs}ms...`);
+                                    await new Promise(r => setTimeout(r, delayMs));
+                                    continue;
+                                }
+
+                                try {
+                                    const errorJson = JSON.parse(errorText);
+                                    throw new Error(errorJson.error || errorText);
+                                } catch {
+                                    throw new Error(`Server error (${response.status}): ${errorText}`);
+                                }
+                            }
+
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const json = await response.json() as any;
+                            if (json.success) {
+                                resolve(json.text);
+                                return;
+                            } else {
+                                throw new Error(json.error || 'Failed to extract text');
+                            }
+                        } catch (error) {
+                            lastError = error;
+
+                            // Retry on timeout errors
+                            if (this.isTimeoutError(error) && attempt < maxRetries) {
+                                const delayMs = this.calculateBackoffDelay(attempt);
+                                console.debug(`[GraphApiService] Timeout, retrying in ${delayMs}ms...`);
+                                await new Promise(r => setTimeout(r, delayMs));
+                                continue;
+                            }
+
+                            // Retry on network errors
+                            if (this.isNetworkError(error) && attempt < maxRetries) {
+                                const delayMs = this.calculateBackoffDelay(attempt);
+                                console.debug(`[GraphApiService] Network error, retrying in ${delayMs}ms...`);
+                                await new Promise(r => setTimeout(r, delayMs));
+                                continue;
+                            }
+
+                            throw error;
                         }
                     }
 
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const json = await response.json() as any;
-                    if (json.success) {
-                        resolve(json.text);
-                    } else {
-                        throw new Error(json.error || 'Failed to extract text');
-                    }
+                    // All retries exhausted
+                    throw lastError || new Error('Failed to extract text after retries');
 
                 } catch (error) {
                     reject(error);
@@ -524,6 +626,243 @@ export class GraphApiService {
             // Read as Data URL (Base64)
             reader.readAsDataURL(file);
         });
+    }
+
+    /**
+     * Call custom OpenAI-compatible API for chat.
+     * outputting natural language response.
+     */
+    async chatWithCustomProvider(text: string, systemPrompt?: string, settings?: { customApiUrl: string, customApiKey: string, customModel: string, type?: 'openai' | 'mindsdb' }): Promise<string> {
+        if (!settings) throw new Error('Custom chat settings not provided');
+
+        const { customApiUrl, customApiKey, customModel, type } = settings;
+
+        // === MindsDB SQL Logic ===
+        if (type === 'mindsdb') {
+            // For MindsDB, we use the SQL API
+            // Ensure URL points to /api/sql/query logic.
+            // If user gave a base URL like http://localhost:47334, we append /api/sql/query
+            let endpoint = customApiUrl.trim().replace(/\/+$/, '');
+            if (!endpoint.endsWith('/api/sql/query')) {
+                endpoint = `${endpoint}/api/sql/query`;
+            }
+
+            // Escape single quotes for SQL (basic)
+            const sanitizedText = text.replace(/'/g, "''");
+            // Default query pattern for MindsDB agents
+            const query = `SELECT answer FROM ${customModel} WHERE question='${sanitizedText}'`;
+
+            const response = await requestUrl({
+                url: endpoint,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(customApiKey ? { 'Authorization': `Bearer ${customApiKey}` } : {})
+                },
+                body: JSON.stringify({ query }),
+                throw: false
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                try {
+                    const data = await response.json;
+                    // Format: { type: 'table', data: [['response text']], column_names: ['answer'], ... }
+                    if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+                        return String(data.data[0][0]);
+                    }
+                    return "No response from MindsDB agent.";
+                } catch (e) {
+                    console.error('MindsDB parsing error:', e);
+                    throw new Error('Failed to parse MindsDB response');
+                }
+            } else {
+                console.error('MindsDB API Error:', response.status, response.text);
+                throw new Error(`MindsDB API Error: ${response.status}`);
+            }
+        }
+
+        // === Standard OpenAI Logic ===
+        const defaultSystemPrompt = `You are a helpful OSINT assistant. Answer the user's questions to the best of your ability.`;
+        const actualSystemPrompt = systemPrompt || defaultSystemPrompt;
+
+        // Smart URL handling: if user provided full URL ending in /chat/completions, use it.
+        // Otherwise, append /chat/completions to the base URL.
+        let endpoint = customApiUrl.trim();
+        if (!endpoint.endsWith('/chat/completions')) {
+            endpoint = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
+        }
+
+        const response = await requestUrl({
+            url: endpoint,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(customApiKey ? { 'Authorization': `Bearer ${customApiKey}` } : {})
+            },
+            body: JSON.stringify({
+                model: customModel,
+                messages: [
+                    { role: 'system', content: actualSystemPrompt },
+                    { role: 'user', content: text }
+                ]
+            }),
+            throw: false
+        });
+
+        if (response.status >= 200 && response.status < 300) {
+            try {
+                const data = await response.json;
+                return data.choices[0].message.content;
+            } catch (e) {
+                console.error('[GraphApiService] Failed to parse custom API response:', e);
+                throw new Error('Failed to parse AI response.');
+            }
+        }
+
+        throw new Error(`Custom API Error: ${response.status} ${await response.text}`);
+    }
+
+    /**
+     * Split text into chunks, trying to break at paragraph boundaries.
+     */
+    private splitTextIntoChunks(text: string, chunkSize: number = 8000): string[] {
+        const chunks: string[] = [];
+        let remaining = text;
+
+        while (remaining.length > 0) {
+            if (remaining.length <= chunkSize) {
+                chunks.push(remaining);
+                break;
+            }
+
+            // Try to find a paragraph break near the chunk size
+            let breakPoint = remaining.lastIndexOf('\n\n', chunkSize);
+            if (breakPoint === -1 || breakPoint < chunkSize * 0.5) {
+                // No paragraph break, try single newline
+                breakPoint = remaining.lastIndexOf('\n', chunkSize);
+            }
+            if (breakPoint === -1 || breakPoint < chunkSize * 0.5) {
+                // No newline, try sentence break
+                breakPoint = remaining.lastIndexOf('. ', chunkSize);
+                if (breakPoint > 0) breakPoint += 1; // Include the period
+            }
+            if (breakPoint === -1 || breakPoint < chunkSize * 0.5) {
+                // No good break point, just cut at chunk size
+                breakPoint = chunkSize;
+            }
+
+            chunks.push(remaining.substring(0, breakPoint).trim());
+            remaining = remaining.substring(breakPoint).trim();
+        }
+
+        return chunks;
+    }
+
+    /**
+     * Process large text by chunking and merging entities.
+     * For texts larger than CHUNK_THRESHOLD, splits into chunks and processes each.
+     */
+    async processTextInChunks(
+        text: string,
+        existingEntities?: Entity[],
+        referenceTime?: string,
+        onChunkProgress?: (chunkIndex: number, totalChunks: number, message: string) => void,
+        onRetry?: RetryCallback
+    ): Promise<ProcessTextResponse> {
+        const CHUNK_SIZE = 8000;  // Characters per chunk
+        const CHUNK_THRESHOLD = 10000;  // Only chunk if text is larger than this
+
+        // For small texts, process directly
+        if (text.length <= CHUNK_THRESHOLD) {
+            return this.processText(text, existingEntities, referenceTime, onRetry);
+        }
+
+        console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
+
+        const chunks = this.splitTextIntoChunks(text, CHUNK_SIZE);
+        console.debug(`[GraphApiService] Split into ${chunks.length} chunks`);
+
+        const allOperations: ProcessTextResponse['operations'] = [];
+        const seenEntities = new Set<string>();  // Track entity keys for deduplication
+        let accumulatedEntities = existingEntities || [];
+
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const chunkNum = i + 1;
+
+            if (onChunkProgress) {
+                onChunkProgress(chunkNum, chunks.length, `Processing chunk ${chunkNum}/${chunks.length}...`);
+            }
+
+            console.debug(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (${chunk.length} chars)`);
+
+            try {
+                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry);
+
+                if (!result.success) {
+                    console.warn(`[GraphApiService] Chunk ${chunkNum} failed:`, result.error);
+                    // Continue with other chunks instead of failing entirely
+                    continue;
+                }
+
+                if (result.operations) {
+                    // Deduplicate entities
+                    for (const op of result.operations) {
+                        if (op.action === 'create' && op.entities) {
+                            const dedupedEntities = op.entities.filter(entity => {
+                                // Compute label from properties using type's labelField
+                                const label = getEntityLabel(entity.type, entity.properties);
+                                const key = `${entity.type}::${label.toLowerCase()}`;
+                                if (seenEntities.has(key)) {
+                                    console.debug(`[GraphApiService] Skipping duplicate entity: ${key}`);
+                                    return false;
+                                }
+                                seenEntities.add(key);
+                                return true;
+                            });
+
+                            if (dedupedEntities.length > 0) {
+                                allOperations.push({
+                                    ...op,
+                                    entities: dedupedEntities
+                                });
+
+                                // Add to accumulated entities for context in next chunk
+                                accumulatedEntities = [
+                                    ...accumulatedEntities,
+                                    ...dedupedEntities.map(e => ({
+                                        id: `temp-${Date.now()}-${Math.random()}`,
+                                        type: e.type,
+                                        label: getEntityLabel(e.type, e.properties),
+                                        properties: e.properties || {}
+                                    }))
+                                ];
+                            }
+                        } else if (op.connections) {
+                            // Include connection operations
+                            allOperations.push(op);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`[GraphApiService] Chunk ${chunkNum} error:`, error);
+                // Continue with other chunks
+            }
+        }
+
+        if (allOperations.length === 0) {
+            return {
+                success: false,
+                error: 'Failed to extract entities from any chunks'
+            };
+        }
+
+        console.debug(`[GraphApiService] Chunking complete. Total operations: ${allOperations.length}`);
+
+        return {
+            success: true,
+            operations: allOperations
+        };
     }
 
     /**
@@ -555,17 +894,9 @@ export class GraphApiService {
         referenceTime?: string,
         onRetry?: RetryCallback
     ): Promise<ProcessTextResponse> {
-        // First, try to connect if we haven't checked yet
-        if (!this.isOnline) {
-            await this.checkHealth();
-        }
-
-        if (!this.isOnline) {
-            return {
-                success: false,
-                error: 'AI API is offline. Graph generation from text is not available.\n\nYou can still:\n• Create entities manually using the Graph View\n• Edit existing entities\n• Create connections between entities\n• View entities on the map'
-            };
-        }
+        // Skip health check - just try the request directly.
+        // If the API is down, the request will fail with a proper timeout error.
+        // This prevents blocking on a hanging health check.
 
         console.debug('[GraphApiService] Processing text with AI:', text.substring(0, 100) + '...');
 
@@ -730,7 +1061,7 @@ export class GraphApiService {
         }
 
         if (!this.apiKey) {
-            throw new Error('License key required for Leak Search. Configure in Settings → OSINT Copilot → API Key.');
+            throw new Error('License key required for Digital Footprint. Configure in Settings → OSINT Copilot → API Key.');
         }
 
         console.debug('[GraphApiService] AI Search request:', request.query.substring(0, 100));
@@ -769,7 +1100,7 @@ export class GraphApiService {
                             throw new Error('Authentication failed. Please check your API key in Settings.');
                         }
                         if (response.status === 404) {
-                            throw new Error('Leak Search endpoint not found. Please check your API configuration.');
+                            throw new Error('Digital Footprint endpoint not found. Please check your API configuration.');
                         }
                         throw new Error(`API error (${response.status}): ${errorText}`);
                     }
@@ -831,12 +1162,12 @@ export class GraphApiService {
         if (this.isTimeoutError(lastError)) {
             throw new Error('Search timed out. Try reducing the number of providers or simplifying your query.');
         } else if (lastStatusCode === 503) {
-            throw new Error('Leak Search service is temporarily unavailable. Please try again later.');
+            throw new Error('Digital Footprint service is temporarily unavailable. Please try again later.');
         } else if (lastStatusCode === 504) {
             throw new Error('Search timed out. Try reducing the number of providers.');
         }
 
-        throw new Error(`Leak Search failed after ${maxRetries} attempts: ${errorMessage}`);
+        throw new Error(`Digital Footprint failed after ${maxRetries} attempts: ${errorMessage}`);
     }
 }
 

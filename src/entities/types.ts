@@ -39,7 +39,13 @@ export type FTMEntityType =
     | 'Passport'
     | 'Ownership'
     | 'Employment'
-    | 'Directorship';
+    | 'Ownership'
+    | 'Employment'
+    | 'Directorship'
+    | 'IP'
+    | 'Malware'
+    | 'Group'
+    | 'Domain';
 
 // All available FTM entity type names
 export const FTM_ENTITY_TYPES: FTMEntityType[] = [
@@ -55,7 +61,12 @@ export const FTM_ENTITY_TYPES: FTMEntityType[] = [
     'Document',
     'RealEstate',
     'Sanction',
+    'Sanction',
     'Passport',
+    'IP',
+    'Malware',
+    'Group',
+    'Domain',
 ];
 
 // Relationship types from FTM
@@ -134,12 +145,14 @@ export function getAvailableFTMEntityTypes(): Array<{ name: string; label: strin
  * UnknownLink is prioritized to appear first in the list.
  */
 export function getAvailableFTMIntervalTypes(): Array<{ name: string; label: string; description: string; color: string }> {
-    const types = ftmSchemaService.getIntervalSchemas().map(schema => ({
-        name: schema.name,
-        label: schema.label,
-        description: schema.description,
-        color: schema.color || '#607D8B',
-    }));
+    const types = ftmSchemaService.getIntervalSchemas()
+        .filter(schema => !['Associate', 'UnknownLink', 'Membership'].includes(schema.name))
+        .map(schema => ({
+            name: schema.name,
+            label: schema.label,
+            description: schema.description,
+            color: schema.color || '#607D8B',
+        }));
 
     // Sort with UnknownLink first, then alphabetically
     return types.sort((a, b) => {
@@ -255,6 +268,15 @@ export const ENTITY_ICONS: Record<string, string> = {
     'Employment': "💼",
     'Directorship': "👔",
 
+    // New entity types
+    'Credentials': "🔑",
+    'PhoneNumber': "📱",
+    'Photo': "📷",
+    'IP': "🌐",
+    'Malware': "🦠",
+    'Group': "👥",
+    'Domain': "🔗",
+
     // Additional common types
     'Airplane': "✈️",
     'Asset': "💎",
@@ -276,7 +298,6 @@ export const ENTITY_ICONS: Record<string, string> = {
     'Representation': "🎭",
     'Succession': "👑",
     'TaxRoll': "💰",
-    'UnknownLink': "❓",
     'Vessel': "🚢",
     'Video': "🎬",
     'Workbook': "📊"
@@ -438,13 +459,13 @@ const GENERIC_ENTITY_NAMES = new Set([
     // FTM entity types
     'LegalEntity', 'Organization', /* 'Address', */ 'BankAccount', 'CryptoWallet',
     'UserAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
-    'Ownership', 'Employment', 'Directorship',
+    'Ownership', 'Employment', 'Directorship', 'IP', 'Malware', 'Group', 'Domain',
 
     // Additional common generic names
     'Airplane', 'Asset', 'Audio', 'Call', 'Contract', 'CourtCase',
     'Family', 'Folder', 'Identification', 'Land', 'License', 'Meeting',
     'Message', 'Page', 'Payment', 'PlainText', 'PublicBody', 'Representation',
-    'Succession', 'TaxRoll', 'UnknownLink', 'Vessel', 'Video', 'Workbook',
+    'Succession', 'TaxRoll', 'Vessel', 'Video', 'Workbook',
 
     // Common variations (lowercase, plural, etc.)
     'person', 'people', 'event', 'events', 'location', 'locations',

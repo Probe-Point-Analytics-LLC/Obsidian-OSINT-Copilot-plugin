@@ -1,0 +1,26 @@
+name: Group
+label: Group
+plural: Groups
+description: A group of people, organization, or cluster of entities.
+extends: Organization
+properties:
+  name:
+    label: Name
+    type: string
+    description: Name of the group.
+    required: true
+  purpose:
+    label: Purpose
+    type: string
+    description: Primary objective or activity of the group.
+  area_of_operation:
+    label: Area of Operation
+    type: string
+    description: Geographic or digital region where the group operates.
+  ideology:
+    label: Ideology
+    type: string
+    description: Political or social ideology.
+featured:
+  - name
+  - purpose

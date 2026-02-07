@@ -3,18 +3,39 @@ Video:
     - Document
   label: Video
   plural: Videos
+  description: >
+    A video file for investigation.
   matchable: false
-  generated: true
+  generated: false
   featured:
     - title
     - fileName
-    - mimeType
-    - parent
+    - filePath
+    - duration
+  required:
+    - title
   caption:
     - fileName
     - title
   properties:
+    filePath:
+      label: "File Path"
+      description: "Path to the video file in the vault"
+      type: string
     duration:
       label: "Duration"
-      description: "Duration of the video in ms"
+      description: "Duration of the video in seconds"
       type: number
+    location:
+      label: "Location"
+      description: "Location where the video was captured"
+      type: string
+    dateCaptured:
+      label: "Date Captured"
+      description: "When the video was captured"
+      type: date
+    source:
+      label: "Source"
+      description: "Source of the video"
+      type: string
+  color: "#9C27B0"

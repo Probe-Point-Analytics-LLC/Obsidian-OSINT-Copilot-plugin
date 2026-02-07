@@ -1,0 +1,31 @@
+name: Domain
+label: Domain
+plural: Domains
+description: An internet domain name.
+extends: Thing
+properties:
+  domain:
+    label: Domain Name
+    type: string
+    description: The full domain name (e.g., example.com).
+    required: true
+  registrar:
+    label: Registrar
+    type: string
+    description: Organization that manages the reservation of the domain.
+  creation_date:
+    label: Creation Date
+    type: date
+    description: Date when the domain was registered.
+  expiration_date:
+    label: Expiration Date
+    type: date
+    description: Date when the registration expires.
+  nameservers:
+    label: Nameservers
+    type: string
+    description: DNS nameservers for the domain.
+featured:
+  - domain
+  - registrar
+  - creation_date

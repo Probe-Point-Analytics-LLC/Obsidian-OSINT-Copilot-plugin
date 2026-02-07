@@ -1,0 +1,47 @@
+PhoneNumber:
+  extends:
+    - Thing
+  label: Phone Number
+  plural: Phone Numbers
+  description: >
+    A phone number associated with a person or organization.
+  matchable: true
+  featured:
+    - number
+    - carrier
+    - country
+  required:
+    - number
+  caption:
+    - number
+    - carrier
+  properties:
+    number:
+      label: "Phone Number"
+      description: "The phone number including country code"
+      type: phone
+    carrier:
+      label: "Carrier"
+      description: "The phone carrier or provider"
+      type: string
+    country:
+      label: "Country"
+      description: "Country where the phone is registered"
+      type: country
+    phoneType:
+      label: "Phone Type"
+      description: "Type of phone (mobile, landline, VoIP)"
+      type: string
+    associatedPerson:
+      label: "Associated Person"
+      description: "Person associated with this phone number"
+      type: string
+    verificationStatus:
+      label: "Verification Status"
+      description: "Whether the number has been verified"
+      type: string
+    notes:
+      label: "Notes"
+      description: "Additional notes about this phone number"
+      type: text
+  color: "#4CAF50"

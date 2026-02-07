@@ -12,6 +12,7 @@ export interface ConversationMessage {
   status?: string;
   progress?: unknown;
   reportFilePath?: string; // Path to generated report file
+  usedEntities?: { id: string, label: string, type: string }[]; // Pinpointed graph entities
 }
 
 export interface ConversationMetadata {
@@ -24,7 +25,7 @@ export interface ConversationMetadata {
   darkWebMode: boolean;
   graphGenerationMode: boolean;
   reportGenerationMode: boolean;
-  osintSearchMode?: boolean; // Leak Search mode
+  osintSearchMode?: boolean; // Digital Footprint mode
   reportConversationId?: string; // conversation_id для report generation API
 }
 

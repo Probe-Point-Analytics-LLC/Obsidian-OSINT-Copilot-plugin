@@ -8,6 +8,7 @@ import { Entity, Connection, EntityType, ENTITY_CONFIGS, COMMON_PROPERTIES, getF
 import { EntityManager } from '../services/entity-manager';
 import { GeocodingService, GeocodingError, GeocodingErrorType } from '../services/geocoding-service';
 import { ftmSchemaService, FTMPropertyDefinition } from '../services/ftm-schema-service';
+import { CustomTypeCreationModal } from './custom-type-modal';
 
 // Common relationship types for suggestions
 export const COMMON_RELATIONSHIPS = [
@@ -1731,6 +1732,10 @@ export class FTMEntityCreationModal extends Modal {
                 type: 'text',
                 placeholder: 'Country code (e.g., US, GB, DE)'
             }) as HTMLInputElement;
+        } else if (propertyName === 'filePath' && (this.schemaName === 'Image' || this.schemaName === 'Video' || this.schemaName === 'Audio' || this.schemaName === 'Photo' || this.schemaName === 'Evidence')) {
+            // Special handling for file upload
+            this.createFileUploadField(fieldContainer, propertyName, this.schemaName);
+            return;
         } else {
             // Default text input
             input = fieldContainer.createEl('input', {
@@ -1790,6 +1795,146 @@ export class FTMEntityCreationModal extends Modal {
         }
     }
 
+    private createFileUploadField(container: HTMLElement, propertyName: string, entityType: string): void {
+        const wrapper = container.createDiv({ cls: 'graph_copilot-file-upload-wrapper' });
+        wrapper.style.cssText = `
+            border: 2px dashed var(--background-modifier-border);
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+            background: var(--background-secondary);
+            transition: all 0.2s ease;
+        `;
+
+        const uploadBtn = wrapper.createEl('button', {
+            text: `📁 Upload ${entityType} File`,
+            cls: 'graph_copilot-upload-btn'
+        });
+        uploadBtn.style.marginBottom = '8px';
+        uploadBtn.onclick = (e) => {
+            e.preventDefault();
+            fileInput.click();
+        };
+
+        const hintText = wrapper.createEl('span', {
+            text: 'or drag and drop here',
+            cls: 'graph_copilot-upload-hint'
+        });
+        hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
+
+        const fileInput = wrapper.createEl('input', {
+            type: 'file',
+            cls: 'graph_copilot-file-input'
+        });
+        fileInput.style.display = 'none';
+
+        // Set accept attribute based on entity type
+        if (entityType === 'Image' || entityType === 'Photo') {
+            fileInput.accept = 'image/*';
+        } else if (entityType === 'Video') {
+            fileInput.accept = 'video/*';
+        } else if (entityType === 'Audio') {
+            fileInput.accept = 'audio/*';
+        }
+
+        const handleFile = async (file: File) => {
+            try {
+                hintText.textContent = `Uploading ${file.name}...`;
+
+                // Determine save path
+                // TODO: Make this configurable in settings
+                let basePath = '/Assets/OSINT-Media/';
+                if (entityType === 'Image' || entityType === 'Photo') basePath = '/Assets/OSINT-Photos/';
+                else if (entityType === 'Video') basePath = '/Assets/OSINT-Videos/';
+                else if (entityType === 'Audio') basePath = '/Assets/OSINT-Audio/';
+
+                // Ensure directory exists (this might fail if folder implementation differs, but we'll try to just write the file)
+                // In Obsidian API, we usually just write the file and folders are created if needed or we need to create them explicitly
+                // For now assuming the user will handle folder structure or we can rely on adapter
+
+                // Read file
+                const arrayBuffer = await file.arrayBuffer();
+                const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+                const filePath = `${basePath}${Date.now()}_${safeName}`;
+
+                // Ensure directories exist
+                const folders = basePath.split('/').filter(p => p);
+                let currentPath = '';
+                for (const folder of folders) {
+                    currentPath += (currentPath ? '/' : '') + folder;
+                    if (!(await this.app.vault.adapter.exists(currentPath))) {
+                        await this.app.vault.createFolder(currentPath);
+                    }
+                }
+
+                // Save file
+                // Using normalizePath to ensure correct path format
+                // We need to cast to any because createBinary is technically on Vault but might be typed differently in some versions
+                await this.app.vault.createBinary(filePath.replace(/^\//, ''), arrayBuffer);
+
+                // Success
+                this.properties[propertyName] = filePath.replace(/^\//, '');
+                hintText.textContent = `✅ Uploaded: ${file.name}`;
+                uploadBtn.textContent = 'Change File';
+                wrapper.style.borderColor = 'var(--interactive-accent)';
+
+                // Update generated fields if empty
+                if (!this.properties.title && (document.getElementById('entity-title') as HTMLInputElement)) {
+                    const titleInput = document.getElementById('entity-title') as HTMLInputElement;
+                    titleInput.value = file.name;
+                    this.properties.title = file.name;
+                }
+
+                if (entityType === 'Image' || entityType === 'Photo' || entityType === 'Video' || entityType === 'Audio') {
+                    if (!this.properties.fileName) this.properties.fileName = file.name;
+                    // Try to generate date from modification time
+                    // if (!this.properties.date && file.lastModified) {
+                    //    this.properties.date = new Date(file.lastModified).toISOString().split('T')[0];
+                    // }
+                }
+
+                new Notice(`File uploaded: ${filePath}`);
+
+            } catch (err) {
+                console.error('File upload error:', err);
+                hintText.textContent = '❌ Upload failed';
+                new Notice(`Upload failed: ${err}`);
+            }
+        };
+
+        fileInput.addEventListener('change', (e) => {
+            const files = (e.target as HTMLInputElement).files;
+            if (files && files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        // Drag and drop support
+        wrapper.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            wrapper.style.borderColor = 'var(--interactive-accent)';
+            wrapper.style.background = 'var(--background-primary-alt)';
+        });
+
+        wrapper.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            if (!this.properties[propertyName]) {
+                wrapper.style.borderColor = 'var(--background-modifier-border)';
+                wrapper.style.background = 'var(--background-secondary)';
+            }
+        });
+
+        wrapper.addEventListener('drop', (e) => {
+            e.preventDefault();
+            wrapper.style.borderColor = 'var(--background-modifier-border)';
+            wrapper.style.background = 'var(--background-secondary)';
+
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+    }
+
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
@@ -1806,6 +1951,14 @@ export class FTMEntityTypeSelectorModal extends Modal {
     private gridContainer: HTMLDivElement | null = null;
     private entityTypes: Array<{ name: string; label: string; description: string; color: string }> = [];
 
+    // Priority list for sorting entity types
+    private readonly PRIORITY_ORDER = [
+        'Person', 'Company', 'Event', 'Group', 'BankAccount', 'Credentials',
+        'UserAccount', 'Location', 'Address', 'Evidence', 'Document',
+        'Video', 'Image', 'Photo', 'Malware', 'CryptoWallet',
+        'Domain', 'Website', 'IP'
+    ];
+
     constructor(
         app: App,
         entityManager: EntityManager,
@@ -1821,7 +1974,29 @@ export class FTMEntityTypeSelectorModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-selector-modal');
 
-        contentEl.createEl('h2', { text: 'Create new entity' });
+        // Header container
+        const header = contentEl.createDiv({ cls: 'graph_copilot-entity-selector-header' });
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+
+        const title = header.createEl('h2', { text: 'Create new entity' });
+        title.style.margin = '0';
+
+        const newTypeBtn = header.createEl('button', { text: '+ New Custom Type' });
+        newTypeBtn.style.cssText = 'font-size: 13px; padding: 4px 10px; cursor: pointer;';
+        newTypeBtn.onclick = () => {
+            this.close();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = (this.app as any).plugins.plugins['osint-copilot'];
+            if (plugin && plugin.customTypesService) {
+                new CustomTypeCreationModal(this.app, plugin.customTypesService, undefined, (name) => {
+                    // Re-open selector after creation
+                    const selector = new FTMEntityTypeSelectorModal(this.app, this.entityManager, this.onEntityCreated || undefined);
+                    selector.open();
+                }).open();
+            } else {
+                new Notice('Error: OSINT Copilot plugin instance not found.');
+            }
+        };
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
 
         // Search input for filtering entity types
@@ -1895,9 +2070,44 @@ export class FTMEntityTypeSelectorModal extends Modal {
             return;
         }
 
-        for (const typeInfo of types) {
-            const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
+        // Sort types based on priority list
+        const sortedTypes = [...types].sort((a, b) => {
+            const indexA = this.PRIORITY_ORDER.indexOf(a.name);
+            const indexB = this.PRIORITY_ORDER.indexOf(b.name);
+
+            // If both are in priority list, sort by index
+            if (indexA !== -1 && indexB !== -1) {
+                return indexA - indexB;
+            }
+
+            // If only A is in priority list, it comes first
+            if (indexA !== -1) return -1;
+
+            // If only B is in priority list, it comes first
+            if (indexB !== -1) return 1;
+
+            // Otherwise sort alphabetically
+            return a.label.localeCompare(b.label);
+        });
+
+        // Determine which types to show initially vs in "Show More"
+        // If searching, show all matches. If standard view, apply collapse logic.
+        const isSearching = this.searchInput && this.searchInput.value.trim().length > 0;
+
+        let initialTypes = sortedTypes;
+        let hiddenTypes: typeof sortedTypes = [];
+
+        if (!isSearching) {
+            // Include everything in priority list (that exists in available types) in initial view
+            // Everything else goes to "Show More"
+            initialTypes = sortedTypes.filter(t => this.PRIORITY_ORDER.includes(t.name));
+            hiddenTypes = sortedTypes.filter(t => !this.PRIORITY_ORDER.includes(t.name));
+        }
+
+        const createTypeButton = (typeInfo: { name: string; label: string; description: string; color: string }, container: HTMLElement) => {
+            const typeBtn = container.createDiv({ cls: 'graph_copilot-entity-type-btn' });
             typeBtn.style.borderLeftColor = typeInfo.color;
+            typeBtn.style.position = 'relative';
 
             const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
             icon.style.backgroundColor = typeInfo.color;
@@ -1911,6 +2121,43 @@ export class FTMEntityTypeSelectorModal extends Modal {
             info.createEl('strong', { text: typeInfo.label });
             info.createEl('small', { text: typeInfo.description });
 
+            // Check for custom type
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = (this.app as any).plugins.plugins['osint-copilot'];
+            const isCustom = plugin && plugin.customTypesService && plugin.customTypesService.getCustomSchema(typeInfo.name);
+
+            if (isCustom) {
+                const actionsDiv = typeBtn.createDiv({ cls: 'graph_copilot-type-actions' });
+                actionsDiv.style.cssText = 'position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;';
+
+                typeBtn.onmouseenter = () => actionsDiv.style.display = 'flex';
+                typeBtn.onmouseleave = () => actionsDiv.style.display = 'none';
+
+                const editBtn = actionsDiv.createEl('button', { text: '✎' });
+                editBtn.title = 'Edit Type';
+                editBtn.style.cssText = 'padding: 4px 8px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.close();
+                    new CustomTypeCreationModal(this.app, plugin.customTypesService, plugin.customTypesService.getCustomSchema(typeInfo.name), (name) => {
+                        new FTMEntityTypeSelectorModal(this.app, this.entityManager, this.onEntityCreated || undefined).open();
+                    }).open();
+                };
+
+                const delBtn = actionsDiv.createEl('button', { text: '🗑' });
+                delBtn.title = 'Delete Type';
+                delBtn.style.cssText = 'padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                delBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete custom type "${typeInfo.label}"?`)) {
+                        await plugin.customTypesService.deleteCustomType(typeInfo.name);
+                        // Reload and refresh
+                        this.entityTypes = getAvailableFTMEntityTypes();
+                        this.filterEntityTypes();
+                    }
+                };
+            }
+
             typeBtn.onclick = () => {
                 this.close();
                 const createModal = new FTMEntityCreationModal(
@@ -1920,6 +2167,57 @@ export class FTMEntityTypeSelectorModal extends Modal {
                     this.onEntityCreated || undefined
                 );
                 createModal.open();
+            };
+        };
+
+        // Render initial types
+        for (const type of initialTypes) {
+            createTypeButton(type, this.gridContainer);
+        }
+
+        // Render Show More section if there are hidden types
+        if (hiddenTypes.length > 0) {
+            const divider = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-divider' });
+            divider.style.cssText = `
+                grid-column: 1 / -1;
+                margin: 15px 0;
+                border-top: 1px solid var(--background-modifier-border);
+                position: relative;
+                text-align: center;
+            `;
+
+            const showMoreBtn = divider.createEl('button', { text: 'Show More' });
+            showMoreBtn.style.cssText = `
+                position: relative;
+                top: -12px;
+                background: var(--background-primary);
+                padding: 0 10px;
+                color: var(--text-muted);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 12px;
+                font-size: 12px;
+                cursor: pointer;
+            `;
+
+            const hiddenContainer = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-hidden-container' });
+            hiddenContainer.style.cssText = `
+                grid-column: 1 / -1;
+                display: none;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 10px;
+            `;
+            // Re-apply grid layout to hidden container since it's nested
+            hiddenContainer.addClass('graph_copilot-entity-type-grid');
+            hiddenContainer.style.marginTop = '0'; // Override grid margin
+
+            for (const type of hiddenTypes) {
+                createTypeButton(type, hiddenContainer);
+            }
+
+            showMoreBtn.onclick = () => {
+                const isHidden = hiddenContainer.style.display === 'none';
+                hiddenContainer.style.display = isHidden ? 'grid' : 'none';
+                showMoreBtn.textContent = isHidden ? 'Show Less' : 'Show More';
             };
         }
     }
@@ -2194,6 +2492,16 @@ export class FTMEntityEditModal extends Modal {
                 placeholder: 'Country code (e.g., US, GB, DE)'
             }) as HTMLInputElement;
             if (currentValue) input.value = currentValue;
+        } else if (propType === 'country') {
+            input = fieldContainer.createEl('input', {
+                type: 'text',
+                placeholder: 'Country code (e.g., US, GB, DE)'
+            }) as HTMLInputElement;
+            if (currentValue) input.value = currentValue;
+        } else if (propertyName === 'filePath' && (this.schemaName === 'Image' || this.schemaName === 'Video' || this.schemaName === 'Audio' || this.schemaName === 'Photo' || this.schemaName === 'Evidence')) {
+            // Special handling for file upload
+            this.createFileUploadField(fieldContainer, propertyName, this.schemaName, currentValue);
+            return;
         } else {
             // Default text input
             input = fieldContainer.createEl('input', {
@@ -2248,17 +2556,166 @@ export class FTMEntityEditModal extends Modal {
         // Geocode button
         const geocodeBtn = geocodingSection.createEl('button', { text: '📍 geolocate address' });
         geocodeBtn.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
             padding: 8px 16px;
-            background: var(--interactive-accent);
-            color: var(--text-on-accent);
-            border: none;
-            border-radius: 4px;
             cursor: pointer;
+            border-radius: 4px;
+            border: 1px solid var(--interactive-accent);
+            background: var(--interactive-accent);
+            color: white;
             font-weight: 500;
         `;
+        // TODO: Wire up geocoding logic here if needed
         geocodeBtn.onclick = async () => {
             await this.handleGeocode(geocodeBtn);
         };
+    }
+
+    private createFileUploadField(container: HTMLElement, propertyName: string, entityType: string, currentValue: any): void {
+        const wrapper = container.createDiv({ cls: 'graph_copilot-file-upload-wrapper' });
+        wrapper.style.cssText = `
+            border: 2px dashed var(--background-modifier-border);
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+            background: var(--background-secondary);
+            transition: all 0.2s ease;
+        `;
+
+        // Display current file if exists
+        if (currentValue) {
+            wrapper.style.borderColor = 'var(--interactive-accent)';
+            const currentFileEl = wrapper.createDiv({ cls: 'graph_copilot-current-file' });
+            currentFileEl.style.marginBottom = '10px';
+            currentFileEl.innerHTML = `
+                <div style="font-weight: bold; margin-bottom: 4px;">Current File:</div>
+                <div style="font-size: 12px; color: var(--text-accent); word-break: break-all;">${currentValue}</div>
+            `;
+
+            // Add preview button or image if possible
+            if (entityType === 'Image' || entityType === 'Photo' || entityType === 'Document' || entityType === 'Evidence') {
+                // Try to show thumbnail if path is valid (this is complex in Obsidian API without full path, so skipping for now)
+            }
+        }
+
+        const uploadBtn = wrapper.createEl('button', {
+            text: currentValue ? `Replace ${entityType} File` : `📁 Upload ${entityType} File`,
+            cls: 'graph_copilot-upload-btn'
+        });
+        uploadBtn.style.marginBottom = '8px';
+        uploadBtn.onclick = (e) => {
+            e.preventDefault();
+            fileInput.click();
+        };
+
+        const hintText = wrapper.createEl('span', {
+            text: 'or drag and drop to replace',
+            cls: 'graph_copilot-upload-hint'
+        });
+        hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
+
+        const fileInput = wrapper.createEl('input', {
+            type: 'file',
+            cls: 'graph_copilot-file-input'
+        });
+        fileInput.style.display = 'none';
+
+        // Set accept attribute based on entity type
+        if (entityType === 'Image' || entityType === 'Photo') {
+            fileInput.accept = 'image/*';
+        } else if (entityType === 'Video') {
+            fileInput.accept = 'video/*';
+        } else if (entityType === 'Audio') {
+            fileInput.accept = 'audio/*';
+        } else if (entityType === 'Document' || entityType === 'Evidence') {
+            fileInput.accept = '.pdf,.docx,.doc,.md,.png,.jpeg,.jpg';
+        }
+
+        const handleFile = async (file: File) => {
+            try {
+                hintText.textContent = `Uploading ${file.name}...`;
+
+                // Determine save path
+                // TODO: Make this configurable in settings
+                let basePath = '/Assets/OSINT-Media/';
+                if (entityType === 'Image' || entityType === 'Photo') basePath = '/Assets/OSINT-Photos/';
+                else if (entityType === 'Video') basePath = '/Assets/OSINT-Videos/';
+                else if (entityType === 'Audio') basePath = '/Assets/OSINT-Audio/';
+                else if (entityType === 'Document' || entityType === 'Evidence') basePath = '/Assets/OSINT-Documents/';
+
+                // Read file
+                const arrayBuffer = await file.arrayBuffer();
+                const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+                const filePath = `${basePath}${Date.now()}_${safeName}`;
+
+                // Ensure directories exist
+                const folders = basePath.split('/').filter(p => p);
+                let currentPath = '';
+                for (const folder of folders) {
+                    currentPath += (currentPath ? '/' : '') + folder;
+                    if (!(await this.app.vault.adapter.exists(currentPath))) {
+                        await this.app.vault.createFolder(currentPath);
+                    }
+                }
+
+                // Save file
+                await this.app.vault.createBinary(filePath.replace(/^\//, ''), arrayBuffer);
+
+                // Success
+                this.properties[propertyName] = filePath.replace(/^\//, '');
+                hintText.textContent = `✅ Uploaded: ${file.name}`;
+                uploadBtn.textContent = 'Change File';
+                wrapper.style.borderColor = 'var(--interactive-accent)';
+
+                // Update display
+                const currentDisplay = wrapper.querySelector('.graph_copilot-current-file');
+                if (currentDisplay) {
+                    currentDisplay.innerHTML = `
+                        <div style="font-weight: bold; margin-bottom: 4px;">New File:</div>
+                        <div style="font-size: 12px; color: var(--text-accent); word-break: break-all;">${filePath.replace(/^\//, '')}</div>
+                    `;
+                }
+
+                new Notice(`File uploaded: ${filePath}`);
+
+            } catch (err) {
+                console.error('File upload error:', err);
+                hintText.textContent = '❌ Upload failed';
+                new Notice(`Upload failed: ${err}`);
+            }
+        };
+
+        fileInput.addEventListener('change', (e) => {
+            const files = (e.target as HTMLInputElement).files;
+            if (files && files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        // Drag and drop support
+        wrapper.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            wrapper.style.borderColor = 'var(--interactive-accent)';
+            wrapper.style.background = 'var(--background-primary-alt)';
+        });
+
+        wrapper.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            wrapper.style.borderColor = currentValue ? 'var(--interactive-accent)' : 'var(--background-modifier-border)';
+            wrapper.style.background = 'var(--background-secondary)';
+        });
+
+        wrapper.addEventListener('drop', (e) => {
+            e.preventDefault();
+            wrapper.style.borderColor = 'var(--background-modifier-border)';
+            wrapper.style.background = 'var(--background-secondary)';
+
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
     }
 
     /**
@@ -2327,7 +2784,7 @@ export class FTMEntityEditModal extends Modal {
 
             // Update status
             this.updateGeocodeStatus(
-                `✓ Geocoded: ${result.displayName}\nLat: ${result.latitude.toFixed(6)}, Lng: ${result.longitude.toFixed(6)}\nConfidence: ${result.confidence}`,
+                `✓ Geocoded: ${result.displayName} \nLat: ${result.latitude.toFixed(6)}, Lng: ${result.longitude.toFixed(6)} \nConfidence: ${result.confidence} `,
                 'success'
             );
 
@@ -2344,8 +2801,8 @@ export class FTMEntityEditModal extends Modal {
             button.textContent = '📍 geolocate address';
 
             if (error instanceof GeocodingError) {
-                this.updateGeocodeStatus(`✗ ${error.message}`, 'error');
-                new Notice(`Geocoding failed: ${error.message}`);
+                this.updateGeocodeStatus(`✗ ${error.message} `, 'error');
+                new Notice(`Geocoding failed: ${error.message} `);
             } else {
                 console.error('[FTMEntityEditModal] Geocoding error:', error);
                 this.updateGeocodeStatus('✗ Failed to geocode address. Please try again.', 'error');
@@ -2389,7 +2846,7 @@ export class FTMEntityEditModal extends Modal {
             const updatedEntity = await this.entityManager.updateEntity(this.entity.id, this.properties);
 
             if (updatedEntity) {
-                new Notice(`Updated ${config.label}: ${updatedEntity.label}`);
+                new Notice(`Updated ${config.label}: ${updatedEntity.label} `);
 
                 if (this.onEntityUpdated) {
                     this.onEntityUpdated(this.entity.id);
@@ -2400,7 +2857,7 @@ export class FTMEntityEditModal extends Modal {
                 new Notice('Failed to update entity: entity not found');
             }
         } catch (error) {
-            new Notice(`Failed to update entity: ${error}`);
+            new Notice(`Failed to update entity: ${error} `);
             console.error('FTM Entity update error:', error);
         }
     }
@@ -2411,23 +2868,23 @@ export class FTMEntityEditModal extends Modal {
      */
     private renderNonFTMEntityEditor(contentEl: HTMLElement): void {
         // Title
-        contentEl.createEl('h2', { text: `Edit ${this.schemaName}` });
+        contentEl.createEl('h2', { text: `Edit ${this.schemaName} ` });
         contentEl.createEl('p', {
-            text: `Editing: ${this.entity.label}`,
+            text: `Editing: ${this.entity.label} `,
             cls: 'graph_copilot-entity-modal-description'
         });
 
         // Info message
         const infoDiv = contentEl.createDiv({ cls: 'graph_copilot-info-message' });
         infoDiv.style.cssText = `
-            padding: 12px;
-            margin-bottom: 20px;
-            background: var(--background-secondary);
-            border-left: 3px solid var(--interactive-accent);
-            border-radius: 4px;
-        `;
+padding: 12px;
+margin - bottom: 20px;
+background: var(--background - secondary);
+border - left: 3px solid var(--interactive - accent);
+border - radius: 4px;
+`;
         infoDiv.createEl('p', {
-            text: `This is a non-standard entity type. You can edit its properties below.`,
+            text: `This is a non - standard entity type.You can edit its properties below.`,
             cls: 'text-muted'
         });
 
@@ -2495,7 +2952,7 @@ export class FTMEntityEditModal extends Modal {
             contentEl.empty();
             this.renderNonFTMEntityEditor(contentEl);
 
-            new Notice(`Added property: ${propName}`);
+            new Notice(`Added property: ${propName} `);
         };
 
         // Geocoding section for Location entities without coordinates
@@ -2528,14 +2985,14 @@ export class FTMEntityEditModal extends Modal {
         inputContainer.style.flex = '1';
 
         const label = inputContainer.createEl('label', { text: propertyName });
-        label.setAttribute('for', `entity-${propertyName}`);
+        label.setAttribute('for', `entity - ${propertyName} `);
 
         const currentValue = this.properties[propertyName];
         const input = inputContainer.createEl('input', {
             type: 'text',
             value: String(currentValue || '')
         }) as HTMLInputElement;
-        input.id = `entity-${propertyName}`;
+        input.id = `entity - ${propertyName} `;
         input.addClass('graph_copilot-entity-input');
 
         // Store value on change
@@ -2550,7 +3007,7 @@ export class FTMEntityEditModal extends Modal {
         deleteBtn.onclick = () => {
             delete this.properties[propertyName];
             fieldContainer.remove();
-            new Notice(`Deleted property: ${propertyName}`);
+            new Notice(`Deleted property: ${propertyName} `);
         };
     }
 
@@ -2562,7 +3019,7 @@ export class FTMEntityEditModal extends Modal {
             const updatedEntity = await this.entityManager.updateEntity(this.entity.id, this.properties);
 
             if (updatedEntity) {
-                new Notice(`Updated ${this.schemaName}: ${updatedEntity.label}`);
+                new Notice(`Updated ${this.schemaName}: ${updatedEntity.label} `);
 
                 if (this.onEntityUpdated) {
                     this.onEntityUpdated(this.entity.id);
@@ -2573,7 +3030,7 @@ export class FTMEntityEditModal extends Modal {
                 new Notice('Failed to update entity: entity not found');
             }
         } catch (error) {
-            new Notice(`Failed to update entity: ${error}`);
+            new Notice(`Failed to update entity: ${error} `);
             console.error('Non-FTM Entity update error:', error);
         }
     }
@@ -2616,7 +3073,43 @@ export class FTMIntervalTypeSelectorModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-selector-modal');
 
-        contentEl.createEl('h2', { text: 'Create new connection' });
+        // Create header container
+        const headerContainer = contentEl.createDiv({ cls: 'graph_copilot-header-container' });
+        headerContainer.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+
+        const title = headerContainer.createEl('h2', { text: 'Create new connection' });
+        title.style.margin = '0';
+
+        // Add "New Custom Connection" button
+        const newTypeBtn = headerContainer.createEl('button', { text: '+ New Custom Connection' });
+        newTypeBtn.style.cssText = 'font-size: 13px; padding: 4px 10px; cursor: pointer;';
+        newTypeBtn.onclick = () => {
+            this.close();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = (this.app as any).plugins.plugins['osint-copilot'];
+            if (plugin && plugin.customTypesService) {
+                new CustomTypeCreationModal(
+                    this.app,
+                    plugin.customTypesService,
+                    undefined,
+                    (name) => {
+                        // Re-open selector after creation
+                        const selector = new FTMIntervalTypeSelectorModal(
+                            this.app,
+                            this.entityManager,
+                            this.onConnectionCreated || undefined,
+                            this.sourceEntityId || undefined,
+                            this.targetEntityId || undefined
+                        );
+                        selector.open();
+                    },
+                    'Interval' // Specify base type
+                ).open();
+            } else {
+                new Notice('Error: OSINT Copilot plugin instance not found.');
+            }
+        };
+
         contentEl.createEl('p', { text: 'Select the type of relationship/interval to create:' });
 
         // Search input for filtering interval types
@@ -2629,23 +3122,23 @@ export class FTMIntervalTypeSelectorModal extends Modal {
             cls: 'graph_copilot-entity-search-input'
         });
         this.searchInput.style.cssText = `
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid var(--background-modifier-border);
-            border-radius: 6px;
-            background: var(--background-primary);
-            color: var(--text-normal);
-            font-size: 14px;
-        `;
+width: 100 %;
+padding: 8px 12px;
+border: 1px solid var(--background - modifier - border);
+border - radius: 6px;
+background: var(--background - primary);
+color: var(--text - normal);
+font - size: 14px;
+`;
         this.searchInput.addEventListener('input', () => this.filterIntervalTypes());
 
         // Grid container with scrolling
         const scrollContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-scroll-container' });
         scrollContainer.style.cssText = `
-            max-height: 400px;
-            overflow-y: auto;
-            padding-right: 8px;
-        `;
+max - height: 400px;
+overflow - y: auto;
+padding - right: 8px;
+`;
 
         this.gridContainer = scrollContainer.createDiv({ cls: 'graph_copilot-entity-type-grid' });
 
@@ -2682,10 +3175,10 @@ export class FTMIntervalTypeSelectorModal extends Modal {
         if (types.length === 0) {
             const noResults = this.gridContainer.createDiv({ cls: 'graph_copilot-no-results' });
             noResults.style.cssText = `
-                text-align: center;
-                padding: 20px;
-                color: var(--text-muted);
-            `;
+text - align: center;
+padding: 20px;
+color: var(--text - muted);
+`;
             noResults.textContent = 'No relationship types match your search.';
             return;
         }
@@ -2693,6 +3186,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
         for (const typeInfo of types) {
             const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
             typeBtn.style.borderLeftColor = typeInfo.color;
+            typeBtn.style.position = 'relative'; // Ensure relative positioning for actions
 
             const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
             icon.style.backgroundColor = typeInfo.color;
@@ -2701,6 +3195,55 @@ export class FTMIntervalTypeSelectorModal extends Modal {
             const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });
             info.createEl('strong', { text: typeInfo.label });
             info.createEl('small', { text: typeInfo.description });
+
+            // Check if custom type
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const plugin = (this.app as any).plugins.plugins['osint-copilot'];
+            const isCustom = plugin && plugin.customTypesService && plugin.customTypesService.getCustomSchema(typeInfo.name);
+
+            if (isCustom) {
+                const actionsDiv = typeBtn.createDiv({ cls: 'graph_copilot-type-actions' });
+                actionsDiv.style.cssText = 'position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;';
+
+                typeBtn.onmouseenter = () => actionsDiv.style.display = 'flex';
+                typeBtn.onmouseleave = () => actionsDiv.style.display = 'none';
+
+                const editBtn = actionsDiv.createEl('button', { text: '✎' });
+                editBtn.title = 'Edit Type';
+                editBtn.style.cssText = 'padding: 4px 8px; margin-right: 5px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.close();
+                    new CustomTypeCreationModal(
+                        this.app,
+                        plugin.customTypesService,
+                        plugin.customTypesService.getCustomSchema(typeInfo.name),
+                        (name) => {
+                            new FTMIntervalTypeSelectorModal(
+                                this.app,
+                                this.entityManager,
+                                this.onConnectionCreated || undefined,
+                                this.sourceEntityId || undefined,
+                                this.targetEntityId || undefined
+                            ).open();
+                        },
+                        'Interval'
+                    ).open();
+                };
+
+                const delBtn = actionsDiv.createEl('button', { text: '🗑' });
+                delBtn.title = 'Delete Type';
+                delBtn.style.cssText = 'padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                delBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete custom relationship type "${typeInfo.label}"?`)) {
+                        await plugin.customTypesService.deleteCustomType(typeInfo.name);
+                        // Reload and refresh
+                        this.intervalTypes = getAvailableFTMIntervalTypes();
+                        this.filterIntervalTypes();
+                    }
+                };
+            }
 
             typeBtn.onclick = () => {
                 this.close();
@@ -2764,13 +3307,13 @@ export class FTMIntervalCreationModal extends Modal {
 
         const config = getFTMEntityConfig(this.intervalType);
         if (!config) {
-            new Notice(`Unknown interval type: ${this.intervalType}`);
+            new Notice(`Unknown interval type: ${this.intervalType} `);
             this.close();
             return;
         }
 
         // Title
-        contentEl.createEl('h2', { text: `Create ${config.label}` });
+        contentEl.createEl('h2', { text: `Create ${config.label} ` });
         contentEl.createEl('p', {
             text: config.description,
             cls: 'graph_copilot-entity-modal-description'
@@ -2827,7 +3370,7 @@ export class FTMIntervalCreationModal extends Modal {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: `Create ${config.label}`,
+            text: `Create ${config.label} `,
             cls: 'mod-cta'
         });
         createBtn.onclick = () => this.handleCreate();
@@ -2885,7 +3428,7 @@ export class FTMIntervalCreationModal extends Modal {
         const label = fieldContainer.createEl('label', {
             text: propDef.label + (isRequired ? ' *' : '')
         });
-        label.setAttribute('for', `interval-${propertyName}`);
+        label.setAttribute('for', `interval - ${propertyName} `);
 
         let input: HTMLInputElement | HTMLTextAreaElement;
 
@@ -2912,7 +3455,7 @@ export class FTMIntervalCreationModal extends Modal {
             }) as HTMLInputElement;
         }
 
-        input.id = `interval-${propertyName}`;
+        input.id = `interval - ${propertyName} `;
         input.addClass('graph_copilot-entity-input');
 
         // Store value on change
@@ -2965,7 +3508,7 @@ export class FTMIntervalCreationModal extends Modal {
                 if (connection) {
                     const sourceEntity = this.entityManager.getEntity(sourceId);
                     const targetEntity = this.entityManager.getEntity(targetId);
-                    new Notice(`Created: ${sourceEntity?.label} → ${this.intervalType} → ${targetEntity?.label}`);
+                    new Notice(`Created: ${sourceEntity?.label} → ${this.intervalType} → ${targetEntity?.label} `);
 
                     if (this.onConnectionCreated) {
                         this.onConnectionCreated(connection.id);
@@ -2978,7 +3521,7 @@ export class FTMIntervalCreationModal extends Modal {
                 new Notice('This interval type requires at least two entity references');
             }
         } catch (error) {
-            new Notice(`Failed to create ${config.label}: ${error}`);
+            new Notice(`Failed to create ${config.label}: ${error} `);
             console.error('Interval creation error:', error);
         }
     }
@@ -3040,23 +3583,23 @@ export class ConnectionEditModal extends Modal {
         }
 
         // Title
-        contentEl.createEl('h2', { text: `Edit ${config.label}` });
+        contentEl.createEl('h2', { text: `Edit ${config.label} ` });
         contentEl.createEl('p', {
-            text: `${fromEntity.label} → ${this.connection.relationship} → ${toEntity.label}`,
+            text: `${fromEntity.label} → ${this.connection.relationship} → ${toEntity.label} `,
             cls: 'graph_copilot-entity-modal-description'
         });
 
         // Show connection details (read-only)
         const detailsContainer = contentEl.createDiv({ cls: 'graph_copilot-connection-details' });
         detailsContainer.style.cssText = `
-            background: var(--background-secondary);
-            padding: 12px;
-            border-radius: 6px;
-            margin-bottom: 16px;
-        `;
-        detailsContainer.createEl('div', { text: `From: ${fromEntity.label}` });
-        detailsContainer.createEl('div', { text: `To: ${toEntity.label}` });
-        detailsContainer.createEl('div', { text: `Type: ${this.connection.relationship}` });
+background: var(--background - secondary);
+padding: 12px;
+border - radius: 6px;
+margin - bottom: 16px;
+`;
+        detailsContainer.createEl('div', { text: `From: ${fromEntity.label} ` });
+        detailsContainer.createEl('div', { text: `To: ${toEntity.label} ` });
+        detailsContainer.createEl('div', { text: `Type: ${this.connection.relationship} ` });
 
         // Create form container for editable properties
         const formContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
@@ -3105,7 +3648,7 @@ export class ConnectionEditModal extends Modal {
         const label = fieldContainer.createEl('label', {
             text: propDef.label + (isRequired ? ' *' : '')
         });
-        label.setAttribute('for', `conn-edit-${propertyName}`);
+        label.setAttribute('for', `conn - edit - ${propertyName} `);
 
         let input: HTMLInputElement | HTMLTextAreaElement;
 
@@ -3139,7 +3682,7 @@ export class ConnectionEditModal extends Modal {
             input.value = currentValue;
         }
 
-        input.id = `conn-edit-${propertyName}`;
+        input.id = `conn - edit - ${propertyName} `;
         input.addClass('graph_copilot-entity-input');
 
         // Store value on change
@@ -3179,7 +3722,7 @@ export class ConnectionEditModal extends Modal {
             }
             this.close();
         } catch (error) {
-            new Notice(`Failed to update connection: ${error}`);
+            new Notice(`Failed to update connection: ${error} `);
             console.error('Connection update error:', error);
         }
     }
@@ -3202,21 +3745,21 @@ export class ConnectionEditModal extends Modal {
         // Title
         contentEl.createEl('h2', { text: "Edit connection" });
         contentEl.createEl('p', {
-            text: `${fromEntity.label} → ${this.connection.relationship} → ${toEntity.label}`,
+            text: `${fromEntity.label} → ${this.connection.relationship} → ${toEntity.label} `,
             cls: 'graph_copilot-entity-modal-description'
         });
 
         // Info message
         const infoDiv = contentEl.createDiv({ cls: 'graph_copilot-info-message' });
         infoDiv.style.cssText = `
-            padding: 12px;
-            margin-bottom: 20px;
-            background: var(--background-secondary);
-            border-left: 3px solid var(--interactive-accent);
-            border-radius: 4px;
-        `;
+padding: 12px;
+margin - bottom: 20px;
+background: var(--background - secondary);
+border - left: 3px solid var(--interactive - accent);
+border - radius: 4px;
+`;
         infoDiv.createEl('p', {
-            text: `This is a non-standard relationship type. You can edit its properties below.`,
+            text: `This is a non - standard relationship type.You can edit its properties below.`,
             cls: 'text-muted'
         });
 
@@ -3284,7 +3827,7 @@ export class ConnectionEditModal extends Modal {
             contentEl.empty();
             this.renderNonFTMConnectionEditor(contentEl, intervalType);
 
-            new Notice(`Added property: ${propName}`);
+            new Notice(`Added property: ${propName} `);
         };
 
         // Buttons
@@ -3311,14 +3854,14 @@ export class ConnectionEditModal extends Modal {
         inputContainer.style.flex = '1';
 
         const label = inputContainer.createEl('label', { text: propertyName });
-        label.setAttribute('for', `connection-${propertyName}`);
+        label.setAttribute('for', `connection - ${propertyName} `);
 
         const currentValue = this.properties[propertyName];
         const input = inputContainer.createEl('input', {
             type: 'text',
             value: String(currentValue || '')
         }) as HTMLInputElement;
-        input.id = `connection-${propertyName}`;
+        input.id = `connection - ${propertyName} `;
         input.addClass('graph_copilot-entity-input');
 
         // Store value on change
@@ -3333,7 +3876,7 @@ export class ConnectionEditModal extends Modal {
         deleteBtn.onclick = () => {
             delete this.properties[propertyName];
             fieldContainer.remove();
-            new Notice(`Deleted property: ${propertyName}`);
+            new Notice(`Deleted property: ${propertyName} `);
         };
     }
 
@@ -3351,7 +3894,7 @@ export class ConnectionEditModal extends Modal {
             }
             this.close();
         } catch (error) {
-            new Notice(`Failed to update connection: ${error}`);
+            new Notice(`Failed to update connection: ${error} `);
             console.error('Non-FTM Connection update error:', error);
         }
     }

@@ -1,21 +1,39 @@
 Image:
   extends:
     - Document
-  label: Image
-  plural: Images
+  label: Photo
+  plural: Photos
   description: >
-    An image file.
+    An image or photo file for investigation.
   matchable: false
-  generated: true
+  generated: false
   featured:
     - title
     - fileName
-    - mimeType
-    - parent
+    - filePath
+    - location
+  required:
+    - title
   caption:
     - fileName
     - title
   properties:
+    filePath:
+      label: "File Path"
+      description: "Path to the image file in the vault"
+      type: string
+    location:
+      label: "Location"
+      description: "Location where the photo was taken"
+      type: string
+    dateTaken:
+      label: "Date Taken"
+      description: "When the photo was taken"
+      type: date
+    source:
+      label: "Source"
+      description: "Source of the image"
+      type: string
     pictured:
       label: "Pictured"
       reverse:
@@ -23,3 +41,4 @@ Image:
         label: "Images"
       type: entity
       range: Person
+  color: "#2196F3"

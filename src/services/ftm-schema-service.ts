@@ -19,6 +19,7 @@ export interface FTMPropertyDefinition {
         name: string;
         label: string;
     };
+    options?: string[]; // For dropdown properties
 }
 
 export interface FTMSchemaDefinition {
@@ -662,6 +663,77 @@ const ENTITY_SCHEMAS: Record<string, Partial<FTMSchemaDefinition>> = {
         },
         color: '#7E57C2'
     },
+    IP: {
+        name: 'IP',
+        label: 'IP Address',
+        plural: 'IP Addresses',
+        description: 'An Internet Protocol address (IPv4 or IPv6).',
+        extends: ['Thing'],
+        featured: ['ip', 'version', 'isp'],
+        required: ['ip'],
+        caption: ['ip'],
+        properties: {
+            ip: { label: 'IP Address' },
+            version: { label: 'Version', options: ['IPv4', 'IPv6'] as any },
+            asn: { label: 'ASN' },
+            isp: { label: 'ISP' },
+            hostname: { label: 'Hostname' },
+        },
+        color: '#00BCD4'
+    },
+    Malware: {
+        name: 'Malware',
+        label: 'Malware',
+        plural: 'Malware',
+        description: 'Malicious software, virus, or exploit.',
+        extends: ['Thing'],
+        featured: ['name', 'type', 'platform'],
+        required: ['name'],
+        caption: ['name'],
+        properties: {
+            name: { label: 'Name' },
+            type: { label: 'Type' },
+            platform: { label: 'Platform' },
+            hash_md5: { label: 'MD5' },
+            hash_sha256: { label: 'SHA256' },
+            cve: { label: 'CVE' },
+        },
+        color: '#D32F2F'
+    },
+    Group: {
+        name: 'Group',
+        label: 'Group',
+        plural: 'Groups',
+        description: 'A group of people, organization, or cluster of entities.',
+        extends: ['Organization'],
+        featured: ['name', 'purpose'],
+        required: ['name'],
+        caption: ['name'],
+        properties: {
+            purpose: { label: 'Purpose' },
+            area_of_operation: { label: 'Area of Operation' },
+            ideology: { label: 'Ideology' },
+        },
+        color: '#FF9800'
+    },
+    Domain: {
+        name: 'Domain',
+        label: 'Domain',
+        plural: 'Domains',
+        description: 'An internet domain name.',
+        extends: ['Thing'],
+        featured: ['domain', 'registrar', 'creation_date'],
+        required: ['domain'],
+        caption: ['domain'],
+        properties: {
+            domain: { label: 'Domain Name' },
+            registrar: { label: 'Registrar' },
+            creation_date: { label: 'Creation Date', type: 'date' },
+            expiration_date: { label: 'Expiration Date', type: 'date' },
+            nameservers: { label: 'Nameservers' },
+        },
+        color: '#3F51B5'
+    },
     Contract: {
         name: 'Contract',
         label: 'Contract',
@@ -922,52 +994,64 @@ const ENTITY_SCHEMAS: Record<string, Partial<FTMSchemaDefinition>> = {
     },
     Image: {
         name: 'Image',
-        label: 'Image',
-        plural: 'Images',
-        description: 'An image file.',
+        label: 'Photo',
+        plural: 'Photos',
+        description: 'An image or photo file for investigation.',
         extends: ['Document'],
         matchable: false,
-        generated: true,
-        featured: ['title', 'fileName'],
-        required: [],
+        generated: false,
+        featured: ['title', 'filePath', 'location', 'dateTaken'],
+        required: ['title'],
         caption: ['title', 'fileName'],
         properties: {
+            filePath: { label: 'File Path', description: 'Path to the image file in the vault' },
+            location: { label: 'Location', description: 'Location where the photo was taken' },
+            dateTaken: { label: 'Date Taken', type: 'date' },
+            source: { label: 'Source' },
             width: { label: 'Width', type: 'number' },
             height: { label: 'Height', type: 'number' },
         },
-        color: '#F4511E'
+        color: '#2196F3'
     },
     Video: {
         name: 'Video',
         label: 'Video',
         plural: 'Videos',
-        description: 'A video file.',
+        description: 'A video file for investigation.',
         extends: ['Document'],
         matchable: false,
-        generated: true,
-        featured: ['title', 'fileName'],
-        required: [],
+        generated: false,
+        featured: ['title', 'filePath', 'duration', 'dateCaptured'],
+        required: ['title'],
         caption: ['title', 'fileName'],
         properties: {
-            duration: { label: 'Duration' },
+            filePath: { label: 'File Path', description: 'Path to the video file in the vault' },
+            duration: { label: 'Duration', type: 'number' },
+            location: { label: 'Location', description: 'Location where the video was captured' },
+            dateCaptured: { label: 'Date Captured', type: 'date' },
+            source: { label: 'Source' },
         },
-        color: '#D81B60'
+        color: '#9C27B0'
     },
     Audio: {
         name: 'Audio',
         label: 'Audio',
         plural: 'Audio Files',
-        description: 'An audio file.',
+        description: 'An audio file for investigation.',
         extends: ['Document'],
         matchable: false,
-        generated: true,
-        featured: ['title', 'fileName'],
-        required: [],
+        generated: false,
+        featured: ['title', 'filePath', 'duration', 'dateRecorded'],
+        required: ['title'],
         caption: ['title', 'fileName'],
         properties: {
-            duration: { label: 'Duration' },
+            filePath: { label: 'File Path', description: 'Path to the audio file in the vault' },
+            duration: { label: 'Duration', type: 'number' },
+            dateRecorded: { label: 'Date Recorded', type: 'date' },
+            source: { label: 'Source' },
+            samplingRate: { label: 'Sampling Rate', type: 'number' },
         },
-        color: '#8E24AA'
+        color: '#009688'
     },
     Article: {
         name: 'Article',
@@ -1259,6 +1343,68 @@ const ENTITY_SCHEMAS: Record<string, Partial<FTMSchemaDefinition>> = {
         },
         color: '#0288D1'
     },
+    // New entity types for OSINT investigations
+    Credentials: {
+        name: 'Credentials',
+        label: 'Credentials',
+        plural: 'Credentials',
+        description: 'Login credentials for a user account on a platform or service.',
+        extends: ['Thing'],
+        matchable: true,
+        featured: ['username', 'platform', 'dateFound'],
+        required: ['username'],
+        caption: ['username', 'platform'],
+        properties: {
+            username: { label: 'Username', description: 'The username or login identifier' },
+            password: { label: 'Password', description: 'The password (stored securely)' },
+            platform: { label: 'Platform', description: 'The platform or service (e.g., Gmail, Facebook)' },
+            dateFound: { label: 'Date Found', type: 'date' },
+            source: { label: 'Source', description: 'Where these credentials were found' },
+            isValid: { label: 'Is Valid', type: 'boolean' },
+        },
+        color: '#FF9800'
+    },
+    PhoneNumber: {
+        name: 'PhoneNumber',
+        label: 'Phone Number',
+        plural: 'Phone Numbers',
+        description: 'A phone number associated with a person or organization.',
+        extends: ['Thing'],
+        matchable: true,
+        featured: ['number', 'carrier', 'country'],
+        required: ['number'],
+        caption: ['number', 'carrier'],
+        properties: {
+            number: { label: 'Phone Number', type: 'phone' },
+            carrier: { label: 'Carrier', description: 'The phone carrier or provider' },
+            country: { label: 'Country', type: 'country' },
+            phoneType: { label: 'Phone Type', description: 'Type of phone (mobile, landline, VoIP)' },
+            associatedPerson: { label: 'Associated Person' },
+            verificationStatus: { label: 'Verification Status' },
+        },
+        color: '#4CAF50'
+    },
+    Evidence: {
+        name: 'Evidence',
+        label: 'Evidence',
+        plural: 'Evidence',
+        description: 'Evidence collected during an OSINT investigation.',
+        extends: ['Thing'],
+        matchable: false,
+        featured: ['title', 'source', 'dateCollected', 'relevance'],
+        required: ['title'],
+        caption: ['title', 'source'],
+        properties: {
+            title: { label: 'Title' },
+            source: { label: 'Source', description: 'Where this evidence was collected from' },
+            dateCollected: { label: 'Date Collected', type: 'date' },
+            relevance: { label: 'Relevance', description: 'How relevant this evidence is to the investigation' },
+            attachmentPath: { label: 'Attachment', description: 'Path to an attached file in the vault' },
+            tampered: { label: 'Tampered', type: 'boolean' },
+            verifiedBy: { label: 'Verified By' },
+        },
+        color: '#9E9E9E'
+    },
 };
 
 // Combine all schemas
@@ -1272,6 +1418,7 @@ const ALL_SCHEMAS: Record<string, Partial<FTMSchemaDefinition>> = {
  */
 class FTMSchemaServiceClass {
     private resolvedSchemas: Map<string, ResolvedFTMSchema> = new Map();
+    private customSchemas: Map<string, Partial<FTMSchemaDefinition>> = new Map();
     private initialized: boolean = false;
 
     /**
@@ -1280,10 +1427,34 @@ class FTMSchemaServiceClass {
     initialize(): void {
         if (this.initialized) return;
 
+        // Register default schemas
         for (const schemaName of Object.keys(ALL_SCHEMAS)) {
             this.resolveSchema(schemaName);
         }
+
+        // Register custom schemas
+        for (const schemaName of this.customSchemas.keys()) {
+            this.resolveSchema(schemaName);
+        }
+
         this.initialized = true;
+    }
+
+    /**
+     * Register a custom schema definition.
+     */
+    registerSchema(schema: Partial<FTMSchemaDefinition>): void {
+        const name = schema.name;
+        if (!name) return;
+
+        this.customSchemas.set(name, schema);
+        // Clear from resolved cache to force re-resolution
+        this.resolvedSchemas.delete(name);
+
+        // If already initialized, resolve it immediately
+        if (this.initialized) {
+            this.resolveSchema(name);
+        }
     }
 
     /**
@@ -1295,7 +1466,15 @@ class FTMSchemaServiceClass {
             return this.resolvedSchemas.get(schemaName)!;
         }
 
-        const schema = ALL_SCHEMAS[schemaName];
+        let schema = ALL_SCHEMAS[schemaName];
+        if (!schema) {
+            // Check custom schemas
+            const custom = this.customSchemas.get(schemaName);
+            if (custom) {
+                schema = custom;
+            }
+        }
+
         if (!schema) {
             console.warn(`[FTMSchemaService] Schema not found: ${schemaName}`);
             return null;

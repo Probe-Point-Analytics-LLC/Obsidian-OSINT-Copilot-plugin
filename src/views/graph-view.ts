@@ -15,6 +15,7 @@ import { GeocodingService, GeocodingError } from '../services/geocoding-service'
 interface CytoscapeEvent {
     target: NodeSingular | CytoscapeCore;
     originalEvent: MouseEvent;
+    renderedPosition: { x: number; y: number };
 }
 
 interface Layout {
@@ -38,9 +39,15 @@ interface Collection {
     forEach(callback: (ele: NodeSingular, i: number, eles: Collection) => void): void;
     filter(callback: (ele: NodeSingular, i: number, eles: Collection) => boolean): Collection;
     map<T>(callback: (ele: NodeSingular, i: number, eles: Collection) => T): T[];
+    isNode(): boolean;
+    isEdge(): boolean;
 }
 
 interface NodeSingular extends Collection {
+    // inherits
+}
+
+interface EdgeSingular extends Collection {
     // inherits
 }
 
@@ -624,6 +631,25 @@ export class GraphView extends ItemView {
     }
 
     /**
+     * Handle double-click on an edge to open its note.
+     */
+    private async handleEdgeDoubleClick(connectionId: string): Promise<void> {
+        const connection = this.entityManager.getConnection(connectionId);
+
+        if (!connection) return;
+
+        if (connection.filePath) {
+            const file = this.app.vault.getAbstractFileByPath(connection.filePath);
+            if (file instanceof TFile) {
+                await this.app.workspace.getLeaf().openFile(file);
+                return;
+            }
+        }
+
+        new Notice('No note file found for this relationship');
+    }
+
+    /**
      * Handle node click in connection mode.
      */
     private handleConnectionModeClick(nodeId: string, nodeLabel: string): void {
@@ -650,13 +676,10 @@ export class GraphView extends ItemView {
             }
 
             // Open quick modal to enter relationship
-            const modal = new ConnectionQuickModal(
+            // Open FTM interval type selector modal
+            const modal = new FTMIntervalTypeSelectorModal(
                 this.app,
                 this.entityManager,
-                this.sourceNodeId,
-                nodeId,
-                this.sourceNodeLabel || '',
-                nodeLabel,
                 (connectionId?: string) => {
                     // Record connection creation in history and add edge incrementally
                     if (connectionId) {
@@ -667,7 +690,9 @@ export class GraphView extends ItemView {
                             this.addConnectionToGraph(connection);
                         }
                     }
-                }
+                },
+                this.sourceNodeId,
+                nodeId
             );
             modal.open();
 
@@ -807,6 +832,13 @@ export class GraphView extends ItemView {
             this.updateSelectionUI();
         });
 
+        // Double-click on edge opens the connection note
+        this.cy.on('dbltap', 'edge', (evt: CytoscapeEvent) => {
+            const edge = evt.target as EdgeSingular;
+            const connectionId = edge.id();
+            void this.handleEdgeDoubleClick(connectionId);
+        });
+
         // Right-click context menu for nodes
         this.cy.on('cxttap', 'node', (evt: CytoscapeEvent) => {
             const node = evt.target as NodeSingular;
@@ -828,6 +860,19 @@ export class GraphView extends ItemView {
 
             // Create context menu for edge
             this.showEdgeContextMenu(evt.originalEvent, connectionId, relationship, sourceId, targetId);
+        });
+
+        // Hover tooltips for nodes and edges
+        this.cy.on('mouseover', 'node, edge', (evt: CytoscapeEvent) => {
+            const ele = evt.target as NodeSingular; // Safe as we filter by 'node, edge'
+            const isNode = ele.isNode();
+            // Use event position for edges (mouse cursor), node/render position for nodes?
+            // Actually event position is good for both on hover.
+            this.showGraphTooltip(ele, isNode, evt.renderedPosition);
+        });
+
+        this.cy.on('mouseout', 'node, edge', () => {
+            this.hideGraphTooltip();
         });
 
         // Track node position changes for undo/redo and persist to storage
@@ -1761,6 +1806,73 @@ export class GraphView extends ItemView {
     }
 
     /**
+     * Show generic tooltip for nodes and edges.
+     */
+    private showGraphTooltip(ele: NodeSingular | EdgeSingular, isNode: boolean, renderPos: { x: number, y: number }): void {
+        this.hideGraphTooltip(); // Clear any existing
+
+        const tooltip = document.createElement('div');
+        tooltip.id = 'graph_copilot-tooltip';
+        tooltip.style.cssText = `
+            position: fixed; 
+            background: var(--background-primary); 
+            border: 1px solid var(--background-modifier-border); 
+            border-radius: 6px; 
+            padding: 8px 12px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2); 
+            z-index: 2000; 
+            max-width: 250px; 
+            pointer-events: none; 
+            font-size: 12px;
+        `;
+
+        const titleDiv = tooltip.createDiv();
+        titleDiv.style.fontWeight = 'bold';
+        titleDiv.style.marginBottom = '4px';
+
+        const typeDiv = tooltip.createDiv();
+        typeDiv.style.fontSize = '10px';
+        typeDiv.style.color = 'var(--text-muted)';
+        typeDiv.style.textTransform = 'uppercase';
+        typeDiv.style.letterSpacing = '0.5px';
+
+        const hintDiv = tooltip.createDiv();
+        hintDiv.style.marginTop = '6px';
+        hintDiv.style.fontSize = '10px';
+        hintDiv.style.color = 'var(--text-accent)';
+        hintDiv.innerText = 'Click to select • Double-click to open';
+
+        if (isNode) {
+            const label = ele.data('fullLabel') || ele.data('label');
+            const type = ele.data('type');
+            titleDiv.innerText = label;
+            typeDiv.innerText = type;
+        } else {
+            // Edge
+            const label = ele.data('label');
+            titleDiv.innerText = label;
+            typeDiv.innerText = 'RELATIONSHIP';
+        }
+
+        // Position
+        const containerRect = this.container?.getBoundingClientRect();
+        if (containerRect) {
+            // Add offset to not cover cursor
+            tooltip.style.left = `${containerRect.left + renderPos.x + 15}px`;
+            tooltip.style.top = `${containerRect.top + renderPos.y + 15}px`;
+        }
+
+        document.body.appendChild(tooltip);
+    }
+
+    private hideGraphTooltip(): void {
+        const existing = document.getElementById('graph_copilot-tooltip');
+        if (existing) existing.remove();
+        // Also hide location tooltip if generic used
+        this.hideLocationTooltip();
+    }
+
+    /**
      * Show tooltip for Location entities with map preview hint.
      */
     private showLocationTooltip(node: NodeSingular): void {
@@ -1837,7 +1949,8 @@ export class GraphView extends ItemView {
                     'label': (ele: NodeSingular) => {
                         const icon = ele.data('icon') || '📦';
                         const label = ele.data('label') || '';
-                        return `${icon}\n${label}`;
+                        const type = ele.data('type') || '';
+                        return `${icon}\n${label}\n(${type})`;
                     },
                     'text-valign': 'center',
                     'text-halign': 'center',
