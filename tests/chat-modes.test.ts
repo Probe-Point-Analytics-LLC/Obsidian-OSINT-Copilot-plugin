@@ -52,8 +52,8 @@ describe('ChatView Modes Integration', () => {
             processText: vi.fn().mockResolvedValue({ success: true, operations: [] }), // For graph generation hooks
             extractTextFromUrl: vi.fn(),
             extractTextFromFile: vi.fn(),
-            processTextInChunks: vi.fn(),
-            chatWithCustomProvider: vi.fn(),
+            processTextInChunks: vi.fn().mockResolvedValue({ success: true, operations: [] }),
+            chatWithCustomProvider: vi.fn().mockResolvedValue("Default Response"),
         } as any;
 
         // Create ChatView
@@ -214,7 +214,8 @@ describe('ChatView Modes Integration', () => {
         // Assert
         expect(plugin.graphApiService.aiSearch).toHaveBeenCalledWith(
             expect.objectContaining({ query: query }),
-            expect.any(Function)
+            expect.any(Function),
+            expect.any(AbortSignal)
         );
 
         // Verify history contains results rendered
@@ -259,7 +260,8 @@ describe('ChatView Modes Integration', () => {
         expect(plugin.generateReport).toHaveBeenCalledWith(
             description,
             expect.objectContaining({ id: 'test-conv' }),
-            expect.any(Function)
+            expect.any(Function),
+            expect.any(AbortSignal)
         );
 
         const lastMsg = view.chatHistory[view.chatHistory.length - 1];
@@ -306,7 +308,8 @@ describe('ChatView Modes Integration', () => {
                 customApiUrl: checkpoint.url,
                 customApiKey: checkpoint.apiKey,
                 customModel: checkpoint.model
-            })
+            }),
+            expect.any(AbortSignal)
         );
 
         const lastMsg = view.chatHistory[view.chatHistory.length - 1];

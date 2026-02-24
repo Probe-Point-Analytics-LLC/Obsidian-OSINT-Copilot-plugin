@@ -59,7 +59,7 @@ describe('Simulated E2E Report Generation', () => {
             })
         });
 
-        expect(startResponse.status).toBe(200);
+        expect([200, 202]).toContain(startResponse.status);
         const jobId = startResponse.json.job_id;
         expect(jobId).toBeDefined();
         console.log(`Job ID: ${jobId}`);

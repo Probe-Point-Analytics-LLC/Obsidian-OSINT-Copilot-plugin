@@ -280,14 +280,27 @@ export class GraphApiService {
     private async fetchWithTimeout(
         url: string,
         options: RequestInit,
-        timeoutMs: number = 30000
+        timeoutMs: number = 30000,
+        signal?: AbortSignal
     ): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }> {
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+        }
+
         // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 const error = new DOMException('Request timed out', 'AbortError');
                 reject(error);
             }, timeoutMs);
+
+            // Clear timeout if signal aborts
+            if (signal) {
+                signal.addEventListener('abort', () => {
+                    clearTimeout(timer);
+                    reject(new DOMException('Aborted', 'AbortError'));
+                });
+            }
         });
 
         // Create the request promise using Obsidian's requestUrl
@@ -632,7 +645,12 @@ export class GraphApiService {
      * Call custom OpenAI-compatible API for chat.
      * outputting natural language response.
      */
-    async chatWithCustomProvider(text: string, systemPrompt?: string, settings?: { customApiUrl: string, customApiKey: string, customModel: string, type?: 'openai' | 'mindsdb' }): Promise<string> {
+    async chatWithCustomProvider(
+        text: string,
+        systemPrompt?: string,
+        settings?: { customApiUrl: string, customApiKey: string, customModel: string, type?: 'openai' | 'mindsdb' },
+        signal?: AbortSignal
+    ): Promise<string> {
         if (!settings) throw new Error('Custom chat settings not provided');
 
         const { customApiUrl, customApiKey, customModel, type } = settings;
@@ -652,7 +670,7 @@ export class GraphApiService {
             // Default query pattern for MindsDB agents
             const query = `SELECT answer FROM ${customModel} WHERE question='${sanitizedText}'`;
 
-            const response = await requestUrl({
+            const requestPromise = requestUrl({
                 url: endpoint,
                 method: 'POST',
                 headers: {
@@ -662,6 +680,20 @@ export class GraphApiService {
                 body: JSON.stringify({ query }),
                 throw: false
             });
+
+            // Handle cancellation
+            if (signal?.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
+            const response = await (signal
+                ? Promise.race([
+                    requestPromise,
+                    new Promise<never>((_, reject) => {
+                        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+                    })
+                ])
+                : requestPromise);
 
             if (response.status >= 200 && response.status < 300) {
                 try {
@@ -692,7 +724,12 @@ export class GraphApiService {
             endpoint = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
         }
 
-        const response = await requestUrl({
+        // Check for cancellation before request
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const requestPromise = requestUrl({
             url: endpoint,
             method: 'POST',
             headers: {
@@ -708,6 +745,15 @@ export class GraphApiService {
             }),
             throw: false
         });
+
+        const response = await (signal
+            ? Promise.race([
+                requestPromise,
+                new Promise<never>((_, reject) => {
+                    signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+                })
+            ])
+            : requestPromise);
 
         if (response.status >= 200 && response.status < 300) {
             try {
@@ -767,14 +813,15 @@ export class GraphApiService {
         existingEntities?: Entity[],
         referenceTime?: string,
         onChunkProgress?: (chunkIndex: number, totalChunks: number, message: string) => void,
-        onRetry?: RetryCallback
+        onRetry?: RetryCallback,
+        signal?: AbortSignal
     ): Promise<ProcessTextResponse> {
         const CHUNK_SIZE = 8000;  // Characters per chunk
         const CHUNK_THRESHOLD = 10000;  // Only chunk if text is larger than this
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
-            return this.processText(text, existingEntities, referenceTime, onRetry);
+            return this.processText(text, existingEntities, referenceTime, onRetry, signal);
         }
 
         console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
@@ -787,6 +834,10 @@ export class GraphApiService {
         let accumulatedEntities = existingEntities || [];
 
         for (let i = 0; i < chunks.length; i++) {
+            if (signal?.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
             const chunk = chunks[i];
             const chunkNum = i + 1;
 
@@ -797,7 +848,7 @@ export class GraphApiService {
             console.debug(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (${chunk.length} chars)`);
 
             try {
-                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry);
+                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal);
 
                 if (!result.success) {
                     console.warn(`[GraphApiService] Chunk ${chunkNum} failed:`, result.error);
@@ -892,7 +943,8 @@ export class GraphApiService {
         text: string,
         existingEntities?: Entity[],
         referenceTime?: string,
-        onRetry?: RetryCallback
+        onRetry?: RetryCallback,
+        signal?: AbortSignal
     ): Promise<ProcessTextResponse> {
         // Skip health check - just try the request directly.
         // If the API is down, the request will fail with a proper timeout error.
@@ -907,6 +959,10 @@ export class GraphApiService {
         let hadTimeoutError = false;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            if (signal?.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
             try {
                 // Increase timeout if we had a timeout error on previous attempt
                 if (hadTimeoutError) {
@@ -934,7 +990,8 @@ export class GraphApiService {
                             reference_time: referenceTime
                         })
                     },
-                    currentTimeout
+                    currentTimeout,
+                    signal
                 );
 
                 // Handle non-OK responses
@@ -1053,7 +1110,8 @@ export class GraphApiService {
      */
     async aiSearch(
         request: AISearchRequest,
-        onRetry?: RetryCallback
+        onRetry?: RetryCallback,
+        signal?: AbortSignal
     ): Promise<AISearchResponse> {
         // First, try to connect if we haven't checked yet
         if (!this.isOnline) {
@@ -1085,7 +1143,8 @@ export class GraphApiService {
                         credentials: 'omit',
                         body: JSON.stringify(request)
                     },
-                    searchTimeout
+                    searchTimeout,
+                    signal
                 );
 
                 // Handle non-OK responses

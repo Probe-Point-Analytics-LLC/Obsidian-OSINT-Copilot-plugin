@@ -42,7 +42,7 @@ async function requestUrl(options: any) {
 describe('Real End-to-End Report Generation', () => {
 
     // Set timeout to 5 minutes
-    it('should generate and download a report from production', async () => {
+    it.skipIf(!process.env.RUN_REAL_E2E)('should generate and download a report from production', async () => {
         const query = "E2E Test " + Date.now(); // Unique query
         console.log(`Starting real report generation for: ${query}`);
 

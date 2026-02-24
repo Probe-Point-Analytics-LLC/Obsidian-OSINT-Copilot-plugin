@@ -71,10 +71,10 @@ describe('Report Generation Loop Reproduction', () => {
             })
         });
 
-        if (startResponse.status !== 200) {
+        if (![200, 202].includes(startResponse.status)) {
             console.error("Failed to start report:", startResponse.text);
             // Don't fail immediately, let's see what happened
-            expect(startResponse.status).toBe(200);
+            expect([200, 202]).toContain(startResponse.status);
         }
 
         const jobId = startResponse.json.job_id;

@@ -875,7 +875,7 @@ export default class VaultAIPlugin extends Plugin {
   // REMOTE MODEL INTEGRATION
   // ============================================================================
 
-  async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string): Promise<string> {
+  async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string, signal?: AbortSignal): Promise<string> {
     if (!this.settings.reportApiKey) {
       throw new Error(
         "License key is required. Please configure it in settings."
@@ -897,7 +897,7 @@ export default class VaultAIPlugin extends Plugin {
 
 
       // Use Obsidian's requestUrl to bypass CORS restrictions
-      const response: RequestUrlResponse = await requestUrl({
+      const requestPromise = requestUrl({
         url: endpoint,
         method: "POST",
         headers: {
@@ -907,6 +907,20 @@ export default class VaultAIPlugin extends Plugin {
         body: JSON.stringify(requestBody),
         throw: false,
       });
+
+      // Handle cancellation
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const response: RequestUrlResponse = await (signal
+        ? Promise.race([
+          requestPromise,
+          new Promise<never>((_, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+          })
+        ])
+        : requestPromise);
 
       if (response.status < 200 || response.status >= 300) {
         const errorText = response.text || "";
@@ -966,11 +980,12 @@ export default class VaultAIPlugin extends Plugin {
   private async executeStreamingFetch(
     endpoint: string,
     messages: ChatMessage[],
-    onDelta?: (text: string) => void
+    onDelta?: (text: string) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     // Obsidian's requestUrl doesn't support streaming responses,
     // so we fall back to non-streaming and deliver the full response at once
-    const full = await this.callRemoteModel(messages);
+    const full = await this.callRemoteModel(messages, false, undefined, signal);
     if (onDelta) onDelta(full);
     return full;
   }
@@ -978,7 +993,8 @@ export default class VaultAIPlugin extends Plugin {
   async callRemoteModelStream(
     messages: ChatMessage[],
     onDelta?: (text: string) => void,
-    onRetry?: (attempt: number, maxAttempts: number) => void
+    onRetry?: (attempt: number, maxAttempts: number) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     if (!this.settings.reportApiKey) {
       throw new Error("License key is required. Please configure it in settings.");
@@ -996,7 +1012,10 @@ export default class VaultAIPlugin extends Plugin {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await this.executeStreamingFetch(endpoint, messages, onDelta);
+        if (signal?.aborted) {
+          throw new Error("Request was cancelled.");
+        }
+        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
@@ -1092,7 +1111,8 @@ export default class VaultAIPlugin extends Plugin {
     onDelta?: (text: string) => void,
     preloadedNotes?: IndexedNote[],
     onRetry?: (attempt: number, maxAttempts: number) => void,
-    additionalContext?: string
+    additionalContext?: string,
+    signal?: AbortSignal
   ): Promise<{ fullAnswer: string; notes: IndexedNote[] }> {
     if (!this.isAuthenticated()) {
       throw new Error("License key required for AI features. Please configure your license key in settings.");
@@ -1137,7 +1157,7 @@ export default class VaultAIPlugin extends Plugin {
       { role: "user", content: contextText },
     ];
 
-    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry);
+    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry, signal);
 
     return { fullAnswer, notes: contextNotes };
   }
@@ -1149,7 +1169,8 @@ export default class VaultAIPlugin extends Plugin {
   async generateReport(
     description: string,
     currentConversation: Conversation | null,
-    statusCallback?: (status: string, progress?: ReportProgress, intermediateResults?: string[]) => void
+    statusCallback?: (status: string, progress?: ReportProgress, intermediateResults?: string[]) => void,
+    signal?: AbortSignal
   ): Promise<{ content: string; filename: string; conversationId?: string }> {
     // Use the license key for report generation
     const reportApiKey = this.settings.reportApiKey;
@@ -1274,6 +1295,10 @@ export default class VaultAIPlugin extends Plugin {
       };
 
       while (elapsedMs < maxElapsedMs && jobStatus === "processing") {
+        if (signal?.aborted) {
+          throw new Error('Cancelled by user');
+        }
+
         const pollInterval = getPollingInterval(elapsedMs);
         await new Promise(resolve => setTimeout(resolve, pollInterval));
         elapsedMs += pollInterval;
@@ -1311,29 +1336,6 @@ export default class VaultAIPlugin extends Plugin {
               {
                 message: statusData.progress.message || "Processing...",
                 percent: statusData.progress.percent || 0,
-              },
-              statusData.intermediate_results
-            );
-          } else if (jobStatus === "processing") {
-            // SYNTHETIC PROGRESS: If backend doesn't provide progress, estimate based on time
-            // Curve: 0-60s (0-30%), 60-180s (30-70%), 180s+ (70-95%)
-            let syntheticPercent = 5;
-            const elapsedSecs = Math.round(elapsedMs / 1000);
-
-            if (elapsedSecs < 60) {
-              syntheticPercent = 5 + Math.round((elapsedSecs / 60) * 25); // 5 -> 30
-            } else if (elapsedSecs < 180) {
-              syntheticPercent = 30 + Math.round(((elapsedSecs - 60) / 120) * 40); // 30 -> 70
-            } else {
-              syntheticPercent = 70 + Math.round(((elapsedSecs - 180) / 300) * 25); // 70 -> 95
-              syntheticPercent = Math.min(syntheticPercent, 95); // Cap at 95%
-            }
-
-            statusCallback?.(
-              statusData.status,
-              {
-                message: `Processing report... (${elapsedSecs}s elapsed)`,
-                percent: syntheticPercent,
               },
               statusData.intermediate_results
             );
@@ -2164,6 +2166,9 @@ export class ChatView extends ItemView {
   attachmentsContainer!: HTMLElement;
   // Stores attached files - content is extracted only when sending
   attachedFiles: { file: TFile | File; extracted: boolean; content?: string }[] = [];
+
+  // Track active operations for cancellation
+  activeAbortControllers: Map<number, AbortController> = new Map();
 
   constructor(leaf: WorkspaceLeaf, plugin: VaultAIPlugin) {
     super(leaf);
@@ -3854,11 +3859,66 @@ export class ChatView extends ItemView {
       const progressBar = progressContainer.createDiv("vault-ai-progress-bar");
       progressBar.style.width = `${currentProgress.percent}%`;
 
+      // Container for text and button
+      const infoContainer = progressContainer.createDiv("vault-ai-progress-info");
+      infoContainer.style.display = "flex";
+      infoContainer.style.justifyContent = "space-between";
+      infoContainer.style.alignItems = "center";
+      infoContainer.style.marginTop = "4px";
+
       // Create progress text
-      const progressText = progressContainer.createEl("span", {
+      infoContainer.createEl("span", {
         cls: "vault-ai-progress-text",
         text: `${currentProgress.message || "Processing..."} (${currentProgress.percent}%)`,
       });
+
+      // Add Cancel button if operation is active
+      if (this.activeAbortControllers.has(messageIndex)) {
+        const cancelBtn = infoContainer.createEl("button", {
+          text: "✕ Cancel",
+          cls: "vault-ai-cancel-btn"
+        });
+        cancelBtn.style.fontSize = "11px";
+        cancelBtn.style.padding = "2px 6px";
+        cancelBtn.style.height = "auto";
+        cancelBtn.style.marginLeft = "8px";
+        cancelBtn.style.color = "var(--text-muted)";
+        cancelBtn.style.background = "transparent";
+        cancelBtn.style.border = "1px solid var(--background-modifier-border)";
+        cancelBtn.style.borderRadius = "4px";
+        cancelBtn.style.cursor = "pointer";
+
+        cancelBtn.addEventListener("mouseenter", () => {
+          cancelBtn.style.color = "var(--text-error)";
+          cancelBtn.style.borderColor = "var(--text-error)";
+        });
+
+        cancelBtn.addEventListener("mouseleave", () => {
+          cancelBtn.style.color = "var(--text-muted)";
+          cancelBtn.style.borderColor = "var(--background-modifier-border)";
+        });
+
+        cancelBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.handleCancel(messageIndex);
+        });
+      }
+
+      // Feature: Add disclaimer below progress bar for Report Generation
+      const progressMsg = currentProgress.message || "";
+      // Check if it's a report generation (usually has 📄 or "Report" in message/content)
+      const isReportGeneration = progressMsg.includes("📄") || 
+                               progressMsg.includes("Report") || 
+                               (this.chatHistory[messageIndex]?.content && this.chatHistory[messageIndex].content.includes("Generating report"));
+      
+      if (isReportGeneration) {
+         const disclaimer = progressContainer.createDiv("vault-ai-progress-disclaimer");
+         disclaimer.style.marginTop = "4px";
+         disclaimer.style.fontSize = "11px";
+         disclaimer.style.color = "var(--text-muted)";
+         disclaimer.style.fontStyle = "italic";
+         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
+      }
     }
     // Don't remove progress container if progress is not available - keep the last known progress
 
@@ -3903,6 +3963,36 @@ export class ChatView extends ItemView {
       });
     }
     // Don't remove results container if no new results - keep the last known results
+  }
+
+  async handleCancel(index: number) {
+    const controller = this.activeAbortControllers.get(index);
+    if (!controller) return;
+
+    new ConfirmModal(
+      this.app,
+      "Cancel Operation",
+      "Are you sure you want to cancel this operation?",
+      () => {
+        // user confirmed
+        controller.abort();
+        this.activeAbortControllers.delete(index);
+
+        // Update UI to show cancelled state
+        if (this.chatHistory[index]) {
+          const currentContent = this.chatHistory[index].content || "";
+          this.chatHistory[index].content = currentContent + "\n\n❌ **Cancelled by user**";
+          this.chatHistory[index].progress = undefined;
+          this.renderMessages();
+        }
+
+        new Notice("Operation cancelled");
+      },
+      () => {
+        // user cancelled the modal (did not confirm)
+      },
+      true // destructive action
+    ).open();
   }
 
   async handleSend() {
@@ -4088,13 +4178,20 @@ export class ChatView extends ItemView {
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
-      this.chatHistory[assistantIndex].progress = { message, percent };
-      this.updateProgressBar(assistantIndex, { message, percent });
+      // Check if cancelled
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
     };
 
     updateProgress("Sending to custom provider...", 30);
 
     try {
+      // Create new abort controller for this operation
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
       // Call the custom provider (OpenAI compatible)
       // Pass system prompt from settings or default
 
@@ -4108,8 +4205,12 @@ export class ChatView extends ItemView {
           customApiKey: checkpoint.apiKey,
           customModel: checkpoint.model,
           type: checkpoint.type || 'openai'
-        } : undefined
+        } : undefined,
+        controller.signal
       );
+
+      // Clear controller on completion
+      this.activeAbortControllers.delete(assistantIndex);
 
       // Display the response
       this.chatHistory[assistantIndex].content = aiResponse;
@@ -4118,12 +4219,25 @@ export class ChatView extends ItemView {
 
       // If Graph Generation is ALSO enabled, feed the custom AI response into the graph extractor
       if (this.graphGenerationMode) {
-        // Pass the AI response as "text to process", but keep original query for context
-        await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
+        try {
+          // Pass the AI response as "text to process", but keep original query for context
+          await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
+        } catch (graphError) {
+          console.error("[OSINT Copilot] Graph generation from custom chat failed:", graphError);
+          new Notice("Graph generation failed, but the chat response was received successfully.");
+        }
       }
     } catch (error) {
+      this.activeAbortControllers.delete(assistantIndex); // Ensure controller is cleared on error
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Handle user cancellation gracefully
+      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted') || errorMsg.includes('Request was cancelled')) {
+        return; // UI already handled by handleCancel
+      }
+
       console.error("Custom chat error:", error);
-      this.chatHistory[assistantIndex].content = `Error calling custom provider: ${error instanceof Error ? error.message : String(error)}`;
+      this.chatHistory[assistantIndex].content = `Error calling custom provider: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
     }
@@ -4358,7 +4472,14 @@ export class ChatView extends ItemView {
       }
 
     } catch (error) {
+      this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
       const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Handle user cancellation gracefully
+      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted') || errorMsg.includes('Request was cancelled')) {
+        return; // UI already handled by handleCancel
+      }
+
       this.chatHistory[messageIndex].progress = undefined; // Clear progress bar on error
       this.chatHistory[messageIndex].content =
         `🏷️ **Graph Generation Failed**\n\n` +
@@ -4380,9 +4501,13 @@ export class ChatView extends ItemView {
     await this.renderMessages();
 
     // Helper to update progress
+    // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
-      this.chatHistory[assistantIndex].progress = { message, percent };
-      this.updateProgressBar(assistantIndex, { message, percent });
+      // Check if cancelled
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
     };
 
     // Helper to get the last assistant content element for incremental updates
@@ -4398,6 +4523,10 @@ export class ChatView extends ItemView {
     let baseStatusText = "";
 
     try {
+      // Create new abort controller for this operation
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
       updateProgress("Extracting entities from query...", 15);
 
       // 1) Extract entities (multi-entity support)
@@ -4532,7 +4661,17 @@ export class ChatView extends ItemView {
         }
       };
 
-      const result = await this.plugin.askVaultStream(query, onDelta, notes, onRetry, additionalContext);
+      const result = await this.plugin.askVaultStream(
+        query,
+        onDelta,
+        notes,
+        onRetry,
+        additionalContext,
+        controller.signal
+      );
+
+      // Clear controller on completion
+      this.activeAbortControllers.delete(assistantIndex);
 
       // 5) Post-process response for Pinpointing
       let finalContent = result.fullAnswer;
@@ -4570,7 +4709,12 @@ export class ChatView extends ItemView {
 
       // Graph Generation Mode: Extract and create entities from the AI response
       if (this.graphGenerationMode) {
-        await this.processGraphGeneration(assistantIndex, result.fullAnswer, query, finalContent);
+        try {
+          await this.processGraphGeneration(assistantIndex, result.fullAnswer, query, finalContent);
+        } catch (graphError) {
+          console.error("[OSINT Copilot] Graph generation from chat failed:", graphError);
+          new Notice("Graph generation failed, but the chat response was received successfully.");
+        }
       }
     } catch (error) {
       console.error("Chat error:", error);
@@ -4601,9 +4745,13 @@ export class ChatView extends ItemView {
     };
 
     try {
-      // Update status to show entity extraction is in progress
+      // Fetch latest content dynamically to avoid overwriting updates from report generation
+      // This fixes the race condition where "Report Generated Successfully" gets overwritten
+      // by stale "Processing..." content passed as an argument.
+      const latestContent = this.chatHistory[assistantIndex].content || currentContent;
+
       updateProgress("Extracting entities from response...", 10);
-      let statusText = currentContent + "\n\n🏷️ Extracting entities...";
+      let statusText = latestContent + "\n\n🏷️ Extracting entities...";
       this.chatHistory[assistantIndex].content = statusText;
       await this.renderMessages();
 
@@ -4627,25 +4775,43 @@ export class ChatView extends ItemView {
           reasonText = 'Rate limited';
         }
         const retryMsg = `\n\n⚠️ ${reasonText}. Retrying in ${delaySeconds}s... (attempt ${attempt + 1}/${maxAttempts})`;
-        this.chatHistory[assistantIndex].content = currentContent + retryMsg;
+        // Append to existing content, don't overwrite with stale currentContent
+        const existingContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = existingContent + retryMsg;
         void this.renderMessages();
       };
 
-      updateProgress("Sending to AI for entity extraction...", 25);
+      // Chunk progress callback to show user which chunk is being processed
+      const onChunkProgress = (chunkIndex: number, totalChunks: number, message: string) => {
+        const chunkPercent = 10 + Math.round((chunkIndex / totalChunks) * 30);
+        updateProgress(`📦 ${message}`, chunkPercent);
+      };
 
-      // Call the API to extract entities with retry callback
-      const result: ProcessTextResponse = await this.plugin.graphApiService.processText(
+      updateProgress("Sending to AI for entity extraction...", 15);
+
+      // Call the API to extract entities with retry and chunking support
+      // Create new abort controller for this operation
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
+      const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         textToProcess,
         existingEntities,
         undefined,
-        onRetry
+        onChunkProgress,
+        onRetry,
+        controller.signal
       );
+
+      // Clear controller on completion
+      this.activeAbortControllers.delete(assistantIndex);
 
       updateProgress("Processing extraction results...", 40);
 
       if (!result.success) {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-        this.chatHistory[assistantIndex].content = currentContent +
+        const errorContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = errorContent +
           `\n\n⚠️ Entity extraction failed: ${result.error || 'Unknown error'}`;
         await this.renderMessages();
         return;
@@ -4653,7 +4819,8 @@ export class ChatView extends ItemView {
 
       if (!result.operations || result.operations.length === 0) {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-        this.chatHistory[assistantIndex].content = currentContent +
+        const warningContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = warningContent +
           "\n\n🏷️ No new entities detected in the response.";
         await this.renderMessages();
         return;
@@ -4791,14 +4958,17 @@ export class ChatView extends ItemView {
         }
 
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-        this.chatHistory[assistantIndex].content = currentContent + resultMsg;
+
+        // Fetch latest content dynamically to avoid overwriting updates from report generation
+        const successContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = successContent + resultMsg;
 
         // Refresh or open graph view after entity creation
         await this.plugin.refreshOrOpenGraphView();
       } else {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
-        this.chatHistory[assistantIndex].content = currentContent +
-          "\n\n🏷️ No new entities were created (entities may already exist).";
+        const noEntitiesContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = noEntitiesContent + "\n\n🏷️ No entities were created.";
       }
       await this.renderMessages();
 
@@ -4823,6 +4993,10 @@ export class ChatView extends ItemView {
     await this.renderMessages();
 
     try {
+      // Create new abort controller for this operation
+      const controller = new AbortController();
+      this.activeAbortControllers.set(messageIndex, controller);
+
       // Generate report with status updates, progress, and intermediate results
       // Pass current conversation so it can use and update reportConversationId
       const reportData = await this.plugin.generateReport(
@@ -4859,8 +5033,12 @@ export class ChatView extends ItemView {
 
           // Always update progress bar - it will use saved progress if new one is not provided
           this.updateProgressBar(messageIndex, progress, intermediateResults);
-        }
+        },
+        controller.signal
       );
+
+      // Clear controller on completion
+      this.activeAbortControllers.delete(messageIndex);
 
       // Save to vault
       const fileName = await this.plugin.saveReportToVault(
@@ -4888,7 +5066,13 @@ export class ChatView extends ItemView {
 
       // Graph Generation Mode: Extract and create entities from the report
       if (this.graphGenerationMode) {
-        await this.processGraphGeneration(messageIndex, reportData.content, description, finalContent);
+        try {
+          await this.processGraphGeneration(messageIndex, reportData.content, description, finalContent);
+        } catch (graphError) {
+          console.error("[OSINT Copilot] Graph generation from report failed:", graphError);
+          // Don't re-throw - we want to keep the successfully generated report
+          new Notice("Graph generation failed, but the report was saved successfully.");
+        }
       }
 
       // Open the report file
@@ -4899,7 +5083,13 @@ export class ChatView extends ItemView {
 
       new Notice(`Companies&People saved to ${fileName}`);
     } catch (error) {
+      this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
       const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Handle user cancellation gracefully
+      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) {
+        return; // UI already handled by handleCancel
+      }
 
       // Provide user-friendly error messages for common issues
       let userMessage = errorMsg;
@@ -4945,9 +5135,12 @@ export class ChatView extends ItemView {
 
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
-      this.chatHistory[messageIndex].progress = { message, percent };
-      this.chatHistory[messageIndex].content = `🔎 ${message}`;
-      this.updateProgressBar(messageIndex, { message, percent });
+      // Check if cancelled
+      if (this.activeAbortControllers.has(messageIndex)) {
+        this.chatHistory[messageIndex].progress = { message, percent };
+        this.chatHistory[messageIndex].content = `🔎 ${message}`;
+        this.updateProgressBar(messageIndex, { message, percent });
+      }
     };
 
     try {
@@ -4991,8 +5184,19 @@ export class ChatView extends ItemView {
 
       updateProgress("Searching OSINT databases...", 50);
 
+      // Create new abort controller for this operation
+      const controller = new AbortController();
+      this.activeAbortControllers.set(messageIndex, controller);
+
       // Call the AI search API
-      const result: AISearchResponse = await this.plugin.graphApiService.aiSearch(searchRequest, onRetry);
+      const result: AISearchResponse = await this.plugin.graphApiService.aiSearch(
+        searchRequest,
+        onRetry,
+        controller.signal
+      );
+
+      // Clear controller on completion
+      this.activeAbortControllers.delete(messageIndex);
 
       updateProgress("Processing results...", 80);
 
@@ -5017,10 +5221,17 @@ export class ChatView extends ItemView {
       }
 
     } catch (error) {
+      this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
       console.error('[ChatView] Digital Footprint error:', error);
       this.chatHistory[messageIndex].progress = undefined;
 
       let errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Handle user cancellation gracefully
+      if (errorMessage === 'Cancelled by user' || errorMessage.includes('Aborted')) {
+        return; // UI already handled by handleCancel
+      }
+
       let suggestion = '';
 
       if (errorMessage.includes('timeout')) {
@@ -5171,7 +5382,16 @@ export class ChatView extends ItemView {
     const baseDelayMs = 1000;
     let lastError: Error | null = null;
 
+    // Create new abort controller for this operation
+    const controller = new AbortController();
+    this.activeAbortControllers.set(messageIndex, controller);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // Check cancellation before each attempt
+      if (controller.signal.aborted) {
+        this.activeAbortControllers.delete(messageIndex);
+        return;
+      }
       try {
         updateProgress("Connecting to dark web API...", 10);
 
@@ -5245,6 +5465,10 @@ export class ChatView extends ItemView {
         return; // Success, exit the retry loop
 
       } catch (error) {
+        // If aborted during initial request (rare but possible if we implemented abortable fetch)
+        if (this.activeAbortControllers.has(messageIndex) && this.activeAbortControllers.get(messageIndex)?.signal.aborted) {
+          return;
+        }
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // Only retry on transient network errors
@@ -5284,6 +5508,7 @@ export class ChatView extends ItemView {
 
     // Restore the query to the input field so user can retry
     this.inputEl.value = query;
+    this.activeAbortControllers.delete(messageIndex);
   }
 
   pollDarkWebStatus(jobId: string, messageIndex: number, query: string) {
@@ -5307,6 +5532,12 @@ export class ChatView extends ItemView {
     };
 
     const poll = async () => {
+      // Check cancellation
+      if (!this.activeAbortControllers.has(messageIndex)) {
+        this.pollingIntervals.delete(jobId);
+        return;
+      }
+
       // Check if we've exceeded the maximum elapsed time
       if (elapsedMs >= maxElapsedMs) {
         this.pollingIntervals.delete(jobId);
@@ -5345,6 +5576,12 @@ export class ChatView extends ItemView {
             // The job may have completed but status was lost
             try {
               await this.fetchDarkWebResults(jobId, messageIndex, query);
+              // Clean up controller is handled in fetchDarkWebResults or here?
+              // fetchDarkWebResults is async/recursive-ish via poll? No, it's a separate call.
+              // Actually fetchDarkWebResults handles completion.
+              // But we should clear it here if it returns successfully?
+              // Let's rely on fetchDarkWebResults to clear it or clear it here if it returns.
+              this.activeAbortControllers.delete(messageIndex);
               return; // Success - results fetched
             } catch (summaryError) {
               console.error('[OSINT Copilot] Failed to fetch results after 404:', summaryError);
@@ -5356,6 +5593,7 @@ export class ChatView extends ItemView {
                 progress: undefined,
               };
               await this.renderMessages();
+              this.activeAbortControllers.delete(messageIndex);
               return;
             }
           }
@@ -5425,6 +5663,7 @@ export class ChatView extends ItemView {
 
           // Fetch the summary and save to vault
           await this.fetchDarkWebResults(jobId, messageIndex, query);
+          this.activeAbortControllers.delete(messageIndex);
         } else if (status === "failed") {
           // Stop polling
           this.pollingIntervals.delete(jobId);
@@ -5555,7 +5794,12 @@ export class ChatView extends ItemView {
 
       // Graph Generation Mode: Extract and create entities from the dark web results
       if (this.graphGenerationMode) {
-        await this.processGraphGeneration(messageIndex, reportContent, query, displayText);
+        try {
+          await this.processGraphGeneration(messageIndex, reportContent, query, displayText);
+        } catch (graphError) {
+          console.error("[OSINT Copilot] Graph generation from dark web results failed:", graphError);
+          new Notice("Graph generation failed, but the report was saved successfully.");
+        }
       }
 
       // Open the saved file if it exists
