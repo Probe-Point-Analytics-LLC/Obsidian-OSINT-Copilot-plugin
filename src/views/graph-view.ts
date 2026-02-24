@@ -288,7 +288,7 @@ export class GraphView extends ItemView {
             const subUl = li1.createEl('ul');
             subUl.createEl('li', { text: 'Browser extensions (ad blockers, privacy tools)' });
             subUl.createEl('li', { text: 'Corporate firewall or network restrictions' });
-            subUl.createEl('li', { text: 'Content Security Policy (CSP) settings' });
+            subUl.createEl('li', { text: 'Content security policy settings' });
 
             const li2 = ul.createEl('li');
             li2.createEl('strong', { text: 'Network issues' });
@@ -1827,20 +1827,26 @@ export class GraphView extends ItemView {
         `;
 
         const titleDiv = tooltip.createDiv();
-        titleDiv.style.fontWeight = 'bold';
-        titleDiv.style.marginBottom = '4px';
+        titleDiv.setCssProps({
+            'font-weight': 'bold',
+            'margin-bottom': '4px'
+        });
 
         const typeDiv = tooltip.createDiv();
-        typeDiv.style.fontSize = '10px';
-        typeDiv.style.color = 'var(--text-muted)';
-        typeDiv.style.textTransform = 'uppercase';
-        typeDiv.style.letterSpacing = '0.5px';
+        typeDiv.setCssProps({
+            'font-size': '10px',
+            color: 'var(--text-muted)',
+            'text-transform': 'uppercase',
+            'letter-spacing': '0.5px'
+        });
 
         const hintDiv = tooltip.createDiv();
-        hintDiv.style.marginTop = '6px';
-        hintDiv.style.fontSize = '10px';
-        hintDiv.style.color = 'var(--text-accent)';
-        hintDiv.innerText = 'Click to select • Double-click to open';
+        hintDiv.setCssProps({
+            'margin-top': '6px',
+            'font-size': '10px',
+            color: 'var(--text-accent)'
+        });
+        hintDiv.innerText = 'Click to select • double-click to open';
 
         if (isNode) {
             const label = ele.data('fullLabel') || ele.data('label');
@@ -2688,8 +2694,8 @@ export class GraphView extends ItemView {
             'justify-content': 'space-between',
             'align-items': 'center'
         });
-        const historyTitle = header.createEl('span', { text: '📜 Edit history' });
-        historyTitle.setCssProps({ fontWeight: 'bold' });
+        const historyTitle = header.createEl('span', { text: 'Edit history' });
+        historyTitle.setCssProps({ 'font-weight': 'bold' });
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '✕';

@@ -532,7 +532,7 @@ export default class VaultAIPlugin extends Plugin {
    */
   async openGraphView(forceNew: boolean = false) {
     if (this.settings.permissions && this.settings.permissions.allow_graph_automation === false) {
-      new Notice("Your plan does not include access to Graph Automation features. Please upgrade.");
+      new Notice("Your plan does not include access to graph automation features. Please upgrade.");
       return;
     }
 
@@ -1878,7 +1878,7 @@ export default class VaultAIPlugin extends Plugin {
    */
   async openChatView(forceNew: boolean = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new Notice("Your plan does not include access to the Chat View/Local Agent. Please upgrade to Local Agent or Plugin Own Data plan.");
+      new Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
       return;
     }
     // License key validation - Chat feature requires a valid license key
@@ -2391,7 +2391,7 @@ export class ChatView extends ItemView {
     const settingsBtn = buttonGroup.createEl("button", {
       text: "⚙️",
       cls: "vault-ai-settings-btn",
-      attr: { "aria-label": "Open Settings" }
+      attr: { "aria-label": "Open settings" }
     });
     settingsBtn.addEventListener("click", () => {
       // @ts-ignore
@@ -2545,7 +2545,7 @@ export class ChatView extends ItemView {
       cls: "vault-ai-upload-btn",
       attr: {
         "aria-label": "Upload file for graph generation",
-        "title": "Upload file for graph generation (.md, .txt, .pdf, .docx)"
+        "title": "Upload file for graph generation (.md, .txt, .pdf, .docx)" // eslint-disable-line obsidianmd/ui/sentence-case
       }
     });
     // Only show in Graph Generation mode (or Graph Only mode)
@@ -2620,7 +2620,7 @@ export class ChatView extends ItemView {
 
       // Only process drops in Graph Only mode
       if (!this.isGraphOnlyMode()) {
-        new Notice("File drop only available in Graph Generation mode");
+        new Notice("File drop only available in graph generation mode");
         return;
       }
 
@@ -2851,13 +2851,13 @@ export class ChatView extends ItemView {
       const url = urlInput.value.trim();
 
       if (!url) {
-        statusEl.textContent = "❌ Please enter a URL";
+        statusEl.textContent = "❌ Please enter a URL"; // eslint-disable-line obsidianmd/ui/sentence-case
         statusEl.style.color = "var(--text-error)";
         return;
       }
 
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        statusEl.textContent = "❌ URL must start with http:// or https://";
+        statusEl.textContent = "❌ URL must start with http:// or https://"; // eslint-disable-line obsidianmd/ui/sentence-case
         statusEl.style.color = "var(--text-error)";
         return;
       }
@@ -2866,7 +2866,7 @@ export class ChatView extends ItemView {
       extractBtn.disabled = true;
       cancelBtn.disabled = true;
       extractBtn.textContent = "Extracting...";
-      statusEl.textContent = "🔗 Fetching content from URL...";
+      statusEl.textContent = "🔗 Fetching content from URL..."; // eslint-disable-line obsidianmd/ui/sentence-case
       statusEl.style.color = "var(--text-muted)";
 
       try {
@@ -2897,9 +2897,9 @@ export class ChatView extends ItemView {
         const errorMsg = error instanceof Error ? error.message : String(error);
 
         if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
-          statusEl.textContent = "❌ Request timed out. Try a simpler page.";
+          statusEl.textContent = "❌ Request timed out. Try a simpler page."; // eslint-disable-line obsidianmd/ui/sentence-case
         } else if (errorMsg.includes("429")) {
-          statusEl.textContent = "❌ Server busy. Please wait and try again.";
+          statusEl.textContent = "❌ Server busy. Please wait and try again."; // eslint-disable-line obsidianmd/ui/sentence-case
         } else {
           statusEl.textContent = `❌ ${errorMsg}`;
         }
@@ -2908,7 +2908,7 @@ export class ChatView extends ItemView {
         // Re-enable buttons
         extractBtn.disabled = false;
         cancelBtn.disabled = false;
-        extractBtn.textContent = "Extract & Generate";
+        extractBtn.textContent = "Extract & generate";
       }
     });
 
@@ -3587,7 +3587,7 @@ export class ChatView extends ItemView {
       if (item.role === "assistant" && item.usedEntities && item.usedEntities.length > 0) {
         const entitiesDiv = messageDiv.createDiv("vault-ai-used-entities");
         entitiesDiv.style.marginTop = "8px";
-        entitiesDiv.createEl("small", { text: "Graph Sources:" });
+        entitiesDiv.createEl("small", { text: "Graph sources:" });
 
         const chipsContainer = entitiesDiv.createDiv("vault-ai-entity-chips-container");
         chipsContainer.style.cssText = `
@@ -3875,7 +3875,7 @@ export class ChatView extends ItemView {
       // Add Cancel button if operation is active
       if (this.activeAbortControllers.has(messageIndex)) {
         const cancelBtn = infoContainer.createEl("button", {
-          text: "✕ Cancel",
+          text: "✕ Cancel", // eslint-disable-line obsidianmd/ui/sentence-case
           cls: "vault-ai-cancel-btn"
         });
         cancelBtn.style.fontSize = "11px";
@@ -3907,17 +3907,17 @@ export class ChatView extends ItemView {
       // Feature: Add disclaimer below progress bar for Report Generation
       const progressMsg = currentProgress.message || "";
       // Check if it's a report generation (usually has 📄 or "Report" in message/content)
-      const isReportGeneration = progressMsg.includes("📄") || 
-                               progressMsg.includes("Report") || 
-                               (this.chatHistory[messageIndex]?.content && this.chatHistory[messageIndex].content.includes("Generating report"));
-      
+      const isReportGeneration = progressMsg.includes("📄") ||
+        progressMsg.includes("Report") ||
+        (this.chatHistory[messageIndex]?.content && this.chatHistory[messageIndex].content.includes("Generating report"));
+
       if (isReportGeneration) {
-         const disclaimer = progressContainer.createDiv("vault-ai-progress-disclaimer");
-         disclaimer.style.marginTop = "4px";
-         disclaimer.style.fontSize = "11px";
-         disclaimer.style.color = "var(--text-muted)";
-         disclaimer.style.fontStyle = "italic";
-         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
+        const disclaimer = progressContainer.createDiv("vault-ai-progress-disclaimer");
+        disclaimer.style.marginTop = "4px";
+        disclaimer.style.fontSize = "11px";
+        disclaimer.style.color = "var(--text-muted)";
+        disclaimer.style.fontStyle = "italic";
+        disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
       }
     }
     // Don't remove progress container if progress is not available - keep the last known progress
@@ -5887,9 +5887,9 @@ class VaultAISettingTab extends PluginSettingTab {
 
     // Custom Chat Configuration
     if (this.plugin.settings.permissions && this.plugin.settings.permissions.allow_custom_chat_config) {
-      containerEl.createEl("h3", { text: "Custom Chat Configuration" });
+      new Setting(containerEl).setName("Custom chat configuration").setHeading();
       containerEl.createEl("p", {
-        text: "Configure LLM providers for the 'Custom Chat' mode. Add multiple checkpoints (e.g., local models, different providers) and select them in the chat view.",
+        text: "Configure LLM providers for the 'Custom chat' mode. Add multiple checkpoints (e.g., local models, different providers) and select them in the chat view.", // eslint-disable-line obsidianmd/ui/sentence-case
         cls: "setting-item-description"
       });
 
@@ -5900,7 +5900,9 @@ class VaultAISettingTab extends PluginSettingTab {
       const addSection = containerEl.createDiv("vault-ai-add-checkpoint");
       addSection.style.borderTop = "1px solid var(--background-modifier-border)";
       addSection.style.paddingTop = "10px";
-      const addHeader = addSection.createEl("h4", { text: "Add New Checkpoint" });
+      const addHeader = addSection.createDiv();
+      addHeader.setText("Add new checkpoint");
+      addHeader.addClass("setting-item-heading");
 
       // State for inputs
       let newName = "";
@@ -5932,8 +5934,8 @@ class VaultAISettingTab extends PluginSettingTab {
         if (modelInput) modelInput.setValue("");
         if (typeDropdown) typeDropdown.setValue("openai");
 
-        addHeader.setText("Add New Checkpoint");
-        if (actionButton) actionButton.setButtonText("Add Checkpoint");
+        addHeader.setText("Add new checkpoint");
+        if (actionButton) actionButton.setButtonText("Add checkpoint");
       };
 
       // Render list with Edit/Delete
@@ -5981,8 +5983,8 @@ class VaultAISettingTab extends PluginSettingTab {
               if (modelInput) modelInput.setValue(newModel);
               if (typeDropdown) typeDropdown.setValue(newType);
 
-              addHeader.setText("Edit Checkpoint");
-              if (actionButton) actionButton.setButtonText("Update Checkpoint");
+              addHeader.setText("Edit checkpoint");
+              if (actionButton) actionButton.setButtonText("Update checkpoint");
               if (actionButton) actionButton.setCta();
             });
 
@@ -6012,16 +6014,16 @@ class VaultAISettingTab extends PluginSettingTab {
         .setDesc("Display name")
         .addText(text => {
           nameInput = text;
-          text.setPlaceholder("My Custom LLM").onChange(v => newName = v);
+          text.setPlaceholder("My custom LLM").onChange(v => newName = v); // eslint-disable-line obsidianmd/ui/sentence-case
         });
 
       new Setting(addSection)
-        .setName("Provider Type")
+        .setName("Provider type")
         .setDesc("Protocol to use")
         .addDropdown(dropdown => {
           typeDropdown = dropdown;
           dropdown
-            .addOption('openai', 'OpenAI Compatible (Default)')
+            .addOption('openai', 'OpenAI compatible (default)')
             .addOption('mindsdb', 'MindsDB (SQL via HTTP)')
             .setValue(newType)
             .onChange((v: string) => {
@@ -6039,34 +6041,34 @@ class VaultAISettingTab extends PluginSettingTab {
         .setDesc("Base URL. For MindsDB, use the root (e.g. http://127.0.0.1:47334). For OpenAI, the full path is constructed automatically unless specified.")
         .addText(text => {
           urlInput = text;
-          text.setValue(newUrl).setPlaceholder("http://localhost:11434/v1").onChange(v => newUrl = v);
+          text.setValue(newUrl).setPlaceholder("http://localhost:11434/v1").onChange(v => newUrl = v); // eslint-disable-line obsidianmd/ui/sentence-case
         });
 
       new Setting(addSection)
-        .setName("API Key")
+        .setName("API key")
         .setDesc("Optional")
         .addText(text => {
           keyInput = text;
-          text.setPlaceholder("sk-...").onChange(v => newKey = v);
+          text.setPlaceholder("sk-...").onChange(v => newKey = v); // eslint-disable-line obsidianmd/ui/sentence-case
         });
 
       new Setting(addSection)
-        .setName("Model / Agent Name")
-        .setDesc("Model ID or Agent Name")
+        .setName("Model / agent name")
+        .setDesc("Model ID or agent name")
         .addText(text => {
           modelInput = text;
-          text.setPlaceholder("llama3 or my_agent").onChange(v => newModel = v);
+          text.setPlaceholder("llama3 or my_agent").onChange(v => newModel = v); // eslint-disable-line obsidianmd/ui/sentence-case
         });
 
       new Setting(addSection)
         .addButton(btn => {
           actionButton = btn;
           btn
-            .setButtonText("Add Checkpoint")
+            .setButtonText("Add checkpoint")
             .setCta()
             .onClick(async () => {
               if (!newName || !newUrl || !newModel) {
-                new Notice("Name, URL, and Model are required.");
+                new Notice("Name, URL, and model are required.");
                 return;
               }
 
@@ -6105,14 +6107,14 @@ class VaultAISettingTab extends PluginSettingTab {
 
       new Setting(addSection)
         .addButton(btn => btn
-          .setButtonText("Clear / Cancel")
+          .setButtonText("Clear / cancel")
           .onClick(() => {
             resetForm();
           }));
     } else {
-      containerEl.createEl("h3", { text: "Custom Chat Configuration" });
+      new Setting(containerEl).setName("Custom chat configuration").setHeading();
       containerEl.createEl("p", {
-        text: "This feature is available in 'Plugin Own Data' plan.",
+        text: "This feature is available in 'Plugin own data' plan.", // eslint-disable-line obsidianmd/ui/sentence-case
         cls: "setting-item-description"
       }).style.color = "var(--text-muted)";
     }

@@ -71,7 +71,7 @@ export class CustomTypeCreationModal extends Modal {
         // CSS for the modal
         this.addStyles(contentEl);
 
-        const title = this.baseType === 'Interval' ? 'Create Custom Connection Type' : 'Create Custom Entity Type';
+        const title = this.baseType === 'Interval' ? 'Create custom connection type' : 'Create custom entity type';
         contentEl.createEl('h2', { text: title });
 
         const mainContainer = contentEl.createDiv({ cls: 'graph_copilot-custom-type-container' });
@@ -90,10 +90,10 @@ export class CustomTypeCreationModal extends Modal {
 
     private renderGeneralSettings(container: HTMLElement) {
         const section = container.createDiv({ cls: 'graph_copilot-section' });
-        section.createEl('h3', { text: '1. General Information' });
+        section.createEl('h3', { text: '1. General information' });
 
         new Setting(section)
-            .setName('Type Name')
+            .setName('Type name')
             .setDesc('Internal name (CamelCase, e.g. "MyCustomType")')
             .addText(text => text
                 .setPlaceholder('MyCustomType')
@@ -110,17 +110,17 @@ export class CustomTypeCreationModal extends Modal {
                 }));
 
         new Setting(section)
-            .setName('Display Label')
-            .setDesc('Human readable label (e.g. "My Custom Type")')
+            .setName('Display label')
+            .setDesc('Human readable label')
             .addText(text => text
-                .setPlaceholder('My Custom Type')
+                .setPlaceholder('My custom type')
                 .onChange(value => this.schema.label = value));
 
         new Setting(section)
-            .setName('Plural Label')
+            .setName('Plural label')
             .setDesc('Plural formatted label')
             .addText(text => text
-                .setPlaceholder('My Custom Types')
+                .setPlaceholder('My custom types')
                 .onChange(value => this.schema.plural = value));
 
         new Setting(section)
@@ -140,12 +140,11 @@ export class CustomTypeCreationModal extends Modal {
 
     private renderPropertyBuilder(container: HTMLElement) {
         const section = container.createDiv({ cls: 'graph_copilot-section' });
-        section.style.marginTop = '20px';
+        section.addClass('graph_copilot-section--properties');
         section.createEl('h3', { text: '2. Properties' });
         section.createEl('p', { text: 'Define custom properties for this entity type.', cls: 'setting-item-description' });
 
         const propertiesContainer = section.createDiv({ cls: 'graph_copilot-properties-list' });
-        propertiesContainer.style.marginBottom = '10px';
 
         // Render existing rows
         // Note: For reactivity, we clears and redraw list on change, or manage DOM manually.
@@ -158,36 +157,32 @@ export class CustomTypeCreationModal extends Modal {
                 return;
             }
 
-            const table = propertiesContainer.createEl('table');
-            table.style.width = '100%';
-            table.style.borderCollapse = 'collapse';
+            const table = propertiesContainer.createEl('table', { cls: 'graph_copilot-properties-table' });
 
             const thead = table.createEl('thead');
-            const headerRow = thead.createEl('tr');
-            headerRow.style.textAlign = 'left';
-            ['Label', 'Key', 'Type', 'Flags', 'Actions'].forEach(h => headerRow.createEl('th', { text: h }).style.padding = '8px');
+            const headerRow = thead.createEl('tr', { cls: 'graph_copilot-properties-header' });
+            ['Label', 'Key', 'Type', 'Flags', 'Actions'].forEach(h => {
+                headerRow.createEl('th', { text: h, cls: 'graph_copilot-properties-th' });
+            });
 
             const tbody = table.createEl('tbody');
 
             this.propertyRows.forEach((row, index) => {
-                const tr = tbody.createEl('tr');
-                tr.style.borderTop = '1px solid var(--background-modifier-border)';
+                const tr = tbody.createEl('tr', { cls: 'graph_copilot-properties-row' });
 
                 // Label
-                tr.createEl('td', { text: row.label }).style.padding = '8px';
+                tr.createEl('td', { text: row.label, cls: 'graph_copilot-properties-td' });
                 // Key
-                tr.createEl('td', { text: row.key }).style.padding = '8px';
+                tr.createEl('td', { text: row.key, cls: 'graph_copilot-properties-td' });
                 // Type
-                tr.createEl('td', { text: row.type }).style.padding = '8px';
+                tr.createEl('td', { text: row.type, cls: 'graph_copilot-properties-td' });
                 // Flags
-                const flagsTd = tr.createEl('td');
-                flagsTd.style.padding = '8px';
-                if (row.required) flagsTd.createSpan({ text: 'Req', cls: 'graph_copilot-tag' }).style.marginRight = '4px';
+                const flagsTd = tr.createEl('td', { cls: 'graph_copilot-properties-td' });
+                if (row.required) flagsTd.createSpan({ text: 'Req', cls: 'graph_copilot-tag graph_copilot-tag--mr' });
                 if (row.featured) flagsTd.createSpan({ text: 'Feat', cls: 'graph_copilot-tag' });
 
                 // Actions
-                const actionsTd = tr.createEl('td');
-                actionsTd.style.padding = '8px';
+                const actionsTd = tr.createEl('td', { cls: 'graph_copilot-properties-td' });
                 const deleteBtn = actionsTd.createEl('button', { text: '🗑' });
                 deleteBtn.onclick = () => {
                     this.propertyRows.splice(index, 1);
@@ -200,12 +195,8 @@ export class CustomTypeCreationModal extends Modal {
 
         // Add Property Form
         const addPropSection = section.createDiv({ cls: 'graph_copilot-add-property-form' });
-        addPropSection.style.background = 'var(--background-secondary)';
-        addPropSection.style.padding = '10px';
-        addPropSection.style.borderRadius = '6px';
-        addPropSection.style.marginTop = '10px';
 
-        addPropSection.createEl('h4', { text: 'Add Property' });
+        addPropSection.createEl('h4', { text: 'Add property' });
 
         // Simple inline form
         // We'll use a temporary state for the new property
@@ -213,17 +204,14 @@ export class CustomTypeCreationModal extends Modal {
             id: '', key: '', label: '', type: 'string', description: '', required: false, featured: false
         };
 
-        const formGrid = addPropSection.createDiv();
-        formGrid.style.display = 'grid';
-        formGrid.style.gridTemplateColumns = '1fr 1fr';
-        formGrid.style.gap = '10px';
+        const formGrid = addPropSection.createDiv({ cls: 'graph_copilot-form-grid' });
 
         // Label Input
         const nameContainer = formGrid.createDiv();
         nameContainer.createDiv({ text: 'Label *', cls: 'setting-item-name' });
         const nameInput = new TextComponent(nameContainer);
-        nameInput.setPlaceholder('e.g. Birth Date');
-        nameInput.inputEl.style.width = '100%';
+        nameInput.setPlaceholder('E.g. birth date'); // eslint-disable-line obsidianmd/ui/sentence-case
+        nameInput.inputEl.addClass('graph_copilot-input-full');
         nameInput.onChange(val => {
             newProp.label = val;
             // Auto-generate key
@@ -236,10 +224,10 @@ export class CustomTypeCreationModal extends Modal {
 
         // Key Input
         const keyContainer = formGrid.createDiv();
-        keyContainer.createDiv({ text: 'Property Key *', cls: 'setting-item-name' });
+        keyContainer.createDiv({ text: 'Property key *', cls: 'setting-item-name' });
         const keyInput = new TextComponent(keyContainer);
-        keyInput.setPlaceholder('e.g. birthDate');
-        keyInput.inputEl.style.width = '100%';
+        keyInput.setPlaceholder('E.g. birthDate');
+        keyInput.inputEl.addClass('graph_copilot-input-full');
         keyInput.onChange(val => newProp.key = val);
 
         // Type Select
@@ -255,29 +243,24 @@ export class CustomTypeCreationModal extends Modal {
         descContainer.createDiv({ text: 'Description', cls: 'setting-item-name' });
         const descInput = new TextComponent(descContainer);
         descInput.setPlaceholder('Optional description');
-        descInput.inputEl.style.width = '100%';
+        descInput.inputEl.addClass('graph_copilot-input-full');
         descInput.onChange(val => newProp.description = val);
 
         // Flags
-        const flagsContainer = addPropSection.createDiv();
-        flagsContainer.style.marginTop = '10px';
-        flagsContainer.style.display = 'flex';
-        flagsContainer.style.gap = '20px';
+        const flagsContainer = addPropSection.createDiv({ cls: 'graph_copilot-flags-container' });
 
         new Setting(flagsContainer).setName('Required').addToggle(t => t.onChange(v => newProp.required = v));
-        new Setting(flagsContainer).setName('Key Property (Featured)').addToggle(t => t.onChange(v => newProp.featured = v));
+        new Setting(flagsContainer).setName('Key property (featured)').addToggle(t => t.onChange(v => newProp.featured = v));
 
         // Add Button
-        const btnContainer = addPropSection.createDiv();
-        btnContainer.style.marginTop = '10px';
-        btnContainer.style.textAlign = 'right';
+        const btnContainer = addPropSection.createDiv({ cls: 'graph_copilot-btn-container' });
 
         const addBtn = new ButtonComponent(btnContainer)
-            .setButtonText('Add Property')
+            .setButtonText('Add property')
             .setCta()
             .onClick(() => {
                 if (!newProp.label || !newProp.key) {
-                    new Notice('Label and Key are required');
+                    new Notice('Label and key are required');
                     return;
                 }
 
@@ -301,17 +284,13 @@ export class CustomTypeCreationModal extends Modal {
 
     private renderFooter(contentEl: HTMLElement) {
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
-        buttonContainer.style.marginTop = '20px';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.justifyContent = 'flex-end';
-        buttonContainer.style.gap = '10px';
 
         new ButtonComponent(buttonContainer)
             .setButtonText('Cancel')
             .onClick(() => this.close());
 
         new ButtonComponent(buttonContainer)
-            .setButtonText(this.isEditing ? 'Update Type' : 'Create Type')
+            .setButtonText(this.isEditing ? 'Update type' : 'Create type')
             .setCta()
             .onClick(() => this.handleSave());
     }
@@ -337,11 +316,11 @@ export class CustomTypeCreationModal extends Modal {
     private async handleSave() {
         // Validate
         if (!this.schema.name) {
-            new Notice('Internal Type Name is required');
+            new Notice('Internal type name is required');
             return;
         }
         if (!this.schema.label) {
-            new Notice('Display Label is required');
+            new Notice('Display label is required');
             return;
         }
 

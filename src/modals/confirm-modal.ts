@@ -30,13 +30,7 @@ export class ConfirmModal extends Modal {
         contentEl.createEl('h2', { text: this.title });
         contentEl.createDiv({ text: this.message, cls: 'vault-ai-confirm-message' });
 
-        const buttonContainer = contentEl.createDiv({ cls: 'vault-ai-confirm-buttons' });
-        buttonContainer.setCssProps({
-            marginTop: '20px',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            gap: '10px'
-        });
+        const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-confirm-buttons' });
 
         const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
         cancelButton.addEventListener('click', () => {
@@ -46,15 +40,8 @@ export class ConfirmModal extends Modal {
 
         const confirmButton = buttonContainer.createEl('button', {
             text: 'Confirm',
-            cls: this.destructive ? 'mod-warning' : 'mod-cta'
+            cls: this.destructive ? 'mod-warning graph_copilot-confirm-btn--danger' : 'mod-cta'
         });
-
-        if (this.destructive) {
-            confirmButton.setCssProps({
-                backgroundColor: 'var(--text-error)',
-                color: 'var(--text-on-accent)'
-            });
-        }
 
         confirmButton.addEventListener('click', () => {
             this.onConfirm();
