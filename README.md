@@ -612,7 +612,7 @@ Configure OSINT Copilot to match your workflow and requirements.
 | Cannot find Community plugins | Go to **Settings -> Community plugins** and turn off **Safe mode**. |
 | Plugin not listed in Browse | Use the manual installation method (or install via the template). |
 | Plugin doesn't appear after manual install | Ensure the folder is named `.obsidian/plugins/Obsidian-OSINT-Copilot-plugin/` and contains `main.js` directly inside. Restart Obsidian. |
-| "Invalid API key" / Features locked | Ensure you copied the License Key exactly from osint-copilot.com/dashboard with no spaces. Verify your plan hasn't run out of credits. |
+| "Invalid License key" / Features locked | Ensure you copied the License Key exactly from osint-copilot.com/dashboard with no spaces. Verify your plan hasn't run out of credits. |
 | AI analysis / Reports seem incomplete | The source material may lack sufficient detail. Try using the Entity extraction mode on raw text directly. |
 | Entities aren't linking / appearing in Graph | Verify the "Entity Base Path" setting matches where your entities are saved. Refresh the Graph View. |
 
