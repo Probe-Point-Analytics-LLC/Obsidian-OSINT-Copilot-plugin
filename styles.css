@@ -2549,3 +2549,201 @@ svg.leaflet-image-layer.leaflet-interactive path {
 .leaflet-retina .leaflet-control-layers-toggle {
   background-size: cover;
 }
+
+/* ============================================
+   Custom Type Modal & Shared Utility Classes
+   (replacing inline styles for lint compliance)
+   ============================================ */
+
+/* Properties table in custom type modal */
+.graph_copilot-properties-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.graph_copilot-properties-header {
+  text-align: left;
+}
+
+.graph_copilot-properties-th {
+  padding: 8px;
+}
+
+.graph_copilot-properties-row {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.graph_copilot-properties-td {
+  padding: 8px;
+}
+
+.graph_copilot-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--background-modifier-hover);
+}
+
+.graph_copilot-tag--mr {
+  margin-right: 4px;
+}
+
+/* Add property form */
+.graph_copilot-add-property-form {
+  background: var(--background-secondary);
+  padding: 10px;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.graph_copilot-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.graph_copilot-input-full {
+  width: 100%;
+}
+
+.graph_copilot-flags-container {
+  margin-top: 10px;
+  display: flex;
+  gap: 20px;
+}
+
+.graph_copilot-btn-container {
+  margin-top: 10px;
+  text-align: right;
+}
+
+.graph_copilot-section--properties {
+  margin-top: 20px;
+}
+
+/* Confirm modal button container */
+.graph_copilot-confirm-buttons {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.graph_copilot-confirm-btn--danger {
+  background-color: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+/* Settings tab utility classes */
+.graph_copilot-settings-section-gap {
+  margin-bottom: 10px;
+}
+
+.graph_copilot-settings-divider {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 15px;
+}
+
+.graph_copilot-settings-status-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  gap: 8px;
+}
+
+.graph_copilot-settings-status-row--flex {
+  flex: 1;
+}
+
+.graph_copilot-settings-status-label {
+  font-size: 12px;
+}
+
+.graph_copilot-settings-danger {
+  color: var(--text-error);
+}
+
+/* Chat view inline style replacements */
+.graph_copilot-chat-input-grow {
+  flex-grow: 1;
+}
+
+.graph_copilot-display-none {
+  display: none;
+}
+
+.graph_copilot-display-block {
+  display: block;
+}
+
+.graph_copilot-display-flex {
+  display: flex;
+}
+
+.graph_copilot-text-status {
+  color: var(--text-muted);
+}
+
+.graph_copilot-text-success {
+  color: var(--text-success);
+}
+
+.graph_copilot-text-error {
+  color: var(--text-error);
+}
+
+/* Report generation button */
+.graph_copilot-report-gen-btn {
+  font-size: 24px;
+  padding: 20px 40px;
+  height: auto;
+  margin-left: auto;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border: 2px solid var(--interactive-accent);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.graph_copilot-report-gen-btn:hover {
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent-hover);
+}
+
+.graph_copilot-report-gen-btn:active {
+  color: var(--text-muted);
+  border-color: var(--text-muted);
+}
+
+.graph_copilot-report-instruction {
+  margin-top: 20px;
+  font-size: 14px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Centered container for report/empty states */
+.graph_copilot-centered-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 20px;
+}
+
+/* Status indicator colors */
+.graph_copilot-status-indicator {
+  margin-right: 8px;
+  opacity: 0.7;
+}
+
+.graph_copilot-status-indicator--active {
+  background: var(--text-success);
+}
+
+.graph_copilot-status-indicator--inactive {
+  background: var(--text-error);
+}

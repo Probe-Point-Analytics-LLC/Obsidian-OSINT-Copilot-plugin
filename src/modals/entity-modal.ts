@@ -1817,7 +1817,7 @@ export class FTMEntityCreationModal extends Modal {
         };
 
         const hintText = wrapper.createEl('span', {
-            text: 'or drag and drop here',
+            text: 'or drag and drop here', // eslint-disable-line obsidianmd/ui/sentence-case
             cls: 'graph_copilot-upload-hint'
         });
         hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
@@ -1875,7 +1875,7 @@ export class FTMEntityCreationModal extends Modal {
                 // Success
                 this.properties[propertyName] = filePath.replace(/^\//, '');
                 hintText.textContent = `✅ Uploaded: ${file.name}`;
-                uploadBtn.textContent = 'Change File';
+                uploadBtn.textContent = 'Change file';
                 wrapper.style.borderColor = 'var(--interactive-accent)';
 
                 // Update generated fields if empty
@@ -1897,7 +1897,7 @@ export class FTMEntityCreationModal extends Modal {
 
             } catch (err) {
                 console.error('File upload error:', err);
-                hintText.textContent = '❌ Upload failed';
+                hintText.textContent = '❌ Upload failed'; // eslint-disable-line obsidianmd/ui/sentence-case
                 new Notice(`Upload failed: ${err}`);
             }
         };
@@ -1981,7 +1981,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
         const title = header.createEl('h2', { text: 'Create new entity' });
         title.style.margin = '0';
 
-        const newTypeBtn = header.createEl('button', { text: '+ New Custom Type' });
+        const newTypeBtn = header.createEl('button', { text: '+ new custom type' });
         newTypeBtn.style.cssText = 'font-size: 13px; padding: 4px 10px; cursor: pointer;';
         newTypeBtn.onclick = () => {
             this.close();
@@ -1994,7 +1994,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                     selector.open();
                 }).open();
             } else {
-                new Notice('Error: OSINT Copilot plugin instance not found.');
+                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line obsidianmd/ui/sentence-case
             }
         };
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
@@ -2134,7 +2134,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                 typeBtn.onmouseleave = () => actionsDiv.style.display = 'none';
 
                 const editBtn = actionsDiv.createEl('button', { text: '✎' });
-                editBtn.title = 'Edit Type';
+                editBtn.title = 'Edit type';
                 editBtn.style.cssText = 'padding: 4px 8px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;';
                 editBtn.onclick = (e) => {
                     e.stopPropagation();
@@ -2145,7 +2145,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                 };
 
                 const delBtn = actionsDiv.createEl('button', { text: '🗑' });
-                delBtn.title = 'Delete Type';
+                delBtn.title = 'Delete type';
                 delBtn.style.cssText = 'padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;';
                 delBtn.onclick = async (e) => {
                     e.stopPropagation();
@@ -2186,7 +2186,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                 text-align: center;
             `;
 
-            const showMoreBtn = divider.createEl('button', { text: 'Show More' });
+            const showMoreBtn = divider.createEl('button', { text: 'Show more' });
             showMoreBtn.style.cssText = `
                 position: relative;
                 top: -12px;
@@ -2611,7 +2611,7 @@ export class FTMEntityEditModal extends Modal {
         };
 
         const hintText = wrapper.createEl('span', {
-            text: 'or drag and drop to replace',
+            text: 'or drag and drop to replace', // eslint-disable-line obsidianmd/ui/sentence-case
             cls: 'graph_copilot-upload-hint'
         });
         hintText.style.cssText = 'display: block; font-size: 12px; color: var(--text-muted);';
@@ -2666,7 +2666,7 @@ export class FTMEntityEditModal extends Modal {
                 // Success
                 this.properties[propertyName] = filePath.replace(/^\//, '');
                 hintText.textContent = `✅ Uploaded: ${file.name}`;
-                uploadBtn.textContent = 'Change File';
+                uploadBtn.textContent = 'Change file';
                 wrapper.style.borderColor = 'var(--interactive-accent)';
 
                 // Update display
@@ -2682,7 +2682,7 @@ export class FTMEntityEditModal extends Modal {
 
             } catch (err) {
                 console.error('File upload error:', err);
-                hintText.textContent = '❌ Upload failed';
+                hintText.textContent = '❌ Upload failed'; // eslint-disable-line obsidianmd/ui/sentence-case
                 new Notice(`Upload failed: ${err}`);
             }
         };
@@ -3081,7 +3081,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
         title.style.margin = '0';
 
         // Add "New Custom Connection" button
-        const newTypeBtn = headerContainer.createEl('button', { text: '+ New Custom Connection' });
+        const newTypeBtn = headerContainer.createEl('button', { text: '+ new custom connection' });
         newTypeBtn.style.cssText = 'font-size: 13px; padding: 4px 10px; cursor: pointer;';
         newTypeBtn.onclick = () => {
             this.close();
@@ -3106,7 +3106,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
                     'Interval' // Specify base type
                 ).open();
             } else {
-                new Notice('Error: OSINT Copilot plugin instance not found.');
+                new Notice('Error: OSINT copilot plugin instance not found.'); // eslint-disable-line obsidianmd/ui/sentence-case
             }
         };
 
@@ -3209,7 +3209,7 @@ color: var(--text - muted);
                 typeBtn.onmouseleave = () => actionsDiv.style.display = 'none';
 
                 const editBtn = actionsDiv.createEl('button', { text: '✎' });
-                editBtn.title = 'Edit Type';
+                editBtn.title = 'Edit type';
                 editBtn.style.cssText = 'padding: 4px 8px; margin-right: 5px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;';
                 editBtn.onclick = (e) => {
                     e.stopPropagation();
@@ -3232,7 +3232,7 @@ color: var(--text - muted);
                 };
 
                 const delBtn = actionsDiv.createEl('button', { text: '🗑' });
-                delBtn.title = 'Delete Type';
+                delBtn.title = 'Delete type';
                 delBtn.style.cssText = 'padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;';
                 delBtn.onclick = async (e) => {
                     e.stopPropagation();
