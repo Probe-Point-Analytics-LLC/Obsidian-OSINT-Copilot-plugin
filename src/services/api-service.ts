@@ -1228,6 +1228,41 @@ export class GraphApiService {
 
         throw new Error(`Digital Footprint failed after ${maxRetries} attempts: ${errorMessage}`);
     }
+
+    /**
+     * Determine user intent from text.
+     * Tells the app whether the user wants to generate a graph, search dark web, etc.
+     */
+    async determineIntent(text: string): Promise<string> {
+        try {
+            const response = await this.fetchWithTimeout(
+                `${this.baseUrl}/api/chat/route`,
+                {
+                    method: 'POST',
+                    headers: this.getHeaders(),
+                    body: JSON.stringify({ text })
+                },
+                5000 // 5 second timeout for quick routing
+            );
+
+            if (response.ok) {
+                const data = await response.json() as { intent?: string; success?: boolean; error?: string };
+                if (data.success && data.intent) {
+                    return data.intent;
+                }
+
+                // If it wasn't successful because of auth, throw it so the caller can see
+                if (data.error && (data.error.includes('unauthorized') || data.error.includes('API key'))) {
+                    throw new Error(data.error);
+                }
+            }
+            return "local_chat";
+        } catch (error) {
+            console.error("[GraphApiService] Error determining intent:", error);
+            // Default to local chat if routing fails
+            return "local_chat";
+        }
+    }
 }
 
 // Alias for backward compatibility with ai-panel.ts

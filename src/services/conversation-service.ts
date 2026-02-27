@@ -21,6 +21,7 @@ export interface ConversationMetadata {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  autoMode?: boolean; // ✨ The All-in-One Auto Agent mode
   localSearchMode: boolean;
   darkWebMode: boolean;
   graphGenerationMode: boolean;

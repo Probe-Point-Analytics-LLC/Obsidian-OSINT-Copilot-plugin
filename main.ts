@@ -2139,7 +2139,8 @@ export class ChatView extends ItemView {
   sidebarContainer!: HTMLDivElement;
   conversationListEl!: HTMLDivElement;
   // Main modes (mutually exclusive - only one can be active, or all can be off for Entity-Only Mode)
-  localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
+  localSearchMode: boolean = false; // Default mode (formerly "lookup mode")
+  autoMode: boolean = true; // NEW: The All-in-One Auto Agent mode
   customChatMode: boolean = false; // Custom OpenAI-compatible chat mode
   activeCheckpointId: string | undefined; // Selected custom checkpoint ID
   darkWebMode: boolean = false;
@@ -2200,23 +2201,27 @@ export class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
+      this.autoMode = conversation.autoMode ?? true; // Default to true for older conversations
 
       // Check if any main mode is explicitly set in the conversation
-      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode;
+      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode || conversation.autoMode;
 
       if (hasMainMode) {
         // Use the saved modes
         this.localSearchMode = conversation.localSearchMode || false;
         this.graphGenerationMode = conversation.graphGenerationMode || false;
+        this.autoMode = conversation.autoMode ?? false;
       } else {
-        // No main mode set - default to Graph Generation mode
+        // No main mode set - default to Auto mode
         this.localSearchMode = false;
         this.graphGenerationMode = true;
+        this.autoMode = true;
       }
     } else {
-      // No conversation - default to Graph Generation mode
+      // No conversation - default to Auto Mode
       this.localSearchMode = false;
       this.graphGenerationMode = true;
+      this.autoMode = true;
     }
   }
 
@@ -2258,6 +2263,7 @@ export class ChatView extends ItemView {
     }
     this.currentConversation.messages = this.historyToConversationMessages();
     this.currentConversation.localSearchMode = this.localSearchMode;
+    this.currentConversation.autoMode = this.autoMode;
     this.currentConversation.darkWebMode = this.darkWebMode;
     this.currentConversation.graphGenerationMode = this.graphGenerationMode;
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
@@ -2358,6 +2364,7 @@ export class ChatView extends ItemView {
 
     // Add standard options
     modeOptions.push(
+      { value: "auto", label: "✨ Auto (All-in-One)", mode: "autoMode" },
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
@@ -2381,6 +2388,7 @@ export class ChatView extends ItemView {
         }
       }
       else if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
+      else if (option.value === "auto" && this.autoMode) optEl.selected = true;
       else if (option.value === "local" && this.localSearchMode) optEl.selected = true;
       else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
       else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
@@ -2405,6 +2413,7 @@ export class ChatView extends ItemView {
       const selectedValue = this.modeDropdown.value;
 
       // Reset all modes
+      this.autoMode = false;
       this.customChatMode = false;
       this.localSearchMode = false;
       this.darkWebMode = false;
@@ -2422,6 +2431,10 @@ export class ChatView extends ItemView {
       } else {
         this.activeCheckpointId = undefined; // Reset if switching away
         switch (selectedValue) {
+          case "auto":
+            this.autoMode = true;
+            new Notice("Auto (All-in-One) mode enabled");
+            break;
           case "local":
             this.localSearchMode = true;
             new Notice("Local search mode enabled");
@@ -3169,7 +3182,7 @@ export class ChatView extends ItemView {
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.autoMode;
   }
 
   // Show notice when entering Graph only Mode
@@ -3291,6 +3304,8 @@ export class ChatView extends ItemView {
         this.modeDropdown.value = "report";
       } else if (this.osintSearchMode) {
         this.modeDropdown.value = "osint";
+      } else if (this.autoMode) {
+        this.modeDropdown.value = "auto";
       } else {
         this.modeDropdown.value = "none";
       }
@@ -3339,10 +3354,16 @@ export class ChatView extends ItemView {
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
       // Check if Graph only Mode (graph gen ON, all main modes OFF)
       const convOsintSearchMode = conv.osintSearchMode || false;
-      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
+      const convAutoMode = conv.autoMode ?? true;
+      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode && !convAutoMode;
       // Show main mode badge or Graph only badge
       if (isGraphOnly) {
         meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphonly", title: "Graph only mode" });
+      } else if (convAutoMode) {
+        meta.createEl("span", { text: "✨", cls: "vault-ai-conversation-auto", title: "Auto (All-in-One) mode" });
+        if (conv.graphGenerationMode) {
+          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph generation" });
+        }
       } else if (convOsintSearchMode) {
         meta.createEl("span", { text: "🔎", cls: "vault-ai-conversation-osint-search", title: "Leak search mode" });
         if (conv.graphGenerationMode) {
@@ -3420,10 +3441,10 @@ export class ChatView extends ItemView {
       this.graphGenerationMode = conversation.graphGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
-      // Use localSearchMode from conversation, or infer from other modes for backward compatibility
-      this.localSearchMode = conversation.localSearchMode !== undefined
-        ? conversation.localSearchMode
-        : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode);
+      // Use autoMode from conversation, or infer from other modes for backward compatibility
+      this.autoMode = conversation.autoMode !== undefined
+        ? conversation.autoMode
+        : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.localSearchMode);
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
@@ -3438,8 +3459,9 @@ export class ChatView extends ItemView {
     }
     this.currentConversation = null;
     this.chatHistory = [];
-    // Reset mode toggles for new conversation (Graph Generation Mode is default)
+    // Reset mode toggles for new conversation (Auto Mode is default)
     this.localSearchMode = false;
+    this.autoMode = true;
     this.darkWebMode = false;
     this.graphGenerationMode = true;
     this.reportGenerationMode = false;
@@ -4145,20 +4167,69 @@ export class ChatView extends ItemView {
 
     // Route to appropriate handler based on mode
     // Pass processingValue (includes file content) to handlers, not displayValue
+    let finalHandlerChoice = "localSearchMode";
+
     if (this.isGraphOnlyMode()) {
-      // Graph only Mode: Extract entities from user input without AI chat
-      await this.handleGraphOnlyMode(processingValue);
+      finalHandlerChoice = "none";
     } else if (this.customChatMode) {
-      await this.handleCustomChat(processingValue);
+      finalHandlerChoice = "customChatMode";
+    } else if (this.autoMode) {
+      // NEW: Intelligent routing
+      const processingMsgIndex = this.chatHistory.length;
+      this.chatHistory.push({ role: "assistant", content: "..." });
+      await this.renderMessages();
+
+      const intent = await this.plugin.graphApiService.determineIntent(processingValue);
+      console.log(`[AutoMode] Detected intent: ${intent}`);
+
+      this.chatHistory.splice(processingMsgIndex, 1);
+
+      switch (intent) {
+        case "graph_generation":
+          finalHandlerChoice = "none";
+          this.graphGenerationMode = true; // Auto-enable graph gen for this run
+          break;
+        case "darkweb":
+          finalHandlerChoice = "darkWebMode";
+          break;
+        case "report_generation":
+          finalHandlerChoice = "reportGenerationMode";
+          break;
+        case "osint_search":
+          finalHandlerChoice = "osintSearchMode";
+          break;
+        default:
+          finalHandlerChoice = "localSearchMode";
+          break;
+      }
     } else if (this.osintSearchMode) {
-      await this.handleOSINTSearch(processingValue);
+      finalHandlerChoice = "osintSearchMode";
     } else if (this.darkWebMode) {
-      await this.handleDarkWebInvestigation(processingValue);
+      finalHandlerChoice = "darkWebMode";
     } else if (this.reportGenerationMode) {
-      await this.handleReportGeneration(processingValue);
-    } else {
-      // Default: Local Search Mode (normal chat)
-      await this.handleNormalChat(processingValue);
+      finalHandlerChoice = "reportGenerationMode";
+    }
+
+    // Execute the final handler
+    switch (finalHandlerChoice) {
+      case "none":
+        await this.handleGraphOnlyMode(processingValue);
+        break;
+      case "customChatMode":
+        await this.handleCustomChat(processingValue);
+        break;
+      case "osintSearchMode":
+        await this.handleOSINTSearch(processingValue);
+        break;
+      case "darkWebMode":
+        await this.handleDarkWebInvestigation(processingValue);
+        break;
+      case "reportGenerationMode":
+        await this.handleReportGeneration(processingValue);
+        break;
+      default:
+        await this.handleNormalChat(processingValue);
+        break;
     }
 
     // Save conversation after assistant response
