@@ -4174,34 +4174,42 @@ export class ChatView extends ItemView {
     } else if (this.customChatMode) {
       finalHandlerChoice = "customChatMode";
     } else if (this.autoMode) {
-      // NEW: Intelligent routing
+      // NEW: Intelligent multi-task orchestration
       const processingMsgIndex = this.chatHistory.length;
       this.chatHistory.push({ role: "assistant", content: "..." });
       await this.renderMessages();
 
-      const intent = await this.plugin.graphApiService.determineIntent(processingValue);
-      console.log(`[AutoMode] Detected intent: ${intent}`);
+      const taskPlan = await this.plugin.graphApiService.determineTaskPlan(processingValue);
+      console.log(`[AutoMode] Detected task plan:`, taskPlan);
 
       this.chatHistory.splice(processingMsgIndex, 1);
 
-      switch (intent) {
-        case "graph_generation":
-          finalHandlerChoice = "none";
-          this.graphGenerationMode = true; // Auto-enable graph gen for this run
-          break;
-        case "darkweb":
-          finalHandlerChoice = "darkWebMode";
-          break;
-        case "report_generation":
+      this.graphGenerationMode = false; // Reset to default for auto mode
+      let executionTarget = processingValue;
+
+      // Map the task plan to our internal execution branches
+      for (const task of taskPlan) {
+        if (task.action === "graph_generation") {
+          this.graphGenerationMode = true; // Auto-extract entities from outputs or run natively
+          if (finalHandlerChoice === "localSearchMode") {
+            finalHandlerChoice = "none";
+            executionTarget = task.target || processingValue;
+          }
+        } else if (task.action === "report_generation") {
           finalHandlerChoice = "reportGenerationMode";
-          break;
-        case "osint_search":
+          executionTarget = task.target || processingValue;
+        } else if (task.action === "darkweb") {
+          finalHandlerChoice = "darkWebMode";
+          executionTarget = task.target || processingValue;
+        } else if (task.action === "osint_search") {
           finalHandlerChoice = "osintSearchMode";
-          break;
-        default:
-          finalHandlerChoice = "localSearchMode";
-          break;
+          executionTarget = task.target || processingValue;
+        }
       }
+
+      // Override processingValue with the specific target identified by the LLM
+      processingValue = executionTarget;
+
     } else if (this.osintSearchMode) {
       finalHandlerChoice = "osintSearchMode";
     } else if (this.darkWebMode) {

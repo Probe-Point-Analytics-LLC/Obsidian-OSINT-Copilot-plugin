@@ -1230,10 +1230,10 @@ export class GraphApiService {
     }
 
     /**
-     * Determine user intent from text.
-     * Tells the app whether the user wants to generate a graph, search dark web, etc.
+     * Determine user multi-step intent from text.
+     * Tells the app whether the user wants to generate a graph AND search dark web, etc.
      */
-    async determineIntent(text: string): Promise<string> {
+    async determineTaskPlan(text: string): Promise<Array<{ action: string, target?: string }>> {
         try {
             const response = await this.fetchWithTimeout(
                 `${this.baseUrl}/api/chat/route`,
@@ -1246,9 +1246,9 @@ export class GraphApiService {
             );
 
             if (response.ok) {
-                const data = await response.json() as { intent?: string; success?: boolean; error?: string };
-                if (data.success && data.intent) {
-                    return data.intent;
+                const data = await response.json() as { plan?: Array<{ action: string, target?: string }>; success?: boolean; error?: string };
+                if (data.success && data.plan && Array.isArray(data.plan)) {
+                    return data.plan;
                 }
 
                 // If it wasn't successful because of auth, throw it so the caller can see
@@ -1256,11 +1256,11 @@ export class GraphApiService {
                     throw new Error(data.error);
                 }
             }
-            return "local_chat";
+            return [{ action: "local_chat", target: text }];
         } catch (error) {
-            console.error("[GraphApiService] Error determining intent:", error);
+            console.error("[GraphApiService] Error determining task plan:", error);
             // Default to local chat if routing fails
-            return "local_chat";
+            return [{ action: "local_chat", target: text }];
         }
     }
 }
