@@ -345,7 +345,7 @@ export interface GraphData {
 
 // AI Operation types matching OSINTCopilot's format
 export interface AIOperation {
-    action: "create" | "update" | "delete";
+    action: "create" | "update" | "delete" | "connect";
     entities?: Array<{
         type: string;
         properties: Record<string, unknown>;
@@ -363,6 +363,11 @@ export interface AIOperation {
         new_properties?: Record<string, unknown>;
     }>;
     deletions?: string[];
+    new_connections?: Array<{
+        from_id: string;
+        to_id: string;
+        relationship: string;
+    }>;
 }
 
 export interface AIResponse {

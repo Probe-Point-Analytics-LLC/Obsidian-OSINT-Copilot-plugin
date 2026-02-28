@@ -4381,6 +4381,15 @@ export class ChatView extends ItemView {
       };
 
       // Call the API to extract entities - uses chunking for large texts
+      // Gather existing connections for modification mode
+      const existingConnections = this.graphModificationMode
+        ? this.plugin.entityManager.getAllConnections().map(c => ({
+          from: c.fromEntityId,
+          to: c.toEntityId,
+          relationship: c.relationship
+        }))
+        : undefined;
+
       const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         inputText,
         existingEntities,
@@ -4388,7 +4397,8 @@ export class ChatView extends ItemView {
         onChunkProgress,
         onRetry,
         undefined,
-        this.graphModificationMode
+        this.graphModificationMode,
+        existingConnections
       );
 
       updateProgress("Processing API response...", 50);
@@ -4558,6 +4568,22 @@ export class ChatView extends ItemView {
               console.error(`[GraphOnlyMode] Failed to update entity ${update.id}:`, updErr);
             }
           }
+        } else if (operation.action === "connect" && operation.new_connections) {
+          updateProgress("Connecting entities...", 93);
+          for (const conn of operation.new_connections) {
+            try {
+              const fromEntity = this.plugin.entityManager.getEntity(conn.from_id);
+              const toEntity = this.plugin.entityManager.getEntity(conn.to_id);
+              if (fromEntity && toEntity) {
+                await this.plugin.entityManager.addRelationshipToNote(fromEntity, toEntity, conn.relationship);
+                connectionsCreated++;
+              } else {
+                console.warn(`[GraphOnlyMode] Cannot connect: from=${conn.from_id} to=${conn.to_id} - entity not found`);
+              }
+            } catch (connErr) {
+              console.error(`[GraphOnlyMode] Failed to connect entities:`, connErr);
+            }
+          }
         }
       }
 
@@ -4567,7 +4593,7 @@ export class ChatView extends ItemView {
       let resultContent = `🏷️ **Graph Operations Complete**\n\n`;
       resultContent += `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n`;
 
-      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0) {
+      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0 || connectionsCreated > 0) {
         // Store entities in chat history for rendering clickable graph view links
         this.chatHistory[messageIndex].createdEntities = createdEntities;
         this.chatHistory[messageIndex].connectionsCreated = connectionsCreated;
@@ -4933,6 +4959,16 @@ export class ChatView extends ItemView {
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
 
+      // Gather existing connections for modification mode
+      const isModify = modifyOnly || this.graphModificationMode;
+      const existingConnections = isModify
+        ? this.plugin.entityManager.getAllConnections().map(c => ({
+          from: c.fromEntityId,
+          to: c.toEntityId,
+          relationship: c.relationship
+        }))
+        : undefined;
+
       const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         textToProcess,
         existingEntities,
@@ -4940,7 +4976,8 @@ export class ChatView extends ItemView {
         onChunkProgress,
         onRetry,
         controller.signal,
-        modifyOnly || this.graphModificationMode
+        isModify,
+        existingConnections
       );
 
       // Clear controller on completion
@@ -5112,13 +5149,29 @@ export class ChatView extends ItemView {
               console.error(`[GraphGeneration] Failed to update entity ${update.id}:`, updErr);
             }
           }
+        } else if (operation.action === "connect" && operation.new_connections) {
+          updateProgress("Connecting entities...", 93);
+          for (const conn of operation.new_connections) {
+            try {
+              const fromEntity = this.plugin.entityManager.getEntity(conn.from_id);
+              const toEntity = this.plugin.entityManager.getEntity(conn.to_id);
+              if (fromEntity && toEntity) {
+                await this.plugin.entityManager.addRelationshipToNote(fromEntity, toEntity, conn.relationship);
+                connectionsCreated++;
+              } else {
+                console.warn(`[GraphGeneration] Cannot connect: from=${conn.from_id} to=${conn.to_id} - entity not found`);
+              }
+            } catch (connErr) {
+              console.error(`[GraphGeneration] Failed to connect entities:`, connErr);
+            }
+          }
         }
       }
 
       updateProgress("Finalizing...", 95);
 
       // Update the message with entity creation/modification results including clickable links
-      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0) {
+      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0 || connectionsCreated > 0) {
         // Store entities in chat history for rendering clickable graph view links
         this.chatHistory[assistantIndex].createdEntities = createdEntities;
         this.chatHistory[assistantIndex].connectionsCreated = connectionsCreated;
