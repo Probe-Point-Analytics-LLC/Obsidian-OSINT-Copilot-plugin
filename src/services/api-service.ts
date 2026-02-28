@@ -814,14 +814,15 @@ export class GraphApiService {
         referenceTime?: string,
         onChunkProgress?: (chunkIndex: number, totalChunks: number, message: string) => void,
         onRetry?: RetryCallback,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        modifyOnly?: boolean
     ): Promise<ProcessTextResponse> {
         const CHUNK_SIZE = 8000;  // Characters per chunk
         const CHUNK_THRESHOLD = 10000;  // Only chunk if text is larger than this
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
-            return this.processText(text, existingEntities, referenceTime, onRetry, signal);
+            return this.processText(text, existingEntities, referenceTime, onRetry, signal, modifyOnly);
         }
 
         console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
@@ -848,7 +849,7 @@ export class GraphApiService {
             console.debug(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (${chunk.length} chars)`);
 
             try {
-                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal);
+                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal, modifyOnly);
 
                 if (!result.success) {
                     console.warn(`[GraphApiService] Chunk ${chunkNum} failed:`, result.error);
@@ -944,7 +945,8 @@ export class GraphApiService {
         existingEntities?: Entity[],
         referenceTime?: string,
         onRetry?: RetryCallback,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        modifyOnly?: boolean
     ): Promise<ProcessTextResponse> {
         // Skip health check - just try the request directly.
         // If the API is down, the request will fail with a proper timeout error.
@@ -987,7 +989,8 @@ export class GraphApiService {
                                 label: e.label,
                                 properties: e.properties
                             })),
-                            reference_time: referenceTime
+                            reference_time: referenceTime,
+                            modify_only: modifyOnly
                         })
                     },
                     currentTimeout,

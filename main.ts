@@ -2155,6 +2155,7 @@ export class ChatView extends ItemView {
   osintSearchParallel: boolean = true;
   // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
   graphGenerationMode: boolean = true;
+  graphModificationMode: boolean = false;
   graphGenerationToggle!: HTMLInputElement;
   entityGenContainer!: HTMLElement;  // Container for the toggle - hidden when Graph mode selected
   pollingIntervals: Map<string, number> = new Map();
@@ -4195,6 +4196,13 @@ export class ChatView extends ItemView {
             finalHandlerChoice = "none";
             executionTarget = task.target || processingValue;
           }
+        } else if (task.action === "graph_modification") {
+          this.graphGenerationMode = true;
+          this.graphModificationMode = true;
+          if (finalHandlerChoice === "localSearchMode") {
+            finalHandlerChoice = "none";
+            executionTarget = task.target || processingValue;
+          }
         } else if (task.action === "report_generation") {
           finalHandlerChoice = "reportGenerationMode";
           executionTarget = task.target || processingValue;
@@ -4300,7 +4308,7 @@ export class ChatView extends ItemView {
       if (this.graphGenerationMode) {
         try {
           // Pass the AI response as "text to process", but keep original query for context
-          await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
+          await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse, this.graphModificationMode);
         } catch (graphError) {
           console.error("[OSINT Copilot] Graph generation from custom chat failed:", graphError);
           new Notice("Graph generation failed, but the chat response was received successfully.");
@@ -4378,7 +4386,9 @@ export class ChatView extends ItemView {
         existingEntities,
         undefined,
         onChunkProgress,
-        onRetry
+        onRetry,
+        undefined,
+        this.graphModificationMode
       );
 
       updateProgress("Processing API response...", 50);
@@ -4417,6 +4427,9 @@ export class ChatView extends ItemView {
       const createdEntities: Array<{ id: string; type: string; label: string; filePath: string }> = [];
       let connectionsCreated = 0;
       let entitiesProcessed = 0;
+      let deletedEntitiesCount = 0;
+      let deletedConnectionsCount = 0;
+      let updatedEntitiesCount = 0;
 
       // Debug: Log the full operations array
       console.debug('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
@@ -4516,26 +4529,66 @@ export class ChatView extends ItemView {
               }
             }
           }
+        } else if (operation.action === "delete" && operation.deletions) {
+          updateProgress("Processing deletions...", 90);
+          for (const deletionId of operation.deletions) {
+            try {
+              if (this.plugin.entityManager.getEntity(deletionId)) {
+                await this.plugin.entityManager.deleteEntity(deletionId);
+                deletedEntitiesCount++;
+              } else if (this.plugin.entityManager.getConnection(deletionId)) {
+                await this.plugin.entityManager.deleteConnectionWithNote(deletionId);
+                deletedConnectionsCount++;
+              } else {
+                console.warn(`[GraphOnlyMode] Element to delete not found: ${deletionId}`);
+              }
+            } catch (delErr) {
+              console.error(`[GraphOnlyMode] Failed to delete element ${deletionId}:`, delErr);
+            }
+          }
+        } else if (operation.action === "update" && operation.updates) {
+          updateProgress("Applying updates...", 92);
+          for (const update of operation.updates) {
+            try {
+              if (update.id && this.plugin.entityManager.getEntity(update.id)) {
+                await this.plugin.entityManager.updateEntity(update.id, update.new_properties || {});
+                updatedEntitiesCount++;
+              }
+            } catch (updErr) {
+              console.error(`[GraphOnlyMode] Failed to update entity ${update.id}:`, updErr);
+            }
+          }
         }
       }
 
       updateProgress("Finalizing...", 98);
 
       // Build the result message with clickable links
-      let resultContent = `🏷️ **Graph Generation Complete**\n\n`;
+      let resultContent = `🏷️ **Graph Operations Complete**\n\n`;
       resultContent += `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n`;
 
-      if (createdEntities.length > 0) {
+      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0) {
         // Store entities in chat history for rendering clickable graph view links
         this.chatHistory[messageIndex].createdEntities = createdEntities;
         this.chatHistory[messageIndex].connectionsCreated = connectionsCreated;
 
-        resultContent += `**Entities Created (${createdEntities.length}):**`;
+        if (createdEntities.length > 0) {
+          resultContent += `\n- **Entities Created:** ${createdEntities.length}`;
+        }
         if (connectionsCreated > 0) {
-          resultContent += `\n**Relationships Created:** ${connectionsCreated}`;
+          resultContent += `\n- **Relationships Created:** ${connectionsCreated}`;
+        }
+        if (deletedEntitiesCount > 0) {
+          resultContent += `\n- **Entities Deleted:** ${deletedEntitiesCount}`;
+        }
+        if (deletedConnectionsCount > 0) {
+          resultContent += `\n- **Relationships Deleted:** ${deletedConnectionsCount}`;
+        }
+        if (updatedEntitiesCount > 0) {
+          resultContent += `\n- **Entities Updated:** ${updatedEntitiesCount}`;
         }
       } else {
-        resultContent += `No new entities were created (may already exist or types not recognized).`;
+        resultContent += `No operations were performed.`;
       }
 
       // Clear progress bar and show final result
@@ -4543,11 +4596,17 @@ export class ChatView extends ItemView {
       this.chatHistory[messageIndex].content = resultContent;
       await this.renderMessages();
 
-      if (createdEntities.length > 0) {
-        const noticeMsg = connectionsCreated > 0
-          ? `Created ${createdEntities.length} entities and ${connectionsCreated} relationships`
-          : `Created ${createdEntities.length} entities`;
-        new Notice(noticeMsg);
+      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0) {
+        const parts = [];
+        if (createdEntities.length > 0) parts.push(`${createdEntities.length} entities created`);
+        if (connectionsCreated > 0) parts.push(`${connectionsCreated} relationships`);
+        if (deletedEntitiesCount > 0) parts.push(`${deletedEntitiesCount} deleted`);
+        if (updatedEntitiesCount > 0) parts.push(`${updatedEntitiesCount} updated`);
+
+        new Notice(`Graph updated: ${parts.join(', ')}`);
+
+        // Refresh or open graph view after modifications
+        await this.plugin.refreshOrOpenGraphView();
       }
 
     } catch (error) {
@@ -4815,7 +4874,8 @@ export class ChatView extends ItemView {
     assistantIndex: number,
     aiResponse: string,
     originalQuery: string,
-    currentContent: string
+    currentContent: string,
+    modifyOnly: boolean = false
   ) {
     // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
@@ -4879,7 +4939,8 @@ export class ChatView extends ItemView {
         undefined,
         onChunkProgress,
         onRetry,
-        controller.signal
+        controller.signal,
+        modifyOnly || this.graphModificationMode
       );
 
       // Clear controller on completion
@@ -4911,6 +4972,9 @@ export class ChatView extends ItemView {
       // Store entity info with file paths and IDs for clickable links
       const createdEntities: Array<{ id: string; type: string; label: string; filePath: string }> = [];
       let connectionsCreated = 0;
+      let deletedEntitiesCount = 0;
+      let deletedConnectionsCount = 0;
+      let updatedEntitiesCount = 0;
 
       // Count total entities for progress tracking
       let totalEntities = 0;
@@ -5019,21 +5083,62 @@ export class ChatView extends ItemView {
               }
             }
           }
+        } else if (operation.action === "delete" && operation.deletions) {
+          updateProgress("Processing deletions...", 90);
+          for (const deletionId of operation.deletions) {
+            try {
+              if (this.plugin.entityManager.getEntity(deletionId)) {
+                await this.plugin.entityManager.deleteEntity(deletionId);
+                deletedEntitiesCount++;
+              } else if (this.plugin.entityManager.getConnection(deletionId)) {
+                await this.plugin.entityManager.deleteConnectionWithNote(deletionId);
+                deletedConnectionsCount++;
+              } else {
+                console.warn(`[GraphGeneration] Element to delete not found: ${deletionId}`);
+              }
+            } catch (delErr) {
+              console.error(`[GraphGeneration] Failed to delete element ${deletionId}:`, delErr);
+            }
+          }
+        } else if (operation.action === "update" && operation.updates) {
+          updateProgress("Applying updates...", 92);
+          for (const update of operation.updates) {
+            try {
+              if (update.id && this.plugin.entityManager.getEntity(update.id)) {
+                await this.plugin.entityManager.updateEntity(update.id, update.new_properties || {});
+                updatedEntitiesCount++;
+              }
+            } catch (updErr) {
+              console.error(`[GraphGeneration] Failed to update entity ${update.id}:`, updErr);
+            }
+          }
         }
       }
 
       updateProgress("Finalizing...", 95);
 
-      // Update the message with entity creation results including clickable links
-      if (createdEntities.length > 0) {
+      // Update the message with entity creation/modification results including clickable links
+      if (createdEntities.length > 0 || deletedEntitiesCount > 0 || updatedEntitiesCount > 0 || deletedConnectionsCount > 0) {
         // Store entities in chat history for rendering clickable graph view links
         this.chatHistory[assistantIndex].createdEntities = createdEntities;
         this.chatHistory[assistantIndex].connectionsCreated = connectionsCreated;
 
         // Build a simple summary message - the actual clickable links will be rendered by renderMessages
-        let resultMsg = `\n\n🏷️ **Entities Created (${createdEntities.length}):**`;
+        let resultMsg = `\n\n🏷️ **Graph Operations Complete:**`;
+        if (createdEntities.length > 0) {
+          resultMsg += `\n- **Entities Created:** ${createdEntities.length}`;
+        }
         if (connectionsCreated > 0) {
-          resultMsg += `\n**Relationships Created:** ${connectionsCreated}`;
+          resultMsg += `\n- **Relationships Created:** ${connectionsCreated}`;
+        }
+        if (deletedEntitiesCount > 0) {
+          resultMsg += `\n- **Entities Deleted:** ${deletedEntitiesCount}`;
+        }
+        if (deletedConnectionsCount > 0) {
+          resultMsg += `\n- **Relationships Deleted:** ${deletedConnectionsCount}`;
+        }
+        if (updatedEntitiesCount > 0) {
+          resultMsg += `\n- **Entities Updated:** ${updatedEntitiesCount}`;
         }
 
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
@@ -5042,12 +5147,12 @@ export class ChatView extends ItemView {
         const successContent = this.chatHistory[assistantIndex].content || "";
         this.chatHistory[assistantIndex].content = successContent + resultMsg;
 
-        // Refresh or open graph view after entity creation
+        // Refresh or open graph view after modifications
         await this.plugin.refreshOrOpenGraphView();
       } else {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
         const noEntitiesContent = this.chatHistory[assistantIndex].content || "";
-        this.chatHistory[assistantIndex].content = noEntitiesContent + "\n\n🏷️ No entities were created.";
+        this.chatHistory[assistantIndex].content = noEntitiesContent + "\n\n🏷️ No entities were created or modified.";
       }
       await this.renderMessages();
 
