@@ -2156,6 +2156,7 @@ export class ChatView extends ItemView {
   // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
   graphGenerationMode: boolean = true;
   graphModificationMode: boolean = false;
+  graphQueryMode: boolean = false;
   graphGenerationToggle!: HTMLInputElement;
   entityGenContainer!: HTMLElement;  // Container for the toggle - hidden when Graph mode selected
   pollingIntervals: Map<string, number> = new Map();
@@ -4203,6 +4204,9 @@ export class ChatView extends ItemView {
             finalHandlerChoice = "none";
             executionTarget = task.target || processingValue;
           }
+        } else if (task.action === "graph_query") {
+          finalHandlerChoice = "graphQueryMode";
+          executionTarget = task.target || processingValue;
         } else if (task.action === "report_generation") {
           finalHandlerChoice = "reportGenerationMode";
           executionTarget = task.target || processingValue;
@@ -4230,6 +4234,9 @@ export class ChatView extends ItemView {
     switch (finalHandlerChoice) {
       case "none":
         await this.handleGraphOnlyMode(processingValue);
+        break;
+      case "graphQueryMode":
+        await this.handleGraphQuery(processingValue);
         break;
       case "customChatMode":
         await this.handleCustomChat(processingValue);
@@ -4326,6 +4333,75 @@ export class ChatView extends ItemView {
       console.error("Custom chat error:", error);
       this.chatHistory[assistantIndex].content = `Error calling custom provider: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    }
+  }
+
+  /**
+   * Handle Graph Query: answer a question about the existing graph using AI.
+   * Sends current graph state (entities + connections) to the backend and displays the text answer.
+   */
+  async handleGraphQuery(query: string) {
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "🔍 Analyzing your graph...",
+      progress: { message: "Gathering graph state...", percent: 10 },
+    });
+    await this.renderMessages();
+
+    const updateProgress = (message: string, percent: number) => {
+      this.chatHistory[assistantIndex].progress = { message, percent };
+      this.chatHistory[assistantIndex].content = `🔍 ${message}`;
+      this.updateProgressBar(assistantIndex, { message, percent });
+    };
+
+    try {
+      const existingEntities = this.plugin.entityManager.getAllEntities();
+      const existingConnections = this.plugin.entityManager.getAllConnections().map(c => ({
+        from: c.fromEntityId,
+        to: c.toEntityId,
+        relationship: c.relationship
+      }));
+
+      updateProgress(`Sending graph (${existingEntities.length} entities, ${existingConnections.length} connections) to AI...`, 30);
+
+      const onRetry = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => {
+        const delaySeconds = Math.round(nextDelayMs / 1000);
+        updateProgress(`⚠️ Retrying in ${delaySeconds}s... (${attempt + 1}/${maxAttempts})`, 35);
+      };
+
+      const result = await this.plugin.graphApiService.processText(
+        query,
+        existingEntities,
+        undefined, // referenceTime
+        onRetry,
+        undefined, // signal
+        false,     // modifyOnly
+        existingConnections,
+        true       // graphQuery
+      );
+
+      this.chatHistory[assistantIndex].progress = undefined;
+
+      if (result.success && result.message) {
+        this.chatHistory[assistantIndex].content = result.message;
+      } else if (!result.success) {
+        this.chatHistory[assistantIndex].content =
+          `🔍 **Graph Query Failed**\n\n` +
+          `**Error:** ${result.error || "Unknown error"}\n\n` +
+          `Please try rephrasing your question.`;
+      } else {
+        this.chatHistory[assistantIndex].content =
+          `🔍 **No answer generated**\n\nThe AI couldn't analyze the graph. Make sure you have entities in your graph.`;
+      }
+
+      await this.renderMessages();
+    } catch (error) {
+      console.error("[GraphQuery] Error:", error);
+      this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].content =
+        `🔍 **Graph Query Error**\n\n${error instanceof Error ? error.message : "An unexpected error occurred."}`;
       await this.renderMessages();
     }
   }

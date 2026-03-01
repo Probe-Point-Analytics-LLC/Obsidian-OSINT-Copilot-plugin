@@ -816,14 +816,15 @@ export class GraphApiService {
         onRetry?: RetryCallback,
         signal?: AbortSignal,
         modifyOnly?: boolean,
-        existingConnections?: Array<{ from: string; to: string; relationship: string }>
+        existingConnections?: Array<{ from: string; to: string; relationship: string }>,
+        graphQuery?: boolean
     ): Promise<ProcessTextResponse> {
         const CHUNK_SIZE = 8000;  // Characters per chunk
         const CHUNK_THRESHOLD = 10000;  // Only chunk if text is larger than this
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
-            return this.processText(text, existingEntities, referenceTime, onRetry, signal, modifyOnly, existingConnections);
+            return this.processText(text, existingEntities, referenceTime, onRetry, signal, modifyOnly, existingConnections, graphQuery);
         }
 
         console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
@@ -850,7 +851,7 @@ export class GraphApiService {
             console.debug(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (${chunk.length} chars)`);
 
             try {
-                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal, modifyOnly, existingConnections);
+                const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal, modifyOnly, existingConnections, graphQuery);
 
                 if (!result.success) {
                     console.warn(`[GraphApiService] Chunk ${chunkNum} failed:`, result.error);
@@ -948,7 +949,8 @@ export class GraphApiService {
         onRetry?: RetryCallback,
         signal?: AbortSignal,
         modifyOnly?: boolean,
-        existingConnections?: Array<{ from: string; to: string; relationship: string }>
+        existingConnections?: Array<{ from: string; to: string; relationship: string }>,
+        graphQuery?: boolean
     ): Promise<ProcessTextResponse> {
         // Skip health check - just try the request directly.
         // If the API is down, the request will fail with a proper timeout error.
@@ -993,7 +995,8 @@ export class GraphApiService {
                             })),
                             existing_connections: existingConnections,
                             reference_time: referenceTime,
-                            modify_only: modifyOnly
+                            modify_only: modifyOnly,
+                            graph_query: graphQuery
                         })
                     },
                     currentTimeout,
