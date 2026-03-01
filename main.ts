@@ -4187,40 +4187,101 @@ export class ChatView extends ItemView {
       this.chatHistory.splice(processingMsgIndex, 1);
 
       this.graphGenerationMode = false; // Reset to default for auto mode
-      let executionTarget = processingValue;
+      this.graphModificationMode = false;
+      this.graphQueryMode = false;
 
-      // Map the task plan to our internal execution branches
+      // Sequential multi-step orchestration
+      // Separate graph-related flags from primary handlers
+      const completedSteps: string[] = [];
+      let hasGraphGeneration = false;
+      let hasGraphModification = false;
+      let hasGraphQuery = false;
+      let graphTarget = processingValue;
+
+      // First pass: identify graph flags and collect primary tasks
+      const primaryTasks: Array<{ action: string; target: string }> = [];
       for (const task of taskPlan) {
+        const target = task.target || processingValue;
         if (task.action === "graph_generation") {
-          this.graphGenerationMode = true; // Auto-extract entities from outputs or run natively
-          if (finalHandlerChoice === "localSearchMode") {
-            finalHandlerChoice = "none";
-            executionTarget = task.target || processingValue;
-          }
+          hasGraphGeneration = true;
+          graphTarget = target;
         } else if (task.action === "graph_modification") {
-          this.graphGenerationMode = true;
-          this.graphModificationMode = true;
-          if (finalHandlerChoice === "localSearchMode") {
-            finalHandlerChoice = "none";
-            executionTarget = task.target || processingValue;
-          }
+          hasGraphModification = true;
+          graphTarget = target;
         } else if (task.action === "graph_query") {
-          finalHandlerChoice = "graphQueryMode";
-          executionTarget = task.target || processingValue;
-        } else if (task.action === "report_generation") {
-          finalHandlerChoice = "reportGenerationMode";
-          executionTarget = task.target || processingValue;
-        } else if (task.action === "darkweb") {
-          finalHandlerChoice = "darkWebMode";
-          executionTarget = task.target || processingValue;
-        } else if (task.action === "osint_search") {
-          finalHandlerChoice = "osintSearchMode";
-          executionTarget = task.target || processingValue;
+          hasGraphQuery = true;
+          graphTarget = target;
+        } else if (task.action !== "local_chat") {
+          primaryTasks.push({ action: task.action, target });
         }
       }
 
-      // Override processingValue with the specific target identified by the LLM
-      processingValue = executionTarget;
+      // Set graph modes so handlers know to embed graph extraction
+      this.graphGenerationMode = hasGraphGeneration;
+      this.graphModificationMode = hasGraphModification;
+      this.graphQueryMode = hasGraphQuery;
+
+      console.log(`[AutoMode] Primary tasks: ${primaryTasks.length}, graphGen: ${hasGraphGeneration}, graphMod: ${hasGraphModification}, graphQuery: ${hasGraphQuery}`);
+
+      // Second pass: execute primary tasks sequentially
+      for (const task of primaryTasks) {
+        try {
+          switch (task.action) {
+            case "report_generation":
+              await this.handleReportGeneration(task.target);
+              completedSteps.push(`📄 Report generated for **${task.target}**`);
+              break;
+            case "darkweb":
+              await this.handleDarkWebInvestigation(task.target);
+              completedSteps.push(`🌑 Dark web search for **${task.target}**`);
+              break;
+            case "osint_search":
+              await this.handleOSINTSearch(task.target);
+              completedSteps.push(`🔎 OSINT search for **${task.target}**`);
+              break;
+          }
+        } catch (err) {
+          console.error(`[AutoMode] Task "${task.action}" failed:`, err);
+          completedSteps.push(`❌ ${task.action} failed: ${err instanceof Error ? err.message : "unknown error"}`);
+        }
+      }
+
+      // Handle standalone graph actions (when no primary handler ran, OR when graph is an explicit separate step)
+      if (hasGraphQuery) {
+        await this.handleGraphQuery(graphTarget);
+        completedSteps.push("🔍 Graph analysis completed");
+      }
+
+      if (hasGraphModification && primaryTasks.length === 0 && !hasGraphQuery) {
+        // Standalone graph modification (e.g., "remove orphaned nodes")
+        this.graphGenerationMode = true;
+        await this.handleGraphOnlyMode(graphTarget);
+        completedSteps.push("🏷️ Graph modified");
+      } else if (hasGraphGeneration && primaryTasks.length === 0 && !hasGraphQuery && !hasGraphModification) {
+        // Standalone graph generation (e.g., "extract entities from this text")
+        await this.handleGraphOnlyMode(graphTarget);
+        completedSteps.push("🏷️ Graph generated");
+      }
+      // Note: when graph_generation + a primary task (report, darkweb, etc.),
+      // the handler already calls processGraphGeneration internally thanks to graphGenerationMode = true
+
+      // If no tasks ran at all, fall back to local chat
+      if (completedSteps.length === 0 && primaryTasks.length === 0 && !hasGraphGeneration && !hasGraphModification && !hasGraphQuery) {
+        await this.handleNormalChat(processingValue);
+      }
+
+      // Final orchestration summary (only when multiple steps were completed)
+      if (completedSteps.length > 1) {
+        this.chatHistory.push({
+          role: "assistant",
+          content: `✅ **All tasks completed:**\n${completedSteps.map(s => `- ${s}`).join("\n")}`,
+        });
+        await this.renderMessages();
+      }
+
+      // Save and return early — skip the switch statement below
+      await this.saveCurrentConversation();
+      return;
 
     } else if (this.osintSearchMode) {
       finalHandlerChoice = "osintSearchMode";
@@ -4230,7 +4291,7 @@ export class ChatView extends ItemView {
       finalHandlerChoice = "reportGenerationMode";
     }
 
-    // Execute the final handler
+    // Execute the final handler (non-auto modes only — auto mode returns above)
     switch (finalHandlerChoice) {
       case "none":
         await this.handleGraphOnlyMode(processingValue);
