@@ -4186,14 +4186,15 @@ export class ChatView extends ItemView {
 
       this.chatHistory.splice(processingMsgIndex, 1);
 
-      this.graphGenerationMode = false; // Reset to default for auto mode
+      const userWantsGraph = this.graphGenerationMode; // Honor the UI toggle state
+      this.graphGenerationMode = false; // Reset to default for auto mode logic
       this.graphModificationMode = false;
       this.graphQueryMode = false;
 
       // Sequential multi-step orchestration
       // Separate graph-related flags from primary handlers
       const completedSteps: string[] = [];
-      let hasGraphGeneration = false;
+      let hasGraphGeneration = userWantsGraph;
       let hasGraphModification = false;
       let hasGraphQuery = false;
       let graphTarget = processingValue;
