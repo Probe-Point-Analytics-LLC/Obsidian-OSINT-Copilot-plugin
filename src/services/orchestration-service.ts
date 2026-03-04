@@ -192,7 +192,7 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-API-Key': this.plugin.settings.reportApiKey
+                                'Authorization': `Bearer ${this.plugin.settings.reportApiKey}`
                             },
                             body: JSON.stringify({ query }),
                             throw: false
@@ -226,7 +226,7 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                         // Use the correct API command for extracting text to graph
                         // Let's rely on ChatView's Graph Only Mode backend logic
                         const graphGenRes = await requestUrl({
-                            url: `${this.plugin.settings.graphApiUrl}/api/generate-graph`,
+                            url: `${this.plugin.settings.graphApiUrl}/api/process-text`,
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -234,8 +234,8 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                             },
                             body: JSON.stringify({
                                 text: attachmentsContext,
-                                existing_entities: [], // Ideally pass current graph entities if it's not too large
-                                context: "Orchestration Extraction"
+                                existing_entities: [], // Or optionally map `this.plugin.entityManager.getAllEntities()` if context size permits
+                                reference_time: new Date().toISOString()
                             }),
                             throw: false
                         });

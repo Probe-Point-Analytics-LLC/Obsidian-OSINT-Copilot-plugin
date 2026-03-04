@@ -4066,6 +4066,7 @@ export class ChatView extends ItemView {
     let displayValue = value; // What user sees in chat
     let processingValue = value; // What gets sent to graph generation (includes file content)
     const processedFileNames: string[] = []; // Track file names for display
+    const extractedContents: string[] = []; // Extracted text
 
     if (this.attachedFiles.length > 0) {
       // Store files for processing, then clear UI immediately for better feedback
@@ -4083,7 +4084,6 @@ export class ChatView extends ItemView {
       await this.renderMessages();
 
       // Extract text from attached files NOW (deferred extraction)
-      const extractedContents: string[] = [];
       let extractedCount = 0;
       let failedCount = 0;
 
@@ -4191,7 +4191,9 @@ export class ChatView extends ItemView {
     // Route to appropriate handler based on mode
     // Pass processingValue (includes file content) to handlers, not displayValue
     if (this.orchestrationMode) {
-      await this.handleOrchestrationAgent(processingValue);
+      // Orchestration agent separates the raw query from the attachments for better prompting
+      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join('\n') : "";
+      await this.handleOrchestrationAgent(value, attachmentsStr);
     } else if (this.isGraphOnlyMode()) {
       // Graph only Mode: Extract entities from user input without AI chat
       await this.handleGraphOnlyMode(processingValue);
@@ -4212,7 +4214,7 @@ export class ChatView extends ItemView {
     await this.saveCurrentConversation();
   }
 
-  async handleOrchestrationAgent(query: string) {
+  async handleOrchestrationAgent(query: string, attachmentsContext: string = "") {
     const assistantIndex = this.chatHistory.length;
 
     this.chatHistory.push({
@@ -4233,7 +4235,6 @@ export class ChatView extends ItemView {
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
 
-      const attachmentsContext = ""; // TODO: If files were attached, we should serialize them here
       const currentGraphState = {
         entities: this.plugin.entityManager.getAllEntities() // Send the current graph state 
       };
