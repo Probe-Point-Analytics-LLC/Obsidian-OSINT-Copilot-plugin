@@ -283,12 +283,37 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
     private async executeGraphModifications(commands: string[]): Promise<void> {
         if (!commands || commands.length === 0) return;
 
+        const formattedCommands = commands.map(cmd => {
+            try {
+                if (cmd.startsWith("@@create_entity")) {
+                    const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
+                    const label = data.label || (data.properties && data.properties.name) || 'Unknown';
+                    return `➕ Create ${data.type || 'Entity'}: **${label}**`;
+                }
+                if (cmd.startsWith("@@delete_entity")) {
+                    const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
+                    return `🗑️ Delete Entity (ID: ${data.id})`;
+                }
+                if (cmd.startsWith("@@create_link")) {
+                    const data = JSON.parse(cmd.replace("@@create_link", "").trim());
+                    return `🔗 Connect: [${data.from}] ──(${data.relationship})──> [${data.to}]`;
+                }
+                if (cmd.startsWith("@@delete_link")) {
+                    const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
+                    return `✂️ Delete Link (ID: ${data.id})`;
+                }
+                return `❓ Unknown: ${cmd}`;
+            } catch (e) {
+                return `⚠️ Raw Data: ${cmd}`;
+            }
+        });
+
         // 1. Dry Run / User Confirmation using ConfirmModal
         const confirmed = await new Promise<boolean>((resolve) => {
             new ConfirmModal(
                 this.plugin.app,
                 "Confirm Graph Modifications",
-                `The agent wants to make the following changes:\n\n${commands.join('\n\n')}\n\nDo you want to proceed?`,
+                `The agent wants to make the following changes:\n\n${formattedCommands.join('\n')}\n\nDo you want to proceed?`,
                 () => resolve(true),
                 () => resolve(false)
             ).open();

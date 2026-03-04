@@ -150,7 +150,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   orchestrationProvider: 'osint-copilot',
   orchestrationLocalUrl: 'http://localhost:11434/v1',
   orchestrationApiKey: '',
-  orchestrationModel: 'gpt-4.5-preview'
+  orchestrationModel: 'gpt-5.1'
 };
 
 const REPORT_API_BASE_URL = "https://api.osint-copilot.com";
@@ -6537,7 +6537,7 @@ class VaultAISettingTab extends PluginSettingTab {
         .setDesc("The exact string identifier for the model (e.g., gpt-4o, llama3)")
         .addText((text) =>
           text
-            .setPlaceholder("gpt-4.5-preview")
+            .setPlaceholder("gpt-5.1")
             .setValue(this.plugin.settings.orchestrationModel)
             .onChange(async (value) => {
               this.plugin.settings.orchestrationModel = value;
