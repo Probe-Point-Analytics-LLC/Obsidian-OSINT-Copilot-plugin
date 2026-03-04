@@ -24,14 +24,15 @@ export class OrchestrationService {
         query: string,
         attachmentsContext: string,
         currentGraphState: any,
+        conversationMemory: { role: string, content: string }[],
         onProgress: (msg: string, percent: number) => void
     ): Promise<string> {
         try {
             onProgress("Verifying provider and credits...", 10);
-            this.verifyProviderAndCredits();
+            await this.verifyProviderAndCredits();
 
             onProgress("Classifying intent and formulating plan...", 20);
-            const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState);
+            const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
 
             let toolResults: Record<string, any> = {};
             if (plan.toolsToCall.length > 0) {
@@ -50,7 +51,7 @@ export class OrchestrationService {
             }
 
             onProgress("Synthesizing final response...", 90);
-            const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState); // Updated call signature
+            const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory); // Updated call signature
 
             onProgress("Complete", 100);
             return finalResponse; // Return the final response
@@ -61,19 +62,52 @@ export class OrchestrationService {
         }
     }
 
-    private verifyProviderAndCredits(): void {
-        // TODO: Implement credit deduction via OSINT Copilot API if using default provider
+    private async verifyProviderAndCredits(): Promise<void> {
+        if (this.plugin.settings.orchestrationProvider === 'osint-copilot') {
+            try {
+                const response = await requestUrl({
+                    url: "https://api.osint-copilot.com/api/key/info",
+                    method: "GET",
+                    headers: {
+                        "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
+                        "Content-Type": "application/json",
+                    },
+                    throw: false,
+                });
+
+                if (response.status >= 200 && response.status < 300) {
+                    const apiInfo = response.json;
+                    const quota = apiInfo?.remaining_credits ?? apiInfo?.remaining_quota ?? 0;
+                    if (quota <= 0) {
+                        throw new Error("Insufficient credits. Please upgrade your plan or check your quota to use the official OSINT Copilot Orchestration API.");
+                    }
+                } else {
+                    console.warn("[OrchestrationService] Failed to fetch quota info, but continuing...");
+                }
+            } catch (e) {
+                console.error("[OrchestrationService] Error verifying credits:", e);
+                // Non-blocking if the verification server itself is down
+            }
+        }
     }
 
-    private async classifyIntent(query: string, attachmentsContext: string, graphState: any): Promise<OrchestrationPlan> {
+    private async classifyIntent(query: string, attachmentsContext: string, graphState: any, conversationMemory: { role: string, content: string }[]): Promise<OrchestrationPlan> {
         const systemPrompt = this.plugin.settings.orchestrationPrompt
             || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
+
+        // Format memory for context
+        const memoryContext = conversationMemory && conversationMemory.length > 0
+            ? conversationMemory.map(msg => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
+            : "No previous conversation.";
 
         const prompt = `
 ${systemPrompt}
 
 === CURRENT GRAPH STATE ===
 ${JSON.stringify(graphState, null, 2)}
+
+=== CONVERSATION HISTORY ===
+${memoryContext}
 
 === ATTACHMENTS CONTEXT ===
 ${attachmentsContext ? attachmentsContext : "No attachments provided."}
@@ -213,7 +247,7 @@ Respond ONLY with a JSON object in the following format. Ensure all reasoning an
         }
     }
 
-    private async generateFinalResponse(plan: OrchestrationPlan, toolResults: Record<string, any>, query: string, graphState: any): Promise<string> {
+    private async generateFinalResponse(plan: OrchestrationPlan, toolResults: Record<string, any>, query: string, graphState: any, conversationMemory: { role: string, content: string }[]): Promise<string> {
         // If there are no tool results and there is a direct response, just return it.
         if (Object.keys(toolResults).length === 0 && plan.directResponse) {
             return plan.directResponse;
@@ -222,11 +256,19 @@ Respond ONLY with a JSON object in the following format. Ensure all reasoning an
         const systemPrompt = this.plugin.settings.orchestrationPrompt
             || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
 
+        // Format memory for context
+        const memoryContext = conversationMemory && conversationMemory.length > 0
+            ? conversationMemory.map(msg => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
+            : "No previous conversation.";
+
         const prompt = `
 ${systemPrompt}
 
 === CURRENT GRAPH STATE ===
 ${JSON.stringify(graphState, null, 2)}
+
+=== CONVERSATION HISTORY ===
+${memoryContext}
 
 === USER REQUEST ===
 ${query}

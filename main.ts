@@ -47,6 +47,7 @@ import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
 import { CustomTypesService } from './src/services/custom-types-service';
+import { OrchestrationService } from './src/services/orchestration-service';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -175,6 +176,7 @@ export default class VaultAIPlugin extends Plugin {
   graphApiService!: GraphApiService;
   conversationService!: ConversationService;
   customTypesService!: CustomTypesService;
+  orchestrationService!: OrchestrationService;
 
   async onload() {
     await this.loadSettings();
@@ -215,6 +217,9 @@ export default class VaultAIPlugin extends Plugin {
     } catch (error) {
       console.warn('OSINTCopilot: Conversation service initialization had issues:', error);
     }
+
+    // Initialize Orchestration Service
+    this.orchestrationService = new OrchestrationService(this);
 
     // Initialize entity manager if graph features are enabled
     // This is done separately from API health check to ensure local features work
@@ -1457,7 +1462,7 @@ export default class VaultAIPlugin extends Plugin {
             }
 
             // Show retry status to user with more detail
-            const retryMsg = `Network interrupted (${errorType}), retrying... (${Math.round(elapsedMs / 1000)}s elapsed, attempt ${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors})`;
+            const retryMsg = `Network interrupted (${errorType}), retrying... (attempt ${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors})`;
             statusCallback?.(retryMsg);
             console.debug(`[OSINT Copilot] ${retryMsg}`);
             // Continue polling - don't throw
@@ -1624,7 +1629,7 @@ export default class VaultAIPlugin extends Plugin {
     type: "person" | "company" | "asset" | "event" | "location" | "unknown";
   }>> {
     const system =
-      "Extract the main entities mentioned in the user's query and classify each as one of: person | company | asset | event | location. Respond ONLY in JSON with a list of objects: [{\"name\":\"<entity name>\",\"type\":\"person|company|asset|event|location|unknown\"}]. If no specific entities are found, return an empty list []. Use English only.";
+      "Extract the main entities mentioned in the user's query and classify each as one of: person | company | asset | event | location | unknown. Respond ONLY in JSON with a list of objects: [{\"name\":\"<entity name>\",\"type\":\"person|company|asset|event|location|unknown\"}]. If no specific entities are found, return an empty list []. Use English only.";
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -2165,6 +2170,7 @@ export class ChatView extends ItemView {
   darkWebMode: boolean = false;
   reportGenerationMode: boolean = false;
   osintSearchMode: boolean = false; // Digital Footprint mode
+  orchestrationMode: boolean = false; // Orchestration agent mode
   // Mode dropdown element (replaces individual toggle checkboxes)
   modeDropdown!: HTMLSelectElement;
   // Digital Footprint options
@@ -2220,16 +2226,17 @@ export class ChatView extends ItemView {
       this.darkWebMode = conversation.darkWebMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
+      this.orchestrationMode = conversation.orchestrationMode || false; // Load orchestration mode
 
       // Check if any main mode is explicitly set in the conversation
-      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode;
+      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode || conversation.orchestrationMode;
 
       if (hasMainMode) {
         // Use the saved modes
         this.localSearchMode = conversation.localSearchMode || false;
         this.graphGenerationMode = conversation.graphGenerationMode || false;
       } else {
-        // No main mode set - default to Graph Generation mode
+        // No conversation - default to Graph Generation mode
         this.localSearchMode = false;
         this.graphGenerationMode = true;
       }
@@ -2273,7 +2280,8 @@ export class ChatView extends ItemView {
         this.chatHistory.length > 0 ? this.chatHistory[0].content : undefined,
         this.darkWebMode,
         this.graphGenerationMode,
-        this.reportGenerationMode
+        this.reportGenerationMode,
+        this.orchestrationMode // Save orchestration mode
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
@@ -2282,6 +2290,7 @@ export class ChatView extends ItemView {
     this.currentConversation.graphGenerationMode = this.graphGenerationMode;
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
     this.currentConversation.osintSearchMode = this.osintSearchMode;
+    this.currentConversation.orchestrationMode = this.orchestrationMode; // Save orchestration mode
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
   }
@@ -2378,6 +2387,7 @@ export class ChatView extends ItemView {
 
     // Add standard options
     modeOptions.push(
+      { value: "orchestration", label: "🧠 Orchestration Agent", mode: "orchestrationMode" }, // Added Orchestration Agent mode
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
@@ -2405,6 +2415,7 @@ export class ChatView extends ItemView {
       else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
       else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
       else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
+      else if (option.value === "orchestration" && this.orchestrationMode) optEl.selected = true; // Select orchestration mode
     }
 
     // Settings shortcut button
@@ -2430,6 +2441,7 @@ export class ChatView extends ItemView {
       this.darkWebMode = false;
       this.reportGenerationMode = false;
       this.osintSearchMode = false;
+      this.orchestrationMode = false; // Reset orchestration mode
 
       // Enable selected mode
       // Enable selected mode
@@ -2457,6 +2469,10 @@ export class ChatView extends ItemView {
           case "osint":
             this.osintSearchMode = true;
             new Notice("Leak search mode enabled");
+            break;
+          case "orchestration": // Handle orchestration mode selection
+            this.orchestrationMode = true;
+            new Notice("Orchestration Agent mode enabled");
             break;
           case "none":
             // All modes off - Graph only Mode if graph generation is on
@@ -2697,6 +2713,14 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
+    if (this.orchestrationMode) {
+      return {
+        icon: "🧠",
+        title: "Orchestration Agent:",
+        text: "The agent will automatically use available tools (local search, web search, dark web, reports, graph extraction) to answer your query."
+      };
+    }
+
     if (this.isGraphOnlyMode()) {
       return {
         icon: "🏷️",
@@ -3189,7 +3213,7 @@ export class ChatView extends ItemView {
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode;
   }
 
   // Show notice when entering Graph only Mode
@@ -3201,6 +3225,7 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
+    if (this.orchestrationMode) return "Ask anything. The agent will orchestrate tools to find the answer...";
     if (this.isGraphOnlyMode()) {
       return "Enter text to extract entities...";
     } else if (this.osintSearchMode) {
@@ -4165,7 +4190,9 @@ export class ChatView extends ItemView {
 
     // Route to appropriate handler based on mode
     // Pass processingValue (includes file content) to handlers, not displayValue
-    if (this.isGraphOnlyMode()) {
+    if (this.orchestrationMode) {
+      await this.handleOrchestrationAgent(processingValue);
+    } else if (this.isGraphOnlyMode()) {
       // Graph only Mode: Extract entities from user input without AI chat
       await this.handleGraphOnlyMode(processingValue);
     } else if (this.customChatMode) {
@@ -4183,6 +4210,62 @@ export class ChatView extends ItemView {
 
     // Save conversation after assistant response
     await this.saveCurrentConversation();
+  }
+
+  async handleOrchestrationAgent(query: string) {
+    const assistantIndex = this.chatHistory.length;
+
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: "Orchestrating tools...", percent: 10 }
+    });
+    await this.renderMessages();
+
+    const updateProgress = (message: string, percent: number) => {
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+
+    try {
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
+      const attachmentsContext = ""; // TODO: If files were attached, we should serialize them here
+      const currentGraphState = {
+        entities: this.plugin.entityManager.getAllEntities() // Send the current graph state 
+      };
+
+      // Extract conversational memory
+      const conversationMemory = this.chatHistory
+        .slice(0, assistantIndex) // All messages before this current pending assistant response
+        .map(msg => ({ role: msg.role, content: msg.content }));
+
+      const finalResponse = await this.plugin.orchestrationService.processRequest(
+        query,
+        attachmentsContext,
+        currentGraphState, // Also pass the graph state
+        conversationMemory, // Send the memory history
+        updateProgress
+      );
+
+      this.activeAbortControllers.delete(assistantIndex);
+
+      this.chatHistory[assistantIndex].content = finalResponse || "Done.";
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+
+    } catch (e) {
+      this.activeAbortControllers.delete(assistantIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
+
+      this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    }
   }
 
   async handleCustomChat(query: string) {
@@ -6383,8 +6466,80 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
-    ;
+    new Setting(containerEl).setName("Orchestration agent").setHeading();
 
+    new Setting(containerEl)
+      .setName("System prompt")
+      .setDesc("The core instructions that guide the Orchestration Agent's decision making.")
+      .addTextArea((text) => {
+        text
+          .setPlaceholder("You are the Orchestration Agent...")
+          .setValue(this.plugin.settings.orchestrationPrompt)
+          .onChange(async (value) => {
+            this.plugin.settings.orchestrationPrompt = value;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.rows = 6;
+        text.inputEl.setCssProps({ width: "100%" });
+      });
+
+    new Setting(containerEl)
+      .setName("Provider")
+      .setDesc("Select the LLM provider for the Orchestration Agent.")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("osint-copilot", "OSINT Copilot API (Default)")
+          .addOption("remote", "OpenAI / Custom API")
+          .addOption("local", "Local Model (e.g. LM Studio/Ollama)")
+          .setValue(this.plugin.settings.orchestrationProvider)
+          .onChange(async (value) => {
+            this.plugin.settings.orchestrationProvider = value as 'osint-copilot' | 'local' | 'remote';
+            await this.plugin.saveSettings();
+            this.display(); // Refresh to show/hide relevant settings
+          });
+      });
+
+    if (this.plugin.settings.orchestrationProvider !== 'osint-copilot') {
+      new Setting(containerEl)
+        .setName("API Endpoint URL")
+        .setDesc("The base URL for the API (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)")
+        .addText((text) =>
+          text
+            .setPlaceholder("http://localhost:11434/v1")
+            .setValue(this.plugin.settings.orchestrationLocalUrl)
+            .onChange(async (value) => {
+              this.plugin.settings.orchestrationLocalUrl = value;
+              await this.plugin.saveSettings();
+            })
+        );
+
+      new Setting(containerEl)
+        .setName("API Key")
+        .setDesc("Leave blank for local unauthenticated models")
+        .addText((text) => {
+          text
+            .setPlaceholder("sk-...")
+            .setValue(this.plugin.settings.orchestrationApiKey)
+            .onChange(async (value) => {
+              this.plugin.settings.orchestrationApiKey = value;
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.type = "password";
+        });
+
+      new Setting(containerEl)
+        .setName("Model Name")
+        .setDesc("The exact string identifier for the model (e.g., gpt-4o, llama3)")
+        .addText((text) =>
+          text
+            .setPlaceholder("gpt-4o")
+            .setValue(this.plugin.settings.orchestrationModel)
+            .onChange(async (value) => {
+              this.plugin.settings.orchestrationModel = value;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
   }
 
   async fetchApiKeyInfo(): Promise<ApiKeyInfo | null> {
