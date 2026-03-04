@@ -28,9 +28,16 @@ describe('ChatView Modes Integration', () => {
             enableGraphFeatures: true,
             autoRefreshGraph: true,
             autoOpenGraphOnEntityCreation: false,
+            advancedGraphMode: true,
             conversationFolder: '.osint-copilot/conversations',
             apiProvider: 'default',
-            customCheckpoints: []
+            themeMode: 'system',
+            customCheckpoints: [],
+            orchestrationPrompt: "You are the OSINT Copilot Orchestrator.",
+            orchestrationProvider: 'osint-copilot',
+            orchestrationLocalUrl: 'http://localhost:11434/v1',
+            orchestrationApiKey: '',
+            orchestrationModel: 'gpt-4o'
         };
 
         // Mock Plugin Services

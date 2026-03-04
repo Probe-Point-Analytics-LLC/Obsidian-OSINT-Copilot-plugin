@@ -63,6 +63,7 @@ interface VaultAISettings {
   enableGraphFeatures: boolean;
   autoRefreshGraph: boolean;
   autoOpenGraphOnEntityCreation: boolean;
+  advancedGraphMode: boolean; // Enables the advanced search with precise knowledge extraction
   // Conversation settings
   conversationFolder: string;
   // Custom API settings
@@ -76,6 +77,15 @@ interface VaultAISettings {
     allow_custom_chat_config: boolean;
     allow_local_agent: boolean;
   };
+  // --- Theme Mode ---
+  themeMode: 'system' | 'light' | 'dark'; // Add theme setting
+
+  // --- Orchestration Settings ---
+  orchestrationPrompt: string; // The system prompt for the Orchestration Agent
+  orchestrationProvider: 'osint-copilot' | 'local' | 'remote';
+  orchestrationLocalUrl: string;
+  orchestrationApiKey: string;
+  orchestrationModel: string;
 }
 
 export interface CustomCheckpoint {
@@ -94,6 +104,7 @@ const CHAT_MODEL = "gpt-4o-mini";
 const ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 // DarkWeb dark web API uses gpt-5-mini for best results with dark web content
 const DARKWEB_MODEL = "gpt-5-mini";
+
 
 export interface IndexedNote {
   path: string;
@@ -125,11 +136,20 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   enableGraphFeatures: true,
   autoRefreshGraph: true,
   autoOpenGraphOnEntityCreation: false,
+  advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
   // Custom API defaults
   apiProvider: 'default',
-  customCheckpoints: []
+  customCheckpoints: [],
+
+  themeMode: 'system', // Default to system theme
+
+  orchestrationPrompt: "You are the OSINT Copilot Orchestrator. Synthesize global intelligence with local knowledge into a Knowledge Graph.\n\n[CALL: OSINT_SEARCH] - global footprint searches.\n[CALL: DARK_WEB] - hidden web intelligence.\n[CALL: CORPORATE_REPORTS] - registry data.\n[CALL: LOCAL_VAULT] - local obsidian notes.\n[CALL: GRAPH_EXTRACT] - process raw text/links/files.\n\nUse @@CREATE, @@DELETE, @@CONNECT, @@DISCONNECT to manipulate graph.",
+  orchestrationProvider: 'osint-copilot',
+  orchestrationLocalUrl: 'http://localhost:11434/v1',
+  orchestrationApiKey: '',
+  orchestrationModel: 'gpt-4o'
 };
 
 const REPORT_API_BASE_URL = "https://api.osint-copilot.com";

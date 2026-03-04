@@ -769,6 +769,61 @@ export class GraphApiService {
     }
 
     /**
+     * Call the backend remote model natively.
+     */
+    async callRemoteModel(
+        messages: { role: string, content: string }[],
+        jsonResponse: boolean = false,
+        customModel?: string,
+        signal?: AbortSignal
+    ): Promise<string> {
+        let endpoint = `${this.baseUrl}/api/remote-chat/completions`;
+
+        // Setup payload. 
+        // We're adapting the chat format to what the custom provider or remote agent uses.
+        const payload: any = {
+            model: customModel || 'gpt-4o',
+            messages: messages,
+        };
+
+        if (jsonResponse) {
+            payload.response_format = { type: "json_object" };
+        }
+
+        const requestPromise = requestUrl({
+            url: endpoint,
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(payload),
+            throw: false
+        });
+
+        const response = await (signal
+            ? Promise.race([
+                requestPromise,
+                new Promise<never>((_, reject) => {
+                    signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+                })
+            ])
+            : requestPromise);
+
+        if (response.status >= 200 && response.status < 300) {
+            try {
+                const data = await response.json;
+                return data.choices && data.choices[0] && data.choices[0].message.content
+                    ? data.choices[0].message.content
+                    : JSON.stringify(data);
+            } catch (e) {
+                console.error('[GraphApiService] Failed to parse custom API response:', e);
+                // Fallback to text if JSON parse fails but status is 200 OK
+                return await response.text;
+            }
+        }
+
+        throw new Error(`Custom API Error: ${response.status} ${await response.text}`);
+    }
+
+    /**
      * Split text into chunks, trying to break at paragraph boundaries.
      */
     private splitTextIntoChunks(text: string, chunkSize: number = 8000): string[] {
