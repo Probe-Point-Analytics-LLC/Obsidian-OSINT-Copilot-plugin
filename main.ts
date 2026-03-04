@@ -4239,7 +4239,8 @@ export class ChatView extends ItemView {
       this.activeAbortControllers.set(assistantIndex, controller);
 
       const currentGraphState = {
-        entities: this.plugin.entityManager.getAllEntities() // Send the current graph state 
+        entities: this.plugin.entityManager.getAllEntities(), // Send the current graph state 
+        connections: this.plugin.entityManager.getAllConnections() // Send connections to find orphaned nodes
       };
 
       // Extract conversational memory

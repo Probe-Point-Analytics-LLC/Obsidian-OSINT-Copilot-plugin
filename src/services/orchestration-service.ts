@@ -121,6 +121,7 @@ export class OrchestrationService {
 ${systemPrompt}
 
 === CURRENT GRAPH STATE ===
+(Note: 'entities' lists all nodes. 'connections' lists all edges. Orphaned nodes are entities whose IDs do not appear in any connection's 'from' or 'to' fields - these can be removed via @@delete_entity if requested.)
 ${JSON.stringify(graphState, null, 2)}
 
 === CONVERSATION HISTORY ===
