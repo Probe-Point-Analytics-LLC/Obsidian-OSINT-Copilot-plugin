@@ -2387,7 +2387,7 @@ export class ChatView extends ItemView {
 
     // Add standard options
     modeOptions.push(
-      { value: "orchestration", label: "🧠 Orchestration Agent", mode: "orchestrationMode" }, // Added Orchestration Agent mode
+      { value: "orchestration", label: "🧠 Main Copilot", mode: "orchestrationMode" }, // Added Orchestration Agent mode
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
@@ -2472,7 +2472,7 @@ export class ChatView extends ItemView {
             break;
           case "orchestration": // Handle orchestration mode selection
             this.orchestrationMode = true;
-            new Notice("Orchestration Agent mode enabled");
+            new Notice("Main Copilot mode enabled");
             break;
           case "none":
             // All modes off - Graph only Mode if graph generation is on
@@ -2716,7 +2716,7 @@ export class ChatView extends ItemView {
     if (this.orchestrationMode) {
       return {
         icon: "🧠",
-        title: "Orchestration Agent:",
+        title: "Main Copilot:",
         text: "The agent will automatically use available tools (local search, web search, dark web, reports, graph extraction) to answer your query."
       };
     }
@@ -3336,6 +3336,8 @@ export class ChatView extends ItemView {
         this.modeDropdown.value = "report";
       } else if (this.osintSearchMode) {
         this.modeDropdown.value = "osint";
+      } else if (this.orchestrationMode) {
+        this.modeDropdown.value = "orchestration";
       } else {
         this.modeDropdown.value = "none";
       }
@@ -3489,6 +3491,7 @@ export class ChatView extends ItemView {
     this.graphGenerationMode = true;
     this.reportGenerationMode = false;
     this.osintSearchMode = false;
+    this.orchestrationMode = true; // Set Main Copilot as default
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
     new Notice("Started new conversation");
@@ -5072,7 +5075,7 @@ export class ChatView extends ItemView {
       } else {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
         const noEntitiesContent = this.chatHistory[assistantIndex].content || "";
-        this.chatHistory[assistantIndex].content = noEntitiesContent + "\n\n🏷️ No entities were created.";
+        this.chatHistory[assistantIndex].content = noEntitiesContent + "\n\n🏷️ No new entities were created.";
       }
       await this.renderMessages();
 
@@ -6467,26 +6470,27 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl).setName("Orchestration agent").setHeading();
+    // Orchestration Agent Settings
+    new Setting(containerEl).setName("Main Copilot").setHeading();
 
     new Setting(containerEl)
-      .setName("System prompt")
-      .setDesc("The core instructions that guide the Orchestration Agent's decision making.")
+      .setName("System Prompt")
+      .setDesc("The core instructions that guide the Main Copilot's decision making.")
       .addTextArea((text) => {
         text
-          .setPlaceholder("You are the Orchestration Agent...")
+          .setPlaceholder("You are the Main Copilot...")
           .setValue(this.plugin.settings.orchestrationPrompt)
           .onChange(async (value) => {
             this.plugin.settings.orchestrationPrompt = value;
             await this.plugin.saveSettings();
           });
-        text.inputEl.rows = 6;
-        text.inputEl.setCssProps({ width: "100%" });
+        text.inputEl.rows = 15;
+        text.inputEl.cols = 50;
       });
 
     new Setting(containerEl)
       .setName("Provider")
-      .setDesc("Select the LLM provider for the Orchestration Agent.")
+      .setDesc("Select the LLM provider for the Main Copilot.")
       .addDropdown((dropdown) => {
         dropdown
           .addOption("osint-copilot", "OSINT Copilot API (Default)")
