@@ -150,7 +150,7 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
             const responseText = await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
                 false, // not JSON mode in the API call itself if not supported, but we ask for JSON in prompt
-                this.plugin.settings.customCheckpoints.length > 0 ? this.plugin.settings.customCheckpoints[0].model : undefined
+                this.plugin.settings.orchestrationModel // Pass the chosen orchestration model (e.g., gpt-4o)
             );
 
             // Try to extract JSON from the response text
@@ -384,7 +384,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
             return await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
                 false,
-                this.plugin.settings.customCheckpoints.length > 0 ? this.plugin.settings.customCheckpoints[0].model : undefined
+                this.plugin.settings.orchestrationModel
             );
         } catch (error) {
             console.error("[OrchestrationService] Failed to generate final response:", error);
