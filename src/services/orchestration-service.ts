@@ -2,6 +2,7 @@ import VaultAIPlugin from "../../main";
 import { App, Notice, requestUrl } from 'obsidian';
 import { GraphApiService } from './api-service';
 import { EntityType } from '../entities/types';
+import { ConfirmModal } from '../modals/confirm-modal';
 
 export interface OrchestrationPlan {
     reasoning: string;
@@ -31,13 +32,29 @@ export class OrchestrationService {
             onProgress("Verifying provider and credits...", 10);
             await this.verifyProviderAndCredits();
 
+            // Implicit URL Extraction (Phase 3)
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const urls = query.match(urlRegex);
+            if (urls && urls.length > 0) {
+                onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
+                for (const url of urls) {
+                    try {
+                        const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+                        attachmentsContext += `\n\n=== Content from ${url} ===\n${extractedText}`;
+                    } catch (e) {
+                        console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+                        attachmentsContext += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
+                    }
+                }
+            }
+
             onProgress("Classifying intent and formulating plan...", 20);
             const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
 
             let toolResults: Record<string, any> = {};
             if (plan.toolsToCall.length > 0) {
-                onProgress(`Executing ${plan.toolsToCall.length} tools...`, 40);
-                toolResults = await this.executeToolsInParallel(plan.toolsToCall, query);
+                onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 50);
+                toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
             }
 
             if (this.shouldExtractEntities(toolResults)) {
@@ -115,11 +132,16 @@ ${attachmentsContext ? attachmentsContext : "No attachments provided."}
 === USER REQUEST ===
 ${query}
 
-Respond ONLY with a JSON object in the following format. Ensure all reasoning and properties are properly escaped.
+Respond ONLY with a valid JSON object matching this structure. Do not use markdown backticks around the JSON.
 {
   "reasoning": "Explain your thought process here",
-  "toolsToCall": ["DARK_WEB", "OSINT_SEARCH", "CORPORATE_REPORTS", "LOCAL_VAULT"], // Array of strings (0 to many)
-  "graphCommands": ["@@CREATE: {...}", "@@DELETE: {...}"], // Array of valid graph command strings
+  "toolsToCall": ["DARK_WEB", "OSINT_SEARCH", "CORPORATE_REPORTS", "LOCAL_VAULT", "EXTRACT_TO_GRAPH"], // Array of strings (0 to many)
+  "graphCommands": [
+    "@@create_entity {\"type\":\"Person\", \"label\":\"John Doe\", \"properties\":{}}",
+    "@@delete_entity {\"id\":\"...\"}",
+    "@@create_link {\"from\":\"id1\", \"to\":\"id2\", \"relationship\":\"WORKS_FOR\"}",
+    "@@delete_link {\"id\":\"...\"}"
+  ], // Array of valid graph command strings
   "directResponse": "A direct answer if no tools are needed, or conversational response"
 }`;
 
@@ -158,7 +180,7 @@ Respond ONLY with a JSON object in the following format. Ensure all reasoning an
         }
     }
 
-    private async executeToolsInParallel(tools: string[], query: string): Promise<Record<string, any>> {
+    private async executeToolsInParallel(tools: string[], query: string, attachmentsContext: string, onProgress: (msg: string, percent: number) => void): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
 
         const promises = tools.map(async (tool) => {
@@ -196,6 +218,46 @@ Respond ONLY with a JSON object in the following format. Ensure all reasoning an
                         const vaultResults = `Executing local search for: ${query}. Use search findings appropriately.`; // TODO: wire actual search
                         results["LOCAL_VAULT"] = vaultResults;
                         break;
+                    case "EXTRACT_TO_GRAPH":
+                        if (!attachmentsContext || attachmentsContext.trim() === '') {
+                            results["EXTRACT_TO_GRAPH"] = "No attachments or links provided to extract.";
+                            break;
+                        }
+                        // Use the correct API command for extracting text to graph
+                        // Let's rely on ChatView's Graph Only Mode backend logic
+                        const graphGenRes = await requestUrl({
+                            url: `${this.plugin.settings.graphApiUrl}/api/generate-graph`,
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.plugin.settings.reportApiKey}`
+                            },
+                            body: JSON.stringify({
+                                text: attachmentsContext,
+                                existing_entities: [], // Ideally pass current graph entities if it's not too large
+                                context: "Orchestration Extraction"
+                            }),
+                            throw: false
+                        });
+
+                        if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
+                            // Automatically insert these entities into the local Obsidian graph!
+                            const generatedGraph = graphGenRes.json;
+                            if (generatedGraph && generatedGraph.entities) {
+                                for (const ent of generatedGraph.entities) {
+                                    await this.plugin.entityManager.createEntity(ent.type, ent.properties);
+                                }
+                            }
+                            if (generatedGraph && generatedGraph.connections) {
+                                for (const conn of generatedGraph.connections) {
+                                    await this.plugin.entityManager.createConnection(conn.from, conn.to, conn.relationship);
+                                }
+                            }
+                            results["EXTRACT_TO_GRAPH"] = `Successfully extracted ${generatedGraph?.entities?.length || 0} entities and ${generatedGraph?.connections?.length || 0} connections into the graph.`;
+                        } else {
+                            results["EXTRACT_TO_GRAPH"] = `Extraction failed: ${graphGenRes.status}`;
+                        }
+                        break;
                     default:
                         console.warn(`[OrchestrationService] Unknown tool requested: ${tool}`);
                 }
@@ -221,29 +283,65 @@ Respond ONLY with a JSON object in the following format. Ensure all reasoning an
     private async executeGraphModifications(commands: string[]): Promise<void> {
         if (!commands || commands.length === 0) return;
 
+        // 1. Dry Run / User Confirmation using ConfirmModal
+        const confirmed = await new Promise<boolean>((resolve) => {
+            new ConfirmModal(
+                this.plugin.app,
+                "Confirm Graph Modifications",
+                `The agent wants to make the following changes:\n\n${commands.join('\n\n')}\n\nDo you want to proceed?`,
+                () => resolve(true),
+                () => resolve(false)
+            ).open();
+        });
+
+        if (!confirmed) {
+            new Notice("Graph modifications cancelled by user.");
+            return;
+        }
+
+        let successCount = 0;
+
         for (const command of commands) {
             try {
-                if (command.startsWith("@@CREATE:")) {
-                    const jsonStr = command.replace("@@CREATE:", "").trim();
+                if (command.startsWith("@@create_entity")) {
+                    const jsonStr = command.replace("@@create_entity", "").trim();
                     const data = JSON.parse(jsonStr);
-                    // Scaffold: Assuming entity schema is standard
                     if (data.type && data.properties) {
                         await this.plugin.entityManager.createEntity(data.type, data.properties);
+                        successCount++;
                     }
-                } else if (command.startsWith("@@DELETE:")) {
-                    const idStr = command.replace("@@DELETE:", "").trim();
-                    const data = JSON.parse(idStr);
+                } else if (command.startsWith("@@delete_entity")) {
+                    const jsonStr = command.replace("@@delete_entity", "").trim();
+                    const data = JSON.parse(jsonStr);
                     if (data.id) {
-                        // Wait, EntityManager doesn't have an explicit root level delete that's easy to mock here.
-                        // But if we could: await this.plugin.entityManager.deleteEntity(data.id);
-                        console.warn(`[OrchestrationService] Delete command requested for ${data.id} but not fully implemented.`);
+                        await this.plugin.entityManager.deleteEntities([data.id]);
+                        successCount++;
+                    }
+                } else if (command.startsWith("@@create_link")) {
+                    const jsonStr = command.replace("@@create_link", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.from && data.to && data.relationship) {
+                        await this.plugin.entityManager.createConnection(data.from, data.to, data.relationship);
+                        successCount++;
+                    }
+                } else if (command.startsWith("@@delete_link")) {
+                    const jsonStr = command.replace("@@delete_link", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.id) {
+                        await this.plugin.entityManager.deleteConnectionWithNote(data.id);
+                        successCount++;
                     }
                 } else {
                     console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);
                 }
             } catch (e) {
                 console.error(`[OrchestrationService] Failed to execute graph command '${command}':`, e);
+                new Notice(`Error executing command: ${command.substring(0, 30)}...`);
             }
+        }
+
+        if (successCount > 0) {
+            new Notice(`Successfully executed ${successCount} graph modification(s).`);
         }
     }
 
