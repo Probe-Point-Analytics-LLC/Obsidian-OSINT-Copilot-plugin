@@ -777,7 +777,7 @@ export class GraphApiService {
         customModel?: string,
         signal?: AbortSignal
     ): Promise<string> {
-        let endpoint = `${this.baseUrl}/api/remote-chat/completions`;
+        let endpoint = `${this.baseUrl}/api/chat/completion`;
 
         // Setup payload. 
         // We're adapting the chat format to what the custom provider or remote agent uses.
