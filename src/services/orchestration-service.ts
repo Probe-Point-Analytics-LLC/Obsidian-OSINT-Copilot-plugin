@@ -121,7 +121,7 @@ export class OrchestrationService {
 ${systemPrompt}
 
 === CURRENT GRAPH STATE ===
-(Note: 'entities' lists all nodes. 'connections' lists all edges. Orphaned nodes are entities whose IDs do not appear in any connection's 'from' or 'to' fields - these can be removed via @@delete_entity if requested.)
+(Note: 'entities' lists all nodes. 'connections' lists all edges. Orphaned nodes are entities whose IDs do not appear in any connection's 'fromEntityId' or 'toEntityId' fields - these can be removed via @@delete_entity if requested.)
 ${JSON.stringify(graphState, null, 2)}
 
 === CONVERSATION HISTORY ===
@@ -284,50 +284,63 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
     private async executeGraphModifications(commands: string[]): Promise<void> {
         if (!commands || commands.length === 0) return;
 
-        const formattedCommands = commands.map(cmd => {
+        const checkboxItems: { label: string, value: string, checked: boolean }[] = [];
+        commands.forEach((cmd, idx) => {
+            let labelText = `❓ Unknown: ${cmd}`;
             try {
                 if (cmd.startsWith("@@create_entity")) {
                     const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
-                    const label = data.label || (data.properties && data.properties.name) || 'Unknown';
-                    return `➕ Create ${data.type || 'Entity'}: **${label}**`;
-                }
-                if (cmd.startsWith("@@delete_entity")) {
+                    const name = data.label || (data.properties && data.properties.name) || 'Unknown';
+                    labelText = `➕ Create ${data.type || 'Entity'}: **${name}**`;
+                } else if (cmd.startsWith("@@delete_entity")) {
                     const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
-                    return `🗑️ Delete Entity (ID: ${data.id})`;
-                }
-                if (cmd.startsWith("@@create_link")) {
+                    const entity = this.plugin.entityManager.getEntity(data.id);
+                    const name = entity ? entity.label : `ID: ${data.id}`;
+                    labelText = `🗑️ Delete Entity: **${name}**`;
+                } else if (cmd.startsWith("@@create_link")) {
                     const data = JSON.parse(cmd.replace("@@create_link", "").trim());
-                    return `🔗 Connect: [${data.from}] ──(${data.relationship})──> [${data.to}]`;
-                }
-                if (cmd.startsWith("@@delete_link")) {
+                    const fromEnt = this.plugin.entityManager.getEntity(data.from);
+                    const toEnt = this.plugin.entityManager.getEntity(data.to);
+                    const fromName = fromEnt ? fromEnt.label : data.from;
+                    const toName = toEnt ? toEnt.label : data.to;
+                    labelText = `🔗 Connect: [**${fromName}**] ──(${data.relationship})──> [**${toName}**]`;
+                } else if (cmd.startsWith("@@delete_link")) {
                     const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
-                    return `✂️ Delete Link (ID: ${data.id})`;
+                    labelText = `✂️ Delete Link (ID: ${data.id})`;
                 }
-                return `❓ Unknown: ${cmd}`;
             } catch (e) {
-                return `⚠️ Raw Data: ${cmd}`;
+                labelText = `⚠️ Raw Data: ${cmd}`;
             }
+            checkboxItems.push({ label: labelText, value: idx.toString(), checked: true });
         });
 
         // 1. Dry Run / User Confirmation using ConfirmModal
-        const confirmed = await new Promise<boolean>((resolve) => {
+        const confirmedValues = await new Promise<string[] | undefined>((resolve) => {
             new ConfirmModal(
                 this.plugin.app,
                 "Confirm Graph Modifications",
-                `The agent wants to make the following changes:\n\n${formattedCommands.join('\n')}\n\nDo you want to proceed?`,
-                () => resolve(true),
-                () => resolve(false)
+                `The agent wants to make the following changes. Uncheck those you wish to ignore:`,
+                (selectedValues) => resolve(selectedValues),
+                () => resolve(undefined),
+                false,
+                checkboxItems
             ).open();
         });
 
-        if (!confirmed) {
+        if (!confirmedValues) {
             new Notice("Graph modifications cancelled by user.");
+            return;
+        }
+
+        const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
+        if (cmdsToExecute.length === 0) {
+            new Notice("No graph modifications selected.");
             return;
         }
 
         let successCount = 0;
 
-        for (const command of commands) {
+        for (const command of cmdsToExecute) {
             try {
                 if (command.startsWith("@@create_entity")) {
                     const jsonStr = command.replace("@@create_entity", "").trim();
