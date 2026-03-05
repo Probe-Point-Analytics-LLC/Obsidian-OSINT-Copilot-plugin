@@ -147,10 +147,10 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
 }`;
 
         try {
-            // Use the remote model for classification natively
+            // Use the remote model for classification natively with JSON mode enforced
             const responseText = await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
-                false, // not JSON mode in the API call itself if not supported, but we ask for JSON in prompt
+                true, // Enforce JSON object mode
                 this.plugin.settings.orchestrationModel // Pass the chosen orchestration model (e.g., gpt-4o)
             );
 

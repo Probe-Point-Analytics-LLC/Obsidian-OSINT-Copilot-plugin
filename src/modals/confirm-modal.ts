@@ -29,6 +29,7 @@ export class ConfirmModal extends Modal {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
         this.destructive = destructive;
+        this.checkboxItems = checkboxItems;
     }
 
     onOpen() {
