@@ -775,9 +775,22 @@ export class GraphApiService {
         messages: { role: string, content: string }[],
         jsonResponse: boolean = false,
         customModel?: string,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        orchestrationOptions?: { provider: 'osint-copilot' | 'local' | 'remote', url: string, apiKey: string }
     ): Promise<string> {
         let endpoint = `${this.baseUrl}/api/chat/completion`;
+        let reqHeaders = this.getHeaders();
+
+        if (orchestrationOptions && orchestrationOptions.provider !== 'osint-copilot') {
+            endpoint = orchestrationOptions.url.trim();
+            if (!endpoint.endsWith('/chat/completions')) {
+                endpoint = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
+            }
+            reqHeaders = {
+                'Content-Type': 'application/json',
+                ...(orchestrationOptions.apiKey ? { 'Authorization': `Bearer ${orchestrationOptions.apiKey}` } : {})
+            };
+        }
 
         // Setup payload. 
         // We're adapting the chat format to what the custom provider or remote agent uses.
@@ -793,7 +806,7 @@ export class GraphApiService {
         const requestPromise = requestUrl({
             url: endpoint,
             method: 'POST',
-            headers: this.getHeaders(),
+            headers: reqHeaders,
             body: JSON.stringify(payload),
             throw: false
         });
