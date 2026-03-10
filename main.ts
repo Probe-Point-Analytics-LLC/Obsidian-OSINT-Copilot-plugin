@@ -48,6 +48,7 @@ import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
 import { CustomTypesService } from './src/services/custom-types-service';
 import { OrchestrationService } from './src/services/orchestration-service';
+import { UpdaterService } from './src/services/updater-service';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -205,6 +206,7 @@ export default class VaultAIPlugin extends Plugin {
   conversationService!: ConversationService;
   customTypesService!: CustomTypesService;
   orchestrationService!: OrchestrationService;
+  updaterService!: UpdaterService;
 
   async onload() {
     await this.loadSettings();
@@ -248,6 +250,15 @@ export default class VaultAIPlugin extends Plugin {
 
     // Initialize Orchestration Service
     this.orchestrationService = new OrchestrationService(this);
+
+    // Initialize Updater Service and check for updates
+    this.updaterService = new UpdaterService(this);
+    setTimeout(async () => {
+      const release = await this.updaterService.checkLatestRelease();
+      if (release) {
+        new Notice(`OSINT Copilot: Update ${release.tag_name} available! Go to Settings to apply.`);
+      }
+    }, 5000);
 
     // Initialize entity manager if graph features are enabled
     // This is done separately from API health check to ensure local features work
@@ -5986,7 +5997,43 @@ class VaultAISettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    ;
+    // Plugin Updates Section
+    new Setting(containerEl).setName("Plugin updates").setHeading();
+
+    const versionSetting = new Setting(containerEl)
+      .setName("Current version: " + this.plugin.manifest.version)
+      .setDesc("Checking for updates...");
+
+    this.plugin.updaterService.checkLatestRelease().then(release => {
+      if (release) {
+        versionSetting.setDesc(`Update available: ${release.tag_name}`);
+        versionSetting.addButton(btn =>
+          btn.setButtonText("Update plugin now")
+            .setCta()
+            .onClick(async () => {
+              btn.setButtonText("Downloading...");
+              btn.setDisabled(true);
+              const success = await this.plugin.updaterService.downloadReleaseAssets(release);
+              if (success) {
+                btn.setButtonText("Reloading plugin...");
+                await this.plugin.updaterService.reloadPlugin();
+              } else {
+                btn.setButtonText("Update failed");
+                new Notice("Failed to download update. Check console for details.");
+              }
+            })
+        );
+      } else {
+        versionSetting.setDesc("You are on the latest version.");
+        versionSetting.addButton(btn =>
+          btn.setButtonText("Check for updates")
+            .onClick(() => {
+              new Notice("Checking for updates...");
+              this.display(); // Refresh settings UI
+            })
+        );
+      }
+    });
 
     // Max Notes
     new Setting(containerEl)
