@@ -2212,11 +2212,7 @@ export class ChatView extends ItemView {
   orchestrationMode: boolean = false; // Orchestration agent mode
   // Mode dropdown element (replaces individual toggle checkboxes)
   modeDropdown!: HTMLSelectElement;
-  // Digital Footprint options
-  osintSearchOptionsVisible: boolean = false;
-  osintSearchCountry: 'RU' | 'UA' | 'BY' | 'KZ' = 'RU';
-  osintSearchMaxProviders: number = 3;
-  osintSearchParallel: boolean = true;
+  // Digital Footprint options removed for global search
   // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
   graphGenerationMode: boolean = true;
   graphGenerationToggle!: HTMLInputElement;
@@ -2737,10 +2733,7 @@ export class ChatView extends ItemView {
       }
     });
 
-    // Digital Footprint Options Panel (shown when Digital Footprint mode is active)
-    if (this.osintSearchMode) {
-      this.renderOSINTSearchOptions(inputContainer);
-    }
+    // Digital Footprint Options Panel removed
   }
 
   /**
@@ -3179,76 +3172,7 @@ export class ChatView extends ItemView {
     }
   }
 
-  /**
-   * Render the Digital Footprint options panel.
-   */
-  private renderOSINTSearchOptions(container: HTMLElement) {
-    const optionsPanel = container.createDiv("vault-ai-osint-search-options");
 
-    // Toggle button for options
-    const toggleBtn = optionsPanel.createEl("button", {
-      text: this.osintSearchOptionsVisible ? "⚙️ Hide Options" : "⚙️ Search Options",
-      cls: "vault-ai-osint-options-toggle"
-    });
-    toggleBtn.addEventListener("click", () => {
-      this.osintSearchOptionsVisible = !this.osintSearchOptionsVisible;
-      toggleBtn.textContent = this.osintSearchOptionsVisible ? "⚙️ Hide Options" : "⚙️ Search Options";
-      optionsContent.style.display = this.osintSearchOptionsVisible ? "flex" : "none";
-    });
-
-    // Options content (collapsible)
-    const optionsContent = optionsPanel.createDiv("vault-ai-osint-options-content");
-    optionsContent.style.display = this.osintSearchOptionsVisible ? "flex" : "none";
-
-    // Country selector
-    const countryGroup = optionsContent.createDiv("vault-ai-osint-option-group");
-    countryGroup.createEl("label", { text: "Country:" });
-    const countrySelect = countryGroup.createEl("select", { cls: "vault-ai-osint-country-select" });
-    const countries = [
-      { value: 'RU', label: '🇷🇺 Russia' },
-      { value: 'UA', label: '🇺🇦 Ukraine' },
-      { value: 'BY', label: '🇧🇾 Belarus' },
-      { value: 'KZ', label: '🇰🇿 Kazakhstan' }
-    ];
-    for (const country of countries) {
-      const option = countrySelect.createEl("option", { text: country.label, value: country.value });
-      if (country.value === this.osintSearchCountry) {
-        option.selected = true;
-      }
-    }
-    countrySelect.addEventListener("change", () => {
-      this.osintSearchCountry = countrySelect.value as 'RU' | 'UA' | 'BY' | 'KZ';
-    });
-
-    // Max providers
-    const providersGroup = optionsContent.createDiv("vault-ai-osint-option-group");
-    providersGroup.createEl("label", { text: "Max providers:" });
-    const providersInput = providersGroup.createEl("input", {
-      type: "number",
-      cls: "vault-ai-osint-providers-input",
-      value: String(this.osintSearchMaxProviders)
-    });
-    providersInput.min = "1";
-    providersInput.max = "10";
-    providersInput.addEventListener("change", () => {
-      const value = parseInt(providersInput.value);
-      if (value >= 1 && value <= 10) {
-        this.osintSearchMaxProviders = value;
-      } else {
-        providersInput.value = String(this.osintSearchMaxProviders);
-      }
-    });
-
-    // Parallel execution
-    const parallelGroup = optionsContent.createDiv("vault-ai-osint-option-group");
-    const parallelLabel = parallelGroup.createEl("label");
-    const parallelCheckbox = parallelLabel.createEl("input", { type: "checkbox" });
-    parallelCheckbox.checked = this.osintSearchParallel;
-    parallelLabel.appendText(" Parallel Search");
-    parallelCheckbox.addEventListener("change", () => {
-      this.osintSearchParallel = parallelCheckbox.checked;
-    });
-  }
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
@@ -5305,12 +5229,11 @@ export class ChatView extends ItemView {
 
       updateProgress("Detecting entities in query...", 20);
 
-      // Build search request
-      const searchRequest: AISearchRequest = {
+      const searchRequest: any = {
         query: query,
-        country: this.osintSearchCountry,
-        max_providers: this.osintSearchMaxProviders,
-        parallel: this.osintSearchParallel
+        country: "ALL",
+        max_providers: 10,
+        parallel: true
       };
 
       // Retry callback for progress updates

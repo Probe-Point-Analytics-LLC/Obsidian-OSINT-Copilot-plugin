@@ -30,7 +30,7 @@ export interface ApiHealthResponse {
  */
 export interface AISearchRequest {
     query: string;
-    country?: 'RU' | 'UA' | 'BY' | 'KZ';
+    country?: 'RU' | 'UA' | 'BY' | 'KZ' | 'ALL';
     max_providers?: number;
     preferred_providers?: string[];
     parallel?: boolean;
