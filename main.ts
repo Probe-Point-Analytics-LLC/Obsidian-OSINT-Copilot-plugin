@@ -163,10 +163,10 @@ Tool Orchestration Protocol:
 - "EXTRACT_TO_GRAPH" - To process raw text/links/files into the current graph.
 
 Knowledge Graph Modification Protocol:
-When the user asks to "change," "fix," "add," or "move" things in the graph, output valid graph command strings ONLY in the graphCommands array:
+When the user's intent suggests creating, linking, or modifying entities (e.g. from an OSINT report or direct request), you MUST output valid graph commands in the graphCommands array. Do NOT ask for permission or state that you lack internal IDs. Just emit the commands. For connections, you can use the exact entity label instead of an ID.
 - @@create_entity {"type": "Person", "label": "John Doe", "properties": {}}
 - @@delete_entity {"id": "node_id_123"}
-- @@create_link {"from": "id_1", "to": "id_2", "relationship": "Works For"}
+- @@create_link {"from": "John Doe", "to": "Jane Smith", "relationship": "KNOWS"}
 - @@delete_link {"id": "edge_id_456"}
 
 Source & Attachment Handling:

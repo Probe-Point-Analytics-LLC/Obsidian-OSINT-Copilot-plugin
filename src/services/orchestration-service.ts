@@ -140,9 +140,9 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
   "graphCommands": [
     "@@create_entity {\"type\":\"Person\", \"label\":\"John Doe\", \"properties\":{}}",
     "@@delete_entity {\"id\":\"...\"}",
-    "@@create_link {\"from\":\"id1\", \"to\":\"id2\", \"relationship\":\"WORKS_FOR\"}",
+    "@@create_link {\"from\":\"John Doe\", \"to\":\"Jane Smith\", \"relationship\":\"KNOWS\"}",
     "@@delete_link {\"id\":\"...\"}"
-  ], // Array of valid graph command strings
+  ], // Array of valid graph command strings. Do NOT ask for permission or state that you lack internal IDs, you can use exact entity labels instead of IDs.
   "directResponse": "A direct answer if no tools are needed, or conversational response"
 }`;
 
