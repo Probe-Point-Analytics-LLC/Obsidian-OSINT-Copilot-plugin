@@ -33,8 +33,17 @@ export class ConfirmModal extends Modal {
     }
 
     onOpen() {
-        const { contentEl } = this;
+        const { contentEl, containerEl } = this;
         contentEl.addClass('vault-ai-confirm-modal');
+
+        // Prevent closing when clicking outside the modal
+        const modalBg = containerEl.querySelector('.modal-bg');
+        if (modalBg) {
+            modalBg.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        }
 
         contentEl.createEl('h2', { text: this.title });
         contentEl.createDiv({ text: this.message, cls: 'vault-ai-confirm-message' });

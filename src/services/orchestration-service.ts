@@ -366,7 +366,21 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                     const jsonStr = command.replace("@@create_link", "").trim();
                     const data = JSON.parse(jsonStr);
                     if (data.from && data.to && data.relationship) {
-                        await this.plugin.entityManager.createConnection(data.from, data.to, data.relationship);
+                        let fromId = data.from;
+                        let toId = data.to;
+
+                        // Try to find the entity by label if it's not a recognized ID
+                        if (!this.plugin.entityManager.getEntity(fromId)) {
+                            const fromEnt = this.plugin.entityManager.findEntityByLabel(data.from);
+                            if (fromEnt) fromId = fromEnt.id;
+                        }
+
+                        if (!this.plugin.entityManager.getEntity(toId)) {
+                            const toEnt = this.plugin.entityManager.findEntityByLabel(data.to);
+                            if (toEnt) toId = toEnt.id;
+                        }
+
+                        await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
                         successCount++;
                     }
                 } else if (command.startsWith("@@delete_link")) {
