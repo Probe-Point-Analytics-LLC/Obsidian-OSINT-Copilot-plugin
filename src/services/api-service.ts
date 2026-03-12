@@ -833,7 +833,10 @@ export class GraphApiService {
             }
         }
 
-        throw new Error(`Custom API Error: ${response.status} ${await response.text}`);
+        const errorPrefix = (!orchestrationOptions || orchestrationOptions.provider === 'osint-copilot')
+            ? 'OSINT Copilot API Error'
+            : 'Custom API Error';
+        throw new Error(`${errorPrefix}: ${response.status} ${await response.text}`);
     }
 
     /**
