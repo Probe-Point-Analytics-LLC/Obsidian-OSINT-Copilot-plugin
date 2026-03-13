@@ -1800,13 +1800,16 @@ function getEntityLabel(type, properties) {
   if (config && properties[config.labelField]) {
     return String(properties[config.labelField]);
   }
-  const fallbackFields = ["full_name", "name", "address", "title", "label", "username", "number"];
+  const fallbackFields = ["full_name", "name", "address", "title", "label", "username", "number", "company_name", "event_name"];
   for (const field of fallbackFields) {
-    if (properties[field] && typeof properties[field] === "string" && properties[field].trim()) {
-      return String(properties[field]);
+    if (properties[field] && (typeof properties[field] === "string" || typeof properties[field] === "number")) {
+      const val = String(properties[field]).trim();
+      if (val && validateEntityName(val, type).isValid) {
+        return val;
+      }
     }
   }
-  return type;
+  return `Unknown ${type}`;
 }
 function getEntityIcon(type) {
   if (ENTITY_ICONS[type]) {
@@ -15131,13 +15134,24 @@ ${fileList}` : fileList;
     }
     let successCount = 0;
     const progressNotice = new import_obsidian14.Notice("Applying graph changes...", 0);
-    for (const command of commandsToExecute) {
+    const indexToUuidMap = /* @__PURE__ */ new Map();
+    for (let i = 0; i < commandsToExecute.length; i++) {
+      const command = commandsToExecute[i];
       try {
         if (command.startsWith("@@create_entity")) {
           const jsonStr = command.replace("@@create_entity", "").trim();
           const data = JSON.parse(jsonStr);
           if (data.type && data.properties) {
-            await this.plugin.entityManager.createEntity(data.type, data.properties);
+            const label = data.label || getEntityLabel(data.type, data.properties);
+            const validation = validateEntityName(label, data.type);
+            if (!validation.isValid) {
+              console.warn(`[OSINT Copilot] Skipping creation of generic entity: "${label}". Error: ${validation.error}`);
+              continue;
+            }
+            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties);
+            if (typeof data.temp_id === "number") {
+              indexToUuidMap.set(data.temp_id, entity.id);
+            }
             successCount++;
           }
         } else if (command.startsWith("@@delete_entity")) {
@@ -15150,21 +15164,37 @@ ${fileList}` : fileList;
         } else if (command.startsWith("@@create_link")) {
           const jsonStr = command.replace("@@create_link", "").trim();
           const data = JSON.parse(jsonStr);
-          if (data.from && data.to && data.relationship) {
+          if (data.from !== void 0 && data.to !== void 0 && data.relationship) {
             let fromId = data.from;
             let toId = data.to;
+            if (typeof fromId === "number" && indexToUuidMap.has(fromId)) {
+              fromId = indexToUuidMap.get(fromId);
+            }
+            if (typeof toId === "number" && indexToUuidMap.has(toId)) {
+              toId = indexToUuidMap.get(toId);
+            }
             if (!this.plugin.entityManager.getEntity(fromId)) {
-              const f = this.plugin.entityManager.findEntityByLabel(data.from);
-              if (f)
-                fromId = f.id;
+              const label = data.from_label || (typeof data.from === "string" ? data.from : "");
+              if (label) {
+                const f = this.plugin.entityManager.findEntityByLabel(label);
+                if (f)
+                  fromId = f.id;
+              }
             }
             if (!this.plugin.entityManager.getEntity(toId)) {
-              const t = this.plugin.entityManager.findEntityByLabel(data.to);
-              if (t)
-                toId = t.id;
+              const label = data.to_label || (typeof data.to === "string" ? data.to : "");
+              if (label) {
+                const t = this.plugin.entityManager.findEntityByLabel(label);
+                if (t)
+                  toId = t.id;
+              }
             }
-            await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-            successCount++;
+            if (this.plugin.entityManager.getEntity(fromId) && this.plugin.entityManager.getEntity(toId)) {
+              await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+              successCount++;
+            } else {
+              console.error(`[OSINT Copilot] Could not resolve connection endpoints: From=${fromId}, To=${toId}`);
+            }
           }
         } else if (command.startsWith("@@delete_link")) {
           const jsonStr = command.replace("@@delete_link", "").trim();

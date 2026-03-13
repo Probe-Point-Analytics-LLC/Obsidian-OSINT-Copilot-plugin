@@ -4357,13 +4357,32 @@ export class ChatView extends ItemView {
     let successCount = 0;
     const progressNotice = new Notice("Applying graph changes...", 0);
 
-    for (const command of commandsToExecute) {
+    const indexToUuidMap = new Map<number, string>();
+
+    for (let i = 0; i < commandsToExecute.length; i++) {
+      const command = commandsToExecute[i];
       try {
         if (command.startsWith("@@create_entity")) {
           const jsonStr = command.replace("@@create_entity", "").trim();
           const data = JSON.parse(jsonStr);
           if (data.type && data.properties) {
-            await this.plugin.entityManager.createEntity(data.type, data.properties);
+            // Use explicit label if provided by backend, otherwise resolve from properties
+            const label = data.label || getEntityLabel(data.type, data.properties);
+
+            // Strict Validation Guard: Reject generic/placeholder names
+            const validation = validateEntityName(label, data.type);
+            if (!validation.isValid) {
+              console.warn(`[OSINT Copilot] Skipping creation of generic entity: "${label}". Error: ${validation.error}`);
+              continue;
+            }
+
+            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties);
+
+            // Map the backend index (if provided) to the new UUID
+            if (typeof data.temp_id === 'number') {
+              indexToUuidMap.set(data.temp_id, entity.id);
+            }
+
             successCount++;
           }
         } else if (command.startsWith("@@delete_entity")) {
@@ -4376,22 +4395,41 @@ export class ChatView extends ItemView {
         } else if (command.startsWith("@@create_link")) {
           const jsonStr = command.replace("@@create_link", "").trim();
           const data = JSON.parse(jsonStr);
-          if (data.from && data.to && data.relationship) {
+          if (data.from !== undefined && data.to !== undefined && data.relationship) {
             let fromId = data.from;
             let toId = data.to;
 
-            // Try label resolution if ID lookup fails
-            if (!this.plugin.entityManager.getEntity(fromId)) {
-              const f = this.plugin.entityManager.findEntityByLabel(data.from);
-              if (f) fromId = f.id;
+            // Resolve IDs from the map if they are backend indices
+            if (typeof fromId === 'number' && indexToUuidMap.has(fromId)) {
+              fromId = indexToUuidMap.get(fromId);
             }
-            if (!this.plugin.entityManager.getEntity(toId)) {
-              const t = this.plugin.entityManager.findEntityByLabel(data.to);
-              if (t) toId = t.id;
+            if (typeof toId === 'number' && indexToUuidMap.has(toId)) {
+              toId = indexToUuidMap.get(toId);
             }
 
-            await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-            successCount++;
+            // Fallback to label resolution if ID lookup fails
+            if (!this.plugin.entityManager.getEntity(fromId)) {
+              const label = data.from_label || (typeof data.from === 'string' ? data.from : "");
+              if (label) {
+                const f = this.plugin.entityManager.findEntityByLabel(label);
+                if (f) fromId = f.id;
+              }
+            }
+            if (!this.plugin.entityManager.getEntity(toId)) {
+              const label = data.to_label || (typeof data.to === 'string' ? data.to : "");
+              if (label) {
+                const t = this.plugin.entityManager.findEntityByLabel(label);
+                if (t) toId = t.id;
+              }
+            }
+
+            // Final safety check
+            if (this.plugin.entityManager.getEntity(fromId) && this.plugin.entityManager.getEntity(toId)) {
+              await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+              successCount++;
+            } else {
+              console.error(`[OSINT Copilot] Could not resolve connection endpoints: From=${fromId}, To=${toId}`);
+            }
           }
         } else if (command.startsWith("@@delete_link")) {
           const jsonStr = command.replace("@@delete_link", "").trim();

@@ -396,17 +396,28 @@ export function getEntityLabel(type: EntityType | string, properties: Record<str
         return String(properties[config.labelField]);
     }
 
-    // Try common label fields as fallbacks to avoid using type name as label
-    const fallbackFields = ['full_name', 'name', 'address', 'title', 'label', 'username', 'number'];
+    const fallbackFields = ['full_name', 'name', 'address', 'title', 'label', 'username', 'number', 'company_name', 'event_name'];
     for (const field of fallbackFields) {
-        if (properties[field] && typeof properties[field] === 'string' && properties[field].trim()) {
-            return String(properties[field]);
+        if (properties[field] && (typeof properties[field] === 'string' || typeof properties[field] === 'number')) {
+            const val = String(properties[field]).trim();
+            if (val && validateEntityName(val, type).isValid) {
+                return val;
+            }
         }
     }
 
-    // Last resort: return type name (but this should rarely happen)
-    return type;
+    // Last resort: return type name IF no better label found, but tagged
+    return `Unknown ${type}`;
 }
+
+/**
+ * Check if a label is purely generic/placeholder.
+ */
+function isGenericLabel(label: string): boolean {
+    const generic = ['person', 'company', 'event', 'location', 'unknown', 'unknown person', 'unknown company', 'unknown event', 'entity'];
+    return generic.includes(label.toLowerCase().trim());
+}
+
 
 /**
  * Get the color for an entity type.
