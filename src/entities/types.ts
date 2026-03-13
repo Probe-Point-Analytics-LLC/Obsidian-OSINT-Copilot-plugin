@@ -354,6 +354,10 @@ export interface AIOperation {
         from: number;
         to: number;
         relationship: string;
+        from_label?: string;
+        to_label?: string;
+        from_type?: string;
+        to_type?: string;
     }>;
     updates?: Array<{
         type: string;

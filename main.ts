@@ -4410,6 +4410,11 @@ export class ChatView extends ItemView {
       let connectionsCreated = 0;
       let entitiesProcessed = 0;
 
+      // Persist entities across all operations and chunks for connection processing
+      const globalEntitiesMap: Map<number, Entity> = new Map();
+      const entityLabelMap: Map<string, Entity> = new Map();
+      let globalIndexOffset = 0;
+
       // Debug: Log the full operations array
       console.debug('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
 
@@ -4423,11 +4428,12 @@ export class ChatView extends ItemView {
           connectionsCount: operation.connections?.length || 0
         });
 
-        // Track entities by their index in this operation for connection processing
+        // Track entities by their index in THIS specific operation for AI relative indexing
         const operationEntities: Array<Entity | null> = [];
 
         if (operation.action === "create" && operation.entities) {
-          for (const entityData of operation.entities) {
+          for (let i = 0; i < operation.entities.length; i++) {
+            const entityData = operation.entities[i];
             entitiesProcessed++;
             // Calculate progress: 55% to 90% for entity creation
             const entityProgress = 55 + Math.round((entitiesProcessed / totalEntities) * 35);
@@ -4474,6 +4480,10 @@ export class ChatView extends ItemView {
                 filePath: entity.filePath
               });
               operationEntities.push(entity);
+              const globalIdx = globalIndexOffset + i;
+              globalEntitiesMap.set(globalIdx, entity);
+              entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+
               createdEntities.push({
                 id: entity.id,
                 type: entity.type,
@@ -4485,27 +4495,46 @@ export class ChatView extends ItemView {
               operationEntities.push(null);
             }
           }
+          globalIndexOffset += operation.entities.length;
+        }
 
-          // Process connections after all entities in this operation are created
-          if (operation.connections && operation.connections.length > 0) {
-            updateProgress("Creating relationships...", 92);
-            for (const conn of operation.connections) {
-              try {
-                const fromEntity = operationEntities[conn.from];
-                const toEntity = operationEntities[conn.to];
+        // Process connections using both global indices and label fallback
+        if (operation.connections && operation.connections.length > 0) {
+          updateProgress("Creating relationships...", 92);
+          for (const conn of operation.connections) {
+            try {
+              let fromEntity: Entity | undefined;
+              let toEntity: Entity | undefined;
 
-                if (fromEntity && toEntity) {
-                  // Add directed relationship from source to target entity only
-                  await this.plugin.entityManager.addRelationshipToNote(
-                    fromEntity,
-                    toEntity,
-                    conn.relationship
-                  );
-                  connectionsCreated++;
-                }
-              } catch (connError) {
-                console.error('[GraphOnlyMode] Failed to create connection:', connError);
+              // 1. Try local operation index (original AI behavior)
+              fromEntity = (operationEntities[conn.from]) ?? undefined;
+              toEntity = (operationEntities[conn.to]) ?? undefined;
+
+              // 2. Try global index if provided (backend multi-step behavior)
+              if (!fromEntity && conn.from >= 0) fromEntity = globalEntitiesMap.get(conn.from);
+              if (!toEntity && conn.to >= 0) toEntity = globalEntitiesMap.get(conn.to);
+
+              // 3. Try label fallback (best for cross-chunk and existing entities)
+              if (!fromEntity && conn.from_label) {
+                fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
+                  this.plugin.entityManager.findEntityByLabel(conn.from_label);
               }
+              if (!toEntity && conn.to_label) {
+                toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
+                  this.plugin.entityManager.findEntityByLabel(conn.to_label);
+              }
+
+              if (fromEntity && toEntity) {
+                // Add directed relationship from source to target entity only
+                await this.plugin.entityManager.addRelationshipToNote(
+                  fromEntity,
+                  toEntity,
+                  conn.relationship
+                );
+                connectionsCreated++;
+              }
+            } catch (connError) {
+              console.error('[GraphOnlyMode] Failed to create connection:', connError);
             }
           }
         }
@@ -4721,7 +4750,7 @@ export class ChatView extends ItemView {
 
         // Update UI
         if (contentEl) {
-          // We can optionally hide the [[USED_ENTITY_ID:...]] tags in real-time if desired, 
+          // We can optionally hide the [[USED_ENTITY_ID:...]] tags in real-time if desired,
           // but let's just show raw output for now and clean up at the end.
           MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           // Scroll to bottom
@@ -4904,6 +4933,11 @@ export class ChatView extends ItemView {
       const createdEntities: Array<{ id: string; type: string; label: string; filePath: string }> = [];
       let connectionsCreated = 0;
 
+      // Persist entities across all operations and chunks for connection processing
+      const globalEntitiesMap: Map<number, Entity> = new Map();
+      const entityLabelMap: Map<string, Entity> = new Map();
+      let globalIndexOffset = 0;
+
       // Count total entities for progress tracking
       let totalEntities = 0;
       for (const op of result.operations) {
@@ -4926,11 +4960,12 @@ export class ChatView extends ItemView {
           connectionsCount: operation.connections?.length || 0
         });
 
-        // Track entities by their index in this operation for connection processing
+        // Track entities by their index in THIS specific operation for AI relative indexing
         const operationEntities: Array<Entity | null> = [];
 
         if (operation.action === "create" && operation.entities) {
-          for (const entityData of operation.entities) {
+          for (let i = 0; i < operation.entities.length; i++) {
+            const entityData = operation.entities[i];
             processedEntities++;
             // Update progress (50% to 85% range for entity creation)
             const entityProgress = 50 + Math.round((processedEntities / Math.max(totalEntities, 1)) * 35);
@@ -4970,13 +5005,12 @@ export class ChatView extends ItemView {
                 entityType,
                 entityData.properties
               );
-              console.debug('[GraphGeneration] Entity created successfully:', {
-                id: entity.id,
-                type: entity.type,
-                label: entity.label,
-                filePath: entity.filePath
-              });
+
               operationEntities.push(entity);
+              const globalIdx = globalIndexOffset + i;
+              globalEntitiesMap.set(globalIdx, entity);
+              entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+
               createdEntities.push({
                 id: entity.id,
                 type: entity.type,
@@ -4988,27 +5022,46 @@ export class ChatView extends ItemView {
               operationEntities.push(null);
             }
           }
+          globalIndexOffset += operation.entities.length;
+        }
 
-          // Process connections after all entities in this operation are created
-          if (operation.connections && operation.connections.length > 0) {
-            updateProgress("Creating relationships...", 88);
-            for (const conn of operation.connections) {
-              try {
-                const fromEntity = operationEntities[conn.from];
-                const toEntity = operationEntities[conn.to];
+        // Process connections using both global indices and label fallback
+        if (operation.connections && operation.connections.length > 0) {
+          updateProgress("Creating relationships...", 88);
+          for (const conn of operation.connections) {
+            try {
+              let fromEntity: Entity | undefined;
+              let toEntity: Entity | undefined;
 
-                if (fromEntity && toEntity) {
-                  // Add directed relationship from source to target entity only
-                  await this.plugin.entityManager.addRelationshipToNote(
-                    fromEntity,
-                    toEntity,
-                    conn.relationship
-                  );
-                  connectionsCreated++;
-                }
-              } catch (connError) {
-                console.error('[GraphGeneration] Failed to create connection:', connError);
+              // 1. Try local operation index (original AI behavior)
+              fromEntity = (operationEntities[conn.from]) ?? undefined;
+              toEntity = (operationEntities[conn.to]) ?? undefined;
+
+              // 2. Try global index if provided (backend multi-step behavior)
+              if (!fromEntity && conn.from >= 0) fromEntity = globalEntitiesMap.get(conn.from);
+              if (!toEntity && conn.to >= 0) toEntity = globalEntitiesMap.get(conn.to);
+
+              // 3. Try label fallback (best for cross-chunk and existing entities)
+              if (!fromEntity && conn.from_label) {
+                fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
+                  this.plugin.entityManager.findEntityByLabel(conn.from_label);
               }
+              if (!toEntity && conn.to_label) {
+                toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
+                  this.plugin.entityManager.findEntityByLabel(conn.to_label);
+              }
+
+              if (fromEntity && toEntity) {
+                // Add directed relationship from source to target entity only
+                await this.plugin.entityManager.addRelationshipToNote(
+                  fromEntity,
+                  toEntity,
+                  conn.relationship
+                );
+                connectionsCreated++;
+              }
+            } catch (connError) {
+              console.error('[GraphGeneration] Failed to create connection:', connError);
             }
           }
         }
