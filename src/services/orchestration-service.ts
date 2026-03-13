@@ -27,7 +27,7 @@ export class OrchestrationService {
         currentGraphState: any,
         conversationMemory: { role: string, content: string }[],
         onProgress: (msg: string, percent: number) => void
-    ): Promise<string> {
+    ): Promise<{ finalResponse: string, proposedCommands?: string[] }> {
         try {
             onProgress("Verifying provider and credits...", 10);
             await this.verifyProviderAndCredits();
@@ -62,16 +62,17 @@ export class OrchestrationService {
                 await this.feedResultsToGraphExtraction(toolResults);
             }
 
+            let proposedCommands: string[] | undefined;
             if (plan.graphCommands.length > 0) {
-                onProgress(`Applying ${plan.graphCommands.length} graph modifications...`, 80);
-                await this.executeGraphModifications(plan.graphCommands);
+                onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
+                proposedCommands = plan.graphCommands;
             }
 
             onProgress("Synthesizing final response...", 90);
             const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory); // Updated call signature
 
             onProgress("Complete", 100);
-            return finalResponse; // Return the final response
+            return { finalResponse, proposedCommands }; // Return both the response and the commands
         } catch (error) {
             console.error("[OrchestrationService] Error:", error);
             this.handleError(error);

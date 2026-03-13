@@ -2193,6 +2193,7 @@ export interface ChatHistoryItem {
   connectionsCreated?: number; // Number of relationships created
   reportFilePath?: string; // For report generation - path to the generated report file
   usedEntities?: { id: string, label: string, type: string }[]; // Pinpointed graph entities
+  proposedModifications?: string[]; // Round 4: For persistent orchestration tool results
 }
 
 export class ChatView extends ItemView {
@@ -3760,6 +3761,110 @@ export class ChatView extends ItemView {
         `;
       }
 
+      // Round 4: Show proposed graph modifications (persistent box)
+      if (item.role === "assistant" && item.proposedModifications && item.proposedModifications.length > 0) {
+        const proposedDiv = messageDiv.createDiv("vault-ai-proposed-modifications");
+        proposedDiv.style.cssText = `
+          margin-top: 12px;
+          padding: 12px;
+          background: var(--background-secondary-alt);
+          border: 1px solid var(--background-modifier-border-hover);
+          border-radius: 8px;
+          border-left: 4px solid var(--interactive-accent);
+        `;
+
+        proposedDiv.createEl("h4", {
+          text: "📊 Proposed Graph Changes",
+          cls: "vault-ai-proposed-title"
+        }).style.marginTop = "0";
+
+        proposedDiv.createEl("p", {
+          text: "Review and apply the following graph modifications:",
+          cls: "vault-ai-proposed-subtitle"
+        }).style.fontSize = "small";
+
+        const listContainer = proposedDiv.createDiv("vault-ai-proposed-list");
+        listContainer.style.marginBottom = "12px";
+
+        const selectedIndices: number[] = [];
+
+        item.proposedModifications.forEach((cmd, idx) => {
+          const row = listContainer.createDiv();
+          row.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 6px;
+            padding: 4px;
+            border-bottom: 1px solid var(--background-modifier-border);
+          `;
+
+          const cb = row.createEl("input");
+          cb.type = "checkbox";
+          cb.checked = true;
+          selectedIndices.push(idx);
+          cb.style.marginTop = "4px";
+
+          const label = row.createEl("span");
+          label.style.fontSize = "13px";
+
+          let labelText = `❓ ${cmd}`;
+          try {
+            if (cmd.startsWith("@@create_entity")) {
+              const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
+              labelText = `➕ Create ${data.type}: **${data.label || 'Entity'}**`;
+            } else if (cmd.startsWith("@@delete_entity")) {
+              const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
+              const name = this.plugin.entityManager.getEntity(data.id)?.label || `ID: ${data.id}`;
+              labelText = `🗑️ Delete Entity: **${name}**`;
+            } else if (cmd.startsWith("@@create_link")) {
+              const data = JSON.parse(cmd.replace("@@create_link", "").trim());
+              labelText = `🔗 Connect: [**${data.from}**] ──(${data.relationship})──> [**${data.to}**]`;
+            } else if (cmd.startsWith("@@delete_link")) {
+              const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
+              labelText = `✂️ Delete Link (ID: ${data.id})`;
+            }
+          } catch (e) { labelText = `⚠️ Raw: ${cmd}`; }
+
+          const parts = labelText.split(/(\*\*.*?\*\*)/g);
+          parts.forEach(p => {
+            if (p.startsWith('**') && p.endsWith('**')) {
+              label.createEl('strong', { text: p.substring(2, p.length - 2) });
+            } else {
+              label.appendChild(document.createTextNode(p));
+            }
+          });
+
+          cb.addEventListener("change", () => {
+            if (cb.checked) selectedIndices.push(idx);
+            else {
+              const iIdx = selectedIndices.indexOf(idx);
+              if (iIdx > -1) selectedIndices.splice(iIdx, 1);
+            }
+          });
+        });
+
+        const actionRow = proposedDiv.createDiv();
+        actionRow.style.display = "flex";
+        actionRow.style.gap = "10px";
+
+        const applyBtn = actionRow.createEl("button", {
+          text: "Apply Selected Changes",
+          cls: "mod-cta"
+        });
+        applyBtn.addEventListener("click", () => {
+          void this.applyProposedModifications(i, selectedIndices);
+        });
+
+        const dismissBtn = actionRow.createEl("button", {
+          text: "Dismiss"
+        });
+        dismissBtn.addEventListener("click", () => {
+          this.chatHistory[i].proposedModifications = undefined;
+          this.renderMessages();
+        });
+      }
+
       // Show "Open Companies&People" button for report generation messages
       if (item.role === "assistant" && item.reportFilePath) {
         const reportButtonContainer = messageDiv.createDiv("vault-ai-report-button-container");
@@ -4211,7 +4316,7 @@ export class ChatView extends ItemView {
         .slice(0, assistantIndex) // All messages before this current pending assistant response
         .map(msg => ({ role: msg.role, content: msg.content }));
 
-      const finalResponse = await this.plugin.orchestrationService.processRequest(
+      const result = await this.plugin.orchestrationService.processRequest(
         query,
         attachmentsContext,
         currentGraphState, // Also pass the graph state
@@ -4221,7 +4326,8 @@ export class ChatView extends ItemView {
 
       this.activeAbortControllers.delete(assistantIndex);
 
-      this.chatHistory[assistantIndex].content = finalResponse || "Done.";
+      this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
+      this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
 
@@ -4233,6 +4339,81 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
+    }
+  }
+
+  async applyProposedModifications(index: number, selectedIndices: number[]) {
+    const item = this.chatHistory[index];
+    if (!item || !item.proposedModifications) return;
+
+    const commandsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
+    if (commandsToExecute.length === 0) {
+      new Notice("No modifications selected");
+      return;
+    }
+
+    let successCount = 0;
+    const progressNotice = new Notice("Applying graph changes...", 0);
+
+    for (const command of commandsToExecute) {
+      try {
+        if (command.startsWith("@@create_entity")) {
+          const jsonStr = command.replace("@@create_entity", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.type && data.properties) {
+            await this.plugin.entityManager.createEntity(data.type, data.properties);
+            successCount++;
+          }
+        } else if (command.startsWith("@@delete_entity")) {
+          const jsonStr = command.replace("@@delete_entity", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.id) {
+            await this.plugin.entityManager.deleteEntities([data.id]);
+            successCount++;
+          }
+        } else if (command.startsWith("@@create_link")) {
+          const jsonStr = command.replace("@@create_link", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.from && data.to && data.relationship) {
+            let fromId = data.from;
+            let toId = data.to;
+
+            // Try label resolution if ID lookup fails
+            if (!this.plugin.entityManager.getEntity(fromId)) {
+              const f = this.plugin.entityManager.findEntityByLabel(data.from);
+              if (f) fromId = f.id;
+            }
+            if (!this.plugin.entityManager.getEntity(toId)) {
+              const t = this.plugin.entityManager.findEntityByLabel(data.to);
+              if (t) toId = t.id;
+            }
+
+            await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+            successCount++;
+          }
+        } else if (command.startsWith("@@delete_link")) {
+          const jsonStr = command.replace("@@delete_link", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.id) {
+            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
+            successCount++;
+          }
+        }
+      } catch (err) {
+        console.error("[OSINT Copilot] Failed to apply modification:", command, err);
+      }
+    }
+
+    progressNotice.hide();
+    if (successCount > 0) {
+      new Notice(`Successfully applied ${successCount} change(s)`);
+      // Remove the proposal box after successful application
+      this.chatHistory[index].proposedModifications = undefined;
+      await this.saveCurrentConversation();
+      await this.renderMessages();
+      await this.plugin.refreshOrOpenGraphView();
+    } else {
+      new Notice("Failed to apply changes");
     }
   }
 
