@@ -15403,7 +15403,66 @@ No entities detected in the provided text.`;
           totalEntities += op.entities.length;
         }
       }
-      updateProgress(`Found ${totalEntities} entities to create...`, 55);
+      const checkboxItems = [];
+      for (let opIdx = 0; opIdx < result.operations.length; opIdx++) {
+        const operation = result.operations[opIdx];
+        if (operation.action === "create" && operation.entities) {
+          for (let entIdx = 0; entIdx < operation.entities.length; entIdx++) {
+            const ent = operation.entities[entIdx];
+            const name = ent.properties?.name || ent.properties?.title || ent.properties?.label || ent.label || "Unknown";
+            checkboxItems.push({
+              label: `\u2795 Create ${ent.type || "Entity"}: **${name}**`,
+              value: `ent_${opIdx}_${entIdx}`,
+              checked: true
+            });
+          }
+        }
+        if (operation.connections) {
+          for (let connIdx = 0; connIdx < operation.connections.length; connIdx++) {
+            const conn = operation.connections[connIdx];
+            const fromName = conn.from_label || `Index ${conn.from}`;
+            const toName = conn.to_label || `Index ${conn.to}`;
+            checkboxItems.push({
+              label: `\u{1F517} Connect: [**${fromName}**] \u2500\u2500(${conn.relationship})\u2500\u2500> [**${toName}**]`,
+              value: `conn_${opIdx}_${connIdx}`,
+              checked: true
+            });
+          }
+        }
+      }
+      if (checkboxItems.length === 0) {
+        this.chatHistory[messageIndex].progress = void 0;
+        this.chatHistory[messageIndex].content = `\u{1F3F7}\uFE0F **Graph Generation Complete**
+
+**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? "..." : ""}
+
+No valid entities or relationships proposed.`;
+        await this.renderMessages();
+        return;
+      }
+      updateProgress("Waiting for user confirmation...", 55);
+      const confirmedValues = await new Promise((resolve) => {
+        new ConfirmModal(
+          this.app,
+          "Confirm Graph Modifications",
+          `The AI extracted the following entities and relationships from the text. Uncheck any you wish to discard:`,
+          (selectedValues) => resolve(selectedValues),
+          () => resolve(void 0),
+          false,
+          checkboxItems
+        ).open();
+      });
+      if (!confirmedValues) {
+        this.chatHistory[messageIndex].progress = void 0;
+        this.chatHistory[messageIndex].content = `\u{1F3F7}\uFE0F **Graph Generation Cancelled**
+
+No changes were made to your vault.`;
+        await this.renderMessages();
+        return;
+      }
+      const allowedEntities = new Set(confirmedValues.filter((v) => v.startsWith("ent_")));
+      const allowedConnections = new Set(confirmedValues.filter((v) => v.startsWith("conn_")));
+      updateProgress(`Creating approved entities...`, 60);
       const createdEntities = [];
       let connectionsCreated = 0;
       let entitiesProcessed = 0;
@@ -15411,7 +15470,8 @@ No entities detected in the provided text.`;
       const entityLabelMap = /* @__PURE__ */ new Map();
       let globalIndexOffset = 0;
       console.debug("[GraphOnlyMode] Processing operations:", JSON.stringify(result.operations, null, 2));
-      for (const operation of result.operations) {
+      for (let opIdx = 0; opIdx < result.operations.length; opIdx++) {
+        const operation = result.operations[opIdx];
         console.debug("[GraphOnlyMode] Processing operation:", {
           action: operation.action,
           hasEntities: !!operation.entities,
@@ -15423,6 +15483,10 @@ No entities detected in the provided text.`;
         if (operation.action === "create" && operation.entities) {
           for (let i = 0; i < operation.entities.length; i++) {
             const entityData = operation.entities[i];
+            if (!allowedEntities.has(`ent_${opIdx}_${i}`)) {
+              operationEntities.push(null);
+              continue;
+            }
             entitiesProcessed++;
             const entityProgress = 55 + Math.round(entitiesProcessed / totalEntities * 35);
             updateProgress(`Creating entity ${entitiesProcessed}/${totalEntities}...`, entityProgress);
@@ -15478,7 +15542,11 @@ No entities detected in the provided text.`;
         }
         if (operation.connections && operation.connections.length > 0) {
           updateProgress("Creating relationships...", 92);
-          for (const conn of operation.connections) {
+          for (let connIdx = 0; connIdx < operation.connections.length; connIdx++) {
+            const conn = operation.connections[connIdx];
+            if (!allowedConnections.has(`conn_${opIdx}_${connIdx}`)) {
+              continue;
+            }
             try {
               let fromEntity;
               let toEntity;

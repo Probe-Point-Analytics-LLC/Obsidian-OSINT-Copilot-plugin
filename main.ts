@@ -4612,7 +4612,73 @@ export class ChatView extends ItemView {
         }
       }
 
-      updateProgress(`Found ${totalEntities} entities to create...`, 55);
+      // --- NEW LOGIC: Ask User First ---
+      const checkboxItems: { label: string, value: string, checked: boolean }[] = [];
+
+      for (let opIdx = 0; opIdx < result.operations.length; opIdx++) {
+        const operation = result.operations[opIdx];
+        if (operation.action === "create" && operation.entities) {
+          for (let entIdx = 0; entIdx < operation.entities.length; entIdx++) {
+            const ent = operation.entities[entIdx];
+            const name = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label || 'Unknown';
+            checkboxItems.push({
+              label: `➕ Create ${ent.type || 'Entity'}: **${name}**`,
+              value: `ent_${opIdx}_${entIdx}`,
+              checked: true
+            });
+          }
+        }
+        if (operation.connections) {
+          for (let connIdx = 0; connIdx < operation.connections.length; connIdx++) {
+            const conn = operation.connections[connIdx];
+            const fromName = conn.from_label || `Index ${conn.from}`;
+            const toName = conn.to_label || `Index ${conn.to}`;
+            checkboxItems.push({
+              label: `🔗 Connect: [**${fromName}**] ──(${conn.relationship})──> [**${toName}**]`,
+              value: `conn_${opIdx}_${connIdx}`,
+              checked: true
+            });
+          }
+        }
+      }
+
+      if (checkboxItems.length === 0) {
+        this.chatHistory[messageIndex].progress = undefined;
+        this.chatHistory[messageIndex].content =
+          `🏷️ **Graph Generation Complete**\n\n` +
+          `**Input:** ${inputText.substring(0, 200)}${inputText.length > 200 ? '...' : ''}\n\n` +
+          `No valid entities or relationships proposed.`;
+        await this.renderMessages();
+        return;
+      }
+
+      updateProgress("Waiting for user confirmation...", 55);
+
+      const confirmedValues = await new Promise<string[] | undefined>((resolve) => {
+        new ConfirmModal(
+          this.app,
+          "Confirm Graph Modifications",
+          `The AI extracted the following entities and relationships from the text. Uncheck any you wish to discard:`,
+          (selectedValues) => resolve(selectedValues),
+          () => resolve(undefined),
+          false,
+          checkboxItems
+        ).open();
+      });
+
+      if (!confirmedValues) {
+        this.chatHistory[messageIndex].progress = undefined;
+        this.chatHistory[messageIndex].content = `🏷️ **Graph Generation Cancelled**\n\nNo changes were made to your vault.`;
+        await this.renderMessages();
+        return;
+      }
+
+      const allowedEntities = new Set(confirmedValues.filter(v => v.startsWith('ent_')));
+      const allowedConnections = new Set(confirmedValues.filter(v => v.startsWith('conn_')));
+
+      // --- END NEW LOGIC ---
+
+      updateProgress(`Creating approved entities...`, 60);
 
       // Process the operations and create entities
       const createdEntities: Array<{ id: string; type: string; label: string; filePath: string }> = [];
@@ -4627,7 +4693,8 @@ export class ChatView extends ItemView {
       // Debug: Log the full operations array
       console.debug('[GraphOnlyMode] Processing operations:', JSON.stringify(result.operations, null, 2));
 
-      for (const operation of result.operations) {
+      for (let opIdx = 0; opIdx < result.operations.length; opIdx++) {
+        const operation = result.operations[opIdx];
         // Debug: Log each operation
         console.debug('[GraphOnlyMode] Processing operation:', {
           action: operation.action,
@@ -4643,6 +4710,11 @@ export class ChatView extends ItemView {
         if (operation.action === "create" && operation.entities) {
           for (let i = 0; i < operation.entities.length; i++) {
             const entityData = operation.entities[i];
+
+            if (!allowedEntities.has(`ent_${opIdx}_${i}`)) {
+              operationEntities.push(null); // Keep index alignment
+              continue;
+            }
             entitiesProcessed++;
             // Calculate progress: 55% to 90% for entity creation
             const entityProgress = 55 + Math.round((entitiesProcessed / totalEntities) * 35);
@@ -4710,7 +4782,12 @@ export class ChatView extends ItemView {
         // Process connections using both global indices and label fallback
         if (operation.connections && operation.connections.length > 0) {
           updateProgress("Creating relationships...", 92);
-          for (const conn of operation.connections) {
+          for (let connIdx = 0; connIdx < operation.connections.length; connIdx++) {
+            const conn = operation.connections[connIdx];
+
+            if (!allowedConnections.has(`conn_${opIdx}_${connIdx}`)) {
+              continue;
+            }
             try {
               let fromEntity: Entity | undefined;
               let toEntity: Entity | undefined;
