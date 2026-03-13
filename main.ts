@@ -2292,7 +2292,8 @@ export class ChatView extends ItemView {
       status: m.status,
       progress: m.progress as { message: string, percent: number } | undefined,
       reportFilePath: m.reportFilePath,
-      usedEntities: m.usedEntities
+      usedEntities: m.usedEntities,
+      proposedModifications: m.proposedModifications
     }));
   }
 
@@ -2306,7 +2307,8 @@ export class ChatView extends ItemView {
       status: h.status,
       progress: h.progress,
       reportFilePath: h.reportFilePath,
-      usedEntities: h.usedEntities
+      usedEntities: h.usedEntities,
+      proposedModifications: h.proposedModifications
     }));
   }
 
