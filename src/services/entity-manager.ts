@@ -764,7 +764,8 @@ ${(entity.properties.notes as string) || ''}
         const lines: string[] = [
             `id: "${entity.id}"`,
             `type: ${entity.type}`,
-            `label: "${entity.label}"`
+            `label: "${entity.label}"`,
+            `aliases: ["${entity.label}"]`
         ];
 
         const config = ENTITY_CONFIGS[entity.type as EntityType];
@@ -1231,8 +1232,10 @@ ${this.buildConnectionPropertiesSection(connection)}
         const content = await this.app.vault.read(file);
 
         // Find the Relationships section and add the new relationship
-        // Format: [[Source Entity]] RELATIONSHIP_TYPE [[Target Entity]]
-        const relationshipLine = `- [[${fromEntity.label}]] ${relationship.toUpperCase()} [[${toEntity.label}]]`;
+        // Format: [[FilePath|Label]] RELATIONSHIP_TYPE [[FilePath|Label]]
+        const fromLink = this.getNoteLink(fromEntity);
+        const toLink = this.getNoteLink(toEntity);
+        const relationshipLine = `- ${fromLink} ${relationship.toUpperCase()} ${toLink}`;
 
         const relationshipsMatch = content.match(/(## Relationships\n)([\s\S]*?)((?=\n## )|$)/);
         if (relationshipsMatch) {
@@ -1246,6 +1249,9 @@ ${this.buildConnectionPropertiesSection(connection)}
                 await this.app.vault.modify(file, newContent);
             }
         }
+
+        // Also add the incoming relationship to the target entity for better graph connecting
+        await this.addIncomingRelationshipToNote(toEntity, fromEntity, relationship);
     }
 
     /**
@@ -1264,8 +1270,10 @@ ${this.buildConnectionPropertiesSection(connection)}
 
         const content = await this.app.vault.read(file);
 
-        // Format: [[Source Entity]] RELATIONSHIP_TYPE [[This Entity]]
-        const relationshipLine = `- [[${sourceEntity.label}]] ${relationship.toUpperCase()} [[${targetEntity.label}]]`;
+        // Format: [[Source Entity Path|Label]] RELATIONSHIP_TYPE [[This Entity Path|Label]]
+        const fromLink = this.getNoteLink(sourceEntity);
+        const toLink = this.getNoteLink(targetEntity);
+        const relationshipLine = `- ${fromLink} ${relationship.toUpperCase()} ${toLink}`;
 
         const relationshipsMatch = content.match(/(## Relationships\n)([\s\S]*?)((?=\n## )|$)/);
         if (relationshipsMatch) {
@@ -1279,6 +1287,17 @@ ${this.buildConnectionPropertiesSection(connection)}
                 await this.app.vault.modify(file, newContent);
             }
         }
+    }
+
+    /**
+     * Helper to generate a reliable wikilink to an entity's note.
+     * Uses the file path (without .md) to ensure perfect resolution in the graph.
+     */
+    private getNoteLink(entity: Entity): string {
+        if (!entity.filePath) return `[[${entity.label}]]`;
+        // Remove .md extension for the wikilink
+        const linkPath = entity.filePath.replace(/\.md$/, '');
+        return `[[${linkPath}|${entity.label}]]`;
     }
 
     /**
@@ -1309,8 +1328,8 @@ ${frontmatter}
 
 ## Connection Details
 
-- **From**: [[${fromEntity.label}]]
-- **To**: [[${toEntity.label}]]
+- **From**: ${this.getNoteLink(fromEntity)}
+- **To**: ${this.getNoteLink(toEntity)}
 - **Type**: ${connection.relationship}
 
 ## Properties
