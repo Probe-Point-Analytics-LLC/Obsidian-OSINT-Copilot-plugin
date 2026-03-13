@@ -250,14 +250,43 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                         if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
                             // Automatically insert these entities into the local Obsidian graph!
                             const generatedGraph = graphGenRes.json;
+                            const createdEntitiesMap: Map<number, any> = new Map();
+                            const entityLabelMap: Map<string, any> = new Map();
+
                             if (generatedGraph && generatedGraph.entities) {
-                                for (const ent of generatedGraph.entities) {
-                                    await this.plugin.entityManager.createEntity(ent.type, ent.properties);
+                                for (let i = 0; i < generatedGraph.entities.length; i++) {
+                                    const ent = generatedGraph.entities[i];
+                                    try {
+                                        const entity = await this.plugin.entityManager.createEntity(ent.type, ent.properties);
+                                        createdEntitiesMap.set(i, entity);
+                                        entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+                                    } catch (e) {
+                                        console.error(`[OrchestrationService] Failed to create entity:`, e);
+                                    }
                                 }
                             }
                             if (generatedGraph && generatedGraph.connections) {
                                 for (const conn of generatedGraph.connections) {
-                                    await this.plugin.entityManager.createConnection(conn.from, conn.to, conn.relationship);
+                                    try {
+                                        let fromEntity = createdEntitiesMap.get(conn.from);
+                                        let toEntity = createdEntitiesMap.get(conn.to);
+
+                                        // Try label fallback for existing entities or missed indices
+                                        if (!fromEntity && conn.from_label) {
+                                            fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
+                                                this.plugin.entityManager.findEntityByLabel(conn.from_label);
+                                        }
+                                        if (!toEntity && conn.to_label) {
+                                            toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
+                                                this.plugin.entityManager.findEntityByLabel(conn.to_label);
+                                        }
+
+                                        if (fromEntity && toEntity) {
+                                            await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
+                                        }
+                                    } catch (e) {
+                                        console.error(`[OrchestrationService] Failed to create connection:`, e);
+                                    }
                                 }
                             }
                             results["EXTRACT_TO_GRAPH"] = `Successfully extracted ${generatedGraph?.entities?.length || 0} entities and ${generatedGraph?.connections?.length || 0} connections into the graph.`;

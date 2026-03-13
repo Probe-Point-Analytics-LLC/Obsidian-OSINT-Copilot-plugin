@@ -4525,10 +4525,10 @@ export class ChatView extends ItemView {
               }
 
               if (fromEntity && toEntity) {
-                // Add directed relationship from source to target entity only
-                await this.plugin.entityManager.addRelationshipToNote(
-                  fromEntity,
-                  toEntity,
+                // Use createConnection to ensure it's recorded in the plugin's state and graph
+                await this.plugin.entityManager.createConnection(
+                  fromEntity.id,
+                  toEntity.id,
                   conn.relationship
                 );
                 connectionsCreated++;
@@ -5052,10 +5052,10 @@ export class ChatView extends ItemView {
               }
 
               if (fromEntity && toEntity) {
-                // Add directed relationship from source to target entity only
-                await this.plugin.entityManager.addRelationshipToNote(
-                  fromEntity,
-                  toEntity,
+                // Use createConnection to ensure it's recorded in the plugin's state and graph
+                await this.plugin.entityManager.createConnection(
+                  fromEntity.id,
+                  toEntity.id,
                   conn.relationship
                 );
                 connectionsCreated++;
@@ -5066,7 +5066,6 @@ export class ChatView extends ItemView {
           }
         }
       }
-
       updateProgress("Finalizing...", 95);
 
       // Update the message with entity creation results including clickable links
