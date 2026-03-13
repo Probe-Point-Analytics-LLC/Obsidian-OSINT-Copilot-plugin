@@ -2311,6 +2311,8 @@ var EntityManager = class {
     if (baseFolder instanceof import_obsidian2.TFolder) {
       for (const child of baseFolder.children) {
         if (child instanceof import_obsidian2.TFolder) {
+          if (child.name === "Connections")
+            continue;
           for (const file of child.children) {
             if (file instanceof import_obsidian2.TFile && file.extension === "md") {
               const entity = await this.parseEntityFromNote(file);
@@ -9359,24 +9361,39 @@ ${label}
       };
     });
     const entityIds = new Set(entities.map((e) => e.id));
-    const validConnections = connections.filter((conn) => {
+    const unknownEntityIds = /* @__PURE__ */ new Set();
+    const edges = connections.map((conn) => {
       const hasSource = entityIds.has(conn.fromEntityId);
       const hasTarget = entityIds.has(conn.toEntityId);
-      if (!hasSource || !hasTarget) {
-        console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? "source" : "target"} entity`);
-        return false;
-      }
-      return true;
+      if (!hasSource)
+        unknownEntityIds.add(conn.fromEntityId);
+      if (!hasTarget)
+        unknownEntityIds.add(conn.toEntityId);
+      return {
+        data: {
+          id: conn.id,
+          source: conn.fromEntityId,
+          target: conn.toEntityId,
+          label: conn.relationship
+        }
+      };
     });
-    const edges = validConnections.map((conn) => ({
-      data: {
-        id: conn.id,
-        source: conn.fromEntityId,
-        target: conn.toEntityId,
-        label: conn.relationship
-      }
-    }));
-    this.cy.add([...nodes, ...edges]);
+    const unknownNodes = Array.from(unknownEntityIds).map((id, index) => {
+      return {
+        data: {
+          id,
+          label: "Unknown",
+          fullLabel: "Unknown Entity (" + id.substring(0, 8) + ")",
+          type: "Unknown",
+          color: "#9E9E9E",
+          icon: "help-circle",
+          isUnknown: true
+        },
+        position: this.getNodePosition(nodes.length + index, nodes.length + unknownEntityIds.size),
+        classes: "is-unknown"
+      };
+    });
+    this.cy.add([...nodes, ...unknownNodes, ...edges]);
     this.runLayout();
   }
   /**

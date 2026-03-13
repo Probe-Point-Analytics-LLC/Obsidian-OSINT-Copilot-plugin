@@ -82,6 +82,9 @@ export class EntityManager {
         if (baseFolder instanceof TFolder) {
             for (const child of baseFolder.children) {
                 if (child instanceof TFolder) {
+                    // Skip the Connections folder - it contains relationship notes, not entities
+                    if (child.name === 'Connections') continue;
+
                     // This is an entity type folder (e.g., Person, LegalEntity, etc.)
                     for (const file of child.children) {
                         if (file instanceof TFile && file.extension === 'md') {

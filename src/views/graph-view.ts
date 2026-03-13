@@ -2101,27 +2101,44 @@ export class GraphView extends ItemView {
         // Build a set of valid entity IDs for edge validation
         const entityIds = new Set(entities.map(e => e.id));
 
-        // Add edges - filter out connections with missing source or target entities
-        const validConnections = connections.filter(conn => {
+        const unknownEntityIds = new Set<string>();
+
+        // Add edges - if source or target is missing, mark for adding an "Unknown" node
+        const edges = connections.map(conn => {
             const hasSource = entityIds.has(conn.fromEntityId);
             const hasTarget = entityIds.has(conn.toEntityId);
-            if (!hasSource || !hasTarget) {
-                console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? 'source' : 'target'} entity`);
-                return false;
-            }
-            return true;
+
+            if (!hasSource) unknownEntityIds.add(conn.fromEntityId);
+            if (!hasTarget) unknownEntityIds.add(conn.toEntityId);
+
+            return {
+                data: {
+                    id: conn.id,
+                    source: conn.fromEntityId,
+                    target: conn.toEntityId,
+                    label: conn.relationship
+                }
+            };
         });
 
-        const edges = validConnections.map(conn => ({
-            data: {
-                id: conn.id,
-                source: conn.fromEntityId,
-                target: conn.toEntityId,
-                label: conn.relationship
-            }
-        }));
+        // Create "Unknown" nodes for missing entities
+        const unknownNodes = Array.from(unknownEntityIds).map((id, index) => {
+            return {
+                data: {
+                    id: id,
+                    label: "Unknown",
+                    fullLabel: "Unknown Entity (" + id.substring(0, 8) + ")",
+                    type: "Unknown",
+                    color: "#9E9E9E",
+                    icon: "help-circle",
+                    isUnknown: true
+                },
+                position: this.getNodePosition(nodes.length + index, nodes.length + unknownEntityIds.size),
+                classes: 'is-unknown'
+            };
+        });
 
-        this.cy.add([...nodes, ...edges]);
+        this.cy.add([...nodes, ...unknownNodes, ...edges]);
         this.runLayout();
     }
 
