@@ -47,7 +47,7 @@ import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
 import { CustomTypesService } from './src/services/custom-types-service';
-import { OrchestrationService } from './src/services/orchestration-service';
+import { OrchestrationService, OrchestrationPlan } from './src/services/orchestration-service';
 import { UpdaterService } from './src/services/updater-service';
 
 // ============================================================================
@@ -177,7 +177,8 @@ If the user provides a Link or File, prioritize it as "Ground Truth" and use EXT
 Investigative Creativity & Continuity:
 - Bridge the Gap: If you find an email in OSINT_SEARCH, suggest checking DARK_WEB for associated passwords.
 - Contextual Recall: Answer questions about the existing graph. Read the CURRENT GRAPH STATE below.
-- Narrative Investigation: Stay in the "investigator" persona.`,
+- Narrative Investigation: Stay in the "investigator" persona.
+- PLANNING PROTOCOL: If any tools are needed, you MUST propose a plan first and set is_proposal=true. Do NOT execute tools until the user confirms or gives feedback.`,
   orchestrationProvider: 'osint-copilot',
   orchestrationLocalUrl: 'http://localhost:11434/v1',
   orchestrationApiKey: '',
@@ -2196,6 +2197,7 @@ export interface ChatHistoryItem {
   reportFilePath?: string; // For report generation - path to the generated report file
   usedEntities?: { id: string, label: string, type: string }[]; // Pinpointed graph entities
   proposedModifications?: string[]; // Round 4: For persistent orchestration tool results
+  proposedPlan?: OrchestrationPlan; // Round 8: Interactive Investigation Planning
 }
 
 export class ChatView extends ItemView {
@@ -2295,7 +2297,8 @@ export class ChatView extends ItemView {
       progress: m.progress as { message: string, percent: number } | undefined,
       reportFilePath: m.reportFilePath,
       usedEntities: m.usedEntities,
-      proposedModifications: m.proposedModifications
+      proposedModifications: m.proposedModifications,
+      proposedPlan: m.proposedPlan as OrchestrationPlan
     }));
   }
 
@@ -2310,7 +2313,8 @@ export class ChatView extends ItemView {
       progress: h.progress,
       reportFilePath: h.reportFilePath,
       usedEntities: h.usedEntities,
-      proposedModifications: h.proposedModifications
+      proposedModifications: h.proposedModifications,
+      proposedPlan: h.proposedPlan
     }));
   }
 
@@ -3765,6 +3769,11 @@ export class ChatView extends ItemView {
         `;
       }
 
+      // Round 8: Show Proposed Investigation Plan (HITL)
+      if (item.role === "assistant" && item.proposedPlan && item.proposedPlan.isProposal) {
+        this.renderProposedPlan(item, i, messageDiv);
+      }
+
       // Round 4: Show proposed graph modifications (persistent box)
       if (item.role === "assistant" && item.proposedModifications && item.proposedModifications.length > 0) {
         const proposedDiv = messageDiv.createDiv("vault-ai-proposed-modifications");
@@ -4332,6 +4341,7 @@ export class ChatView extends ItemView {
 
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
+      this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
 
@@ -4348,133 +4358,90 @@ export class ChatView extends ItemView {
 
   async applyProposedModifications(index: number, selectedIndices: number[]) {
     const item = this.chatHistory[index];
-    if (!item || !item.proposedModifications) return;
+    if (!item.proposedModifications) return;
 
-    const commandsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
-    if (commandsToExecute.length === 0) {
-      new Notice("No modifications selected");
-      return;
+    const cmdsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
+    if (cmdsToExecute.length === 0) return;
+
+    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute);
+    item.proposedModifications = undefined; // Clear after applying
+    await this.renderMessages();
+    await this.saveCurrentConversation();
+  }
+
+  private renderProposedPlan(item: ChatHistoryItem, index: number, messageDiv: HTMLElement) {
+    if (!item.proposedPlan) return;
+
+    const plan = item.proposedPlan;
+    const planDiv = messageDiv.createDiv("vault-ai-proposed-plan");
+    planDiv.style.cssText = `
+      margin-top: 15px;
+      padding: 15px;
+      background: var(--background-secondary-alt);
+      border: 1px solid var(--interactive-accent);
+      border-radius: 8px;
+      border-left: 5px solid var(--interactive-accent);
+    `;
+
+    planDiv.createEl("h4", {
+      text: "⚡ Review Investigation Plan",
+      cls: "vault-ai-plan-title"
+    }).style.marginTop = "0";
+
+    if (plan.planSummary) {
+      const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
+      MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
 
-    let successCount = 0;
-    const progressNotice = new Notice("Applying graph changes...", 0);
-
-    const indexToUuidMap = new Map<number, string>();
-
-    for (let i = 0; i < commandsToExecute.length; i++) {
-      const command = commandsToExecute[i];
-      try {
-        if (command.startsWith("@@create_entity")) {
-          const jsonStr = command.replace("@@create_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.type && data.properties) {
-            // Use explicit label if provided by backend, otherwise resolve from properties
-            const label = data.label || getEntityLabel(data.type, data.properties);
-
-            // Strict Validation Guard: Reject generic/placeholder names
-            const validation = validateEntityName(label, data.type);
-            if (!validation.isValid) {
-              console.warn(`[OSINT Copilot] Skipping creation of generic entity: "${label}". Error: ${validation.error}`);
-              continue;
-            }
-
-            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties, { manualLabel: label });
-
-            // Map the backend index (if provided) to the new UUID
-            if (typeof data.temp_id === 'number') {
-              indexToUuidMap.set(data.temp_id, entity.id);
-            }
-
-            successCount++;
-          }
-        } else if (command.startsWith("@@delete_entity")) {
-          const jsonStr = command.replace("@@delete_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteEntities([data.id]);
-            successCount++;
-          }
-        } else if (command.startsWith("@@create_link")) {
-          const jsonStr = command.replace("@@create_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.from !== undefined && data.to !== undefined && data.relationship) {
-            let fromId = data.from;
-            let toId = data.to;
-
-            // Resolve IDs from the map if they are backend indices
-            if (typeof fromId === 'number') {
-              if (indexToUuidMap.has(fromId)) {
-                fromId = indexToUuidMap.get(fromId);
-              } else {
-                console.warn(`[OSINT Copilot] Backend index ${fromId} not found in UUID map`);
-              }
-            }
-            if (typeof toId === 'number') {
-              if (indexToUuidMap.has(toId)) {
-                toId = indexToUuidMap.get(toId);
-              } else {
-                console.warn(`[OSINT Copilot] Backend index ${toId} not found in UUID map`);
-              }
-            }
-
-            // Fallback to label resolution if ID lookup fails (i.e., not a UUID)
-            const resolvedFrom = this.plugin.entityManager.getEntity(fromId);
-            if (!resolvedFrom) {
-              const label = data.from_label || (typeof data.from === 'string' ? data.from : "");
-              if (label) {
-                const f = this.plugin.entityManager.findEntityByLabel(label);
-                if (f) {
-                  fromId = f.id;
-                } else {
-                  console.warn(`[OSINT Copilot] Could not find 'From' entity by label: "${label}"`);
-                }
-              }
-            }
-
-            const resolvedTo = this.plugin.entityManager.getEntity(toId);
-            if (!resolvedTo) {
-              const label = data.to_label || (typeof data.to === 'string' ? data.to : "");
-              if (label) {
-                const t = this.plugin.entityManager.findEntityByLabel(label);
-                if (t) {
-                  toId = t.id;
-                } else {
-                  console.warn(`[OSINT Copilot] Could not find 'To' entity by label: "${label}"`);
-                }
-              }
-            }
-
-            // Final safety check
-            if (this.plugin.entityManager.getEntity(fromId) && this.plugin.entityManager.getEntity(toId)) {
-              await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-              successCount++;
-            } else {
-              console.error(`[OSINT Copilot] Connection resolution failure: From=${fromId} (${data.from_label || 'no label'}), To=${toId} (${data.to_label || 'no label'})`);
-            }
-          }
-        } else if (command.startsWith("@@delete_link")) {
-          const jsonStr = command.replace("@@delete_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
-            successCount++;
-          }
-        }
-      } catch (err) {
-        console.error("[OSINT Copilot] Failed to apply modification:", command, err);
-      }
+    const toolList = planDiv.createEl("ul", { cls: "vault-ai-plan-tools" });
+    toolList.style.fontSize = "small";
+    if (plan.toolsToCall && plan.toolsToCall.length > 0) {
+      plan.toolsToCall.forEach((tool: string) => {
+        toolList.createEl("li", { text: `🔍 Module: ${tool.replace('_', ' ')}` });
+      });
     }
 
-    progressNotice.hide();
-    if (successCount > 0) {
-      new Notice(`Successfully applied ${successCount} change(s)`);
-      // Remove the proposal box after successful application
-      this.chatHistory[index].proposedModifications = undefined;
-      await this.saveCurrentConversation();
-      await this.renderMessages();
-      await this.plugin.refreshOrOpenGraphView();
-    } else {
-      new Notice("Failed to apply changes");
+    const actionRow = planDiv.createDiv();
+    actionRow.style.display = "flex";
+    actionRow.style.gap = "12px";
+    actionRow.style.marginTop = "15px";
+
+    const executeBtn = actionRow.createEl("button", {
+      text: "🚀 Run Investigation",
+      cls: "mod-cta"
+    });
+    executeBtn.addEventListener("click", () => {
+      void this.executeProposedPlan(index);
+    });
+
+    const hint = planDiv.createEl("small", {
+      text: "Reply to this message to add modules or refine the plan.",
+      cls: "vault-ai-plan-hint"
+    });
+    hint.style.cssText = `
+      display: block;
+      margin-top: 10px;
+      color: var(--text-muted);
+      font-style: italic;
+    `;
+  }
+
+  private async executeProposedPlan(index: number) {
+    const item = this.chatHistory[index];
+    if (!item.proposedPlan) return;
+
+    // 1. Update the item to show it's executing
+    item.proposedPlan.isProposal = false; // Mark as "Approved"
+    item.content = "🚀 *Executing investigation plan...*";
+    item.progress = { message: "Launching investigative modules...", percent: 20 };
+    await this.renderMessages();
+
+    // 2. Trigger the orchestration service with a special "Proceed" query
+    // BUT we use the original reasoning/plan context by sending the history
+    try {
+      await this.handleOrchestrationAgent("Proceed with the investigation plan as proposed.", "");
+    } catch (e) {
+      console.error("Execution failed:", e);
     }
   }
 

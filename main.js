@@ -11322,64 +11322,6 @@ var OrchestrationService = class {
   constructor(plugin) {
     this.plugin = plugin;
   }
-  /**
-   * Main entry point triggered by ChatView.handleSend()
-   */
-  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, onProgress) {
-    try {
-      onProgress("Verifying provider and credits...", 10);
-      await this.verifyProviderAndCredits();
-      const urlRegex = /(https?:\/\/[^\s]+)/g;
-      const urls = query.match(urlRegex);
-      if (urls && urls.length > 0) {
-        onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
-        for (const url of urls) {
-          try {
-            const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
-            attachmentsContext += `
-
-=== Content from ${url} ===
-${extractedText}`;
-          } catch (e) {
-            console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
-            attachmentsContext += `
-
-=== Content from ${url} ===
-[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
-          }
-        }
-      }
-      onProgress("Classifying intent and formulating plan...", 20);
-      const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
-      let toolResults = {};
-      if (plan.toolsToCall.length > 0) {
-        onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 50);
-        toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
-      }
-      if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
-        onProgress("Generating graph entities from tool results...", 70);
-        const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
-        if (extraCommands.length > 0) {
-          if (!plan.graphCommands)
-            plan.graphCommands = [];
-          plan.graphCommands = [...plan.graphCommands, ...extraCommands];
-        }
-      }
-      let proposedCommands;
-      if (plan.graphCommands.length > 0) {
-        onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
-        proposedCommands = plan.graphCommands;
-      }
-      onProgress("Synthesizing final response...", 90);
-      const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory);
-      onProgress("Complete", 100);
-      return { finalResponse, proposedCommands };
-    } catch (error) {
-      console.error("[OrchestrationService] Error:", error);
-      this.handleError(error);
-      throw error;
-    }
-  }
   async verifyProviderAndCredits() {
     if (this.plugin.settings.orchestrationProvider === "osint-copilot") {
       try {
@@ -11406,6 +11348,68 @@ ${extractedText}`;
       }
     }
   }
+  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, onProgress) {
+    try {
+      onProgress("Verifying provider and credits...", 10);
+      await this.verifyProviderAndCredits();
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const urls = query.match(urlRegex);
+      if (urls && urls.length > 0) {
+        onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
+        for (const url of urls) {
+          try {
+            const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+            attachmentsContext += `
+
+=== Content from ${url} ===
+${extractedText}`;
+          } catch (e) {
+            console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+            attachmentsContext += `
+
+=== Content from ${url} ===
+[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
+          }
+        }
+      }
+      onProgress("Classifying intent and formulating plan...", 20);
+      const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
+      if (plan.isProposal && plan.toolsToCall.length > 0) {
+        onProgress("Investigation plan proposed for review.", 100);
+        return {
+          finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
+          proposedPlan: plan
+        };
+      }
+      let toolResults = {};
+      if (plan.toolsToCall.length > 0) {
+        onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 50);
+        toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+      }
+      if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
+        onProgress("Generating graph entities from tool results...", 70);
+        const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
+        if (extraCommands.length > 0) {
+          if (!plan.graphCommands)
+            plan.graphCommands = [];
+          plan.graphCommands = [...plan.graphCommands, ...extraCommands];
+        }
+      }
+      let proposedCommands;
+      if (plan.graphCommands && plan.graphCommands.length > 0) {
+        onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
+        proposedCommands = plan.graphCommands;
+      }
+      onProgress("Synthesizing final response...", 90);
+      const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory);
+      onProgress("Complete", 100);
+      return { finalResponse, proposedCommands };
+    } catch (error) {
+      console.error("[OrchestrationService] Error:", error);
+      this.handleError(error);
+      throw error;
+    }
+  }
   async classifyIntent(query, attachmentsContext, graphState, conversationMemory) {
     const systemPrompt = this.plugin.settings.orchestrationPrompt || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
     const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
@@ -11413,30 +11417,28 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
     const prompt = `
 ${systemPrompt}
 
+=== INVESTIGATION PLANNING PROTOCOL ===
+If the user's request requires using ANY tools (OSINT_SEARCH, DARK_WEB, etc.) and you have not yet proposed a plan that was approved, you MUST set "isProposal": true and provide a "planSummary" for the user to review. 
+Describe what you intend to do and ask for their feedback or extra modules to add.
+If the user says something like "Proceed", "Go", "Approved", or provides feedback to an existing plan, you should then set "isProposal": false and list the final tools to call.
+
 === CURRENT GRAPH STATE ===
-(Note: 'entities' lists all nodes. 'connections' lists all edges. Orphaned nodes are entities whose IDs do not appear in any connection's 'fromEntityId' or 'toEntityId' fields - these can be removed via @@delete_entity if requested.)
 ${JSON.stringify(graphState, null, 2)}
 
 === CONVERSATION HISTORY ===
 ${memoryContext}
 
-=== ATTACHMENTS CONTEXT ===
-${attachmentsContext ? attachmentsContext : "No attachments provided."}
-
 === USER REQUEST ===
 ${query}
 
-Respond ONLY with a valid JSON object matching this structure. Do not use markdown backticks around the JSON.
+Respond ONLY with a valid JSON object.
 {
-  "reasoning": "Explain your thought process here",
-  "toolsToCall": ["DARK_WEB", "OSINT_SEARCH", "CORPORATE_REPORTS", "LOCAL_VAULT", "EXTRACT_TO_GRAPH"], // Array of strings (0 to many)
-  "graphCommands": [
-    "@@create_entity {"type":"Person", "label":"John Doe", "properties":{}}",
-    "@@delete_entity {"id":"..."}",
-    "@@create_link {"from":"John Doe", "to":"Jane Smith", "relationship":"KNOWS"}",
-    "@@delete_link {"id":"..."}"
-  ], // Array of valid graph command strings. Do NOT ask for permission or state that you lack internal IDs, you can use exact entity labels instead of IDs.
-  "directResponse": "A direct answer if no tools are needed, or conversational response"
+  "reasoning": "Explain your thought process",
+  "planSummary": "Summarize the investigation steps for the user (Markdown)",
+  "isProposal": true/false,
+  "toolsToCall": ["DARK_WEB", "..."], 
+  "graphCommands": ["@@create_entity..."], 
+  "directResponse": "Conversational reply summarizing the proposal or answering directly"
 }`;
     try {
       const responseText = await this.plugin.graphApiService.callRemoteModel(
@@ -11460,7 +11462,9 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
           reasoning: plan.reasoning || "No reasoning provided.",
           toolsToCall: plan.toolsToCall || [],
           graphCommands: plan.graphCommands || [],
-          directResponse: plan.directResponse
+          directResponse: plan.directResponse,
+          isProposal: plan.isProposal || false,
+          planSummary: plan.planSummary
         };
       } else {
         throw new Error("Could not parse JSON from LLM response.");
@@ -11956,7 +11960,8 @@ If the user provides a Link or File, prioritize it as "Ground Truth" and use EXT
 Investigative Creativity & Continuity:
 - Bridge the Gap: If you find an email in OSINT_SEARCH, suggest checking DARK_WEB for associated passwords.
 - Contextual Recall: Answer questions about the existing graph. Read the CURRENT GRAPH STATE below.
-- Narrative Investigation: Stay in the "investigator" persona.`,
+- Narrative Investigation: Stay in the "investigator" persona.
+- PLANNING PROTOCOL: If any tools are needed, you MUST propose a plan first and set is_proposal=true. Do NOT execute tools until the user confirms or gives feedback.`,
   orchestrationProvider: "osint-copilot",
   orchestrationLocalUrl: "http://localhost:11434/v1",
   orchestrationApiKey: "",
@@ -13547,7 +13552,8 @@ var ChatView = class extends import_obsidian14.ItemView {
       progress: m.progress,
       reportFilePath: m.reportFilePath,
       usedEntities: m.usedEntities,
-      proposedModifications: m.proposedModifications
+      proposedModifications: m.proposedModifications,
+      proposedPlan: m.proposedPlan
     }));
   }
   historyToConversationMessages() {
@@ -13561,7 +13567,8 @@ var ChatView = class extends import_obsidian14.ItemView {
       progress: h.progress,
       reportFilePath: h.reportFilePath,
       usedEntities: h.usedEntities,
-      proposedModifications: h.proposedModifications
+      proposedModifications: h.proposedModifications,
+      proposedPlan: h.proposedPlan
     }));
   }
   async saveCurrentConversation() {
@@ -14747,6 +14754,9 @@ var ChatView = class extends import_obsidian14.ItemView {
           font-style: italic;
         `;
       }
+      if (item.role === "assistant" && item.proposedPlan && item.proposedPlan.isProposal) {
+        this.renderProposedPlan(item, i, messageDiv);
+      }
       if (item.role === "assistant" && item.proposedModifications && item.proposedModifications.length > 0) {
         const proposedDiv = messageDiv.createDiv("vault-ai-proposed-modifications");
         proposedDiv.style.cssText = `
@@ -15177,6 +15187,7 @@ ${fileList}` : fileList;
       this.activeAbortControllers.delete(assistantIndex);
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
+      this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
       this.chatHistory[assistantIndex].progress = void 0;
       await this.renderMessages();
     } catch (e) {
@@ -15191,114 +15202,78 @@ ${fileList}` : fileList;
   }
   async applyProposedModifications(index, selectedIndices) {
     const item = this.chatHistory[index];
-    if (!item || !item.proposedModifications)
+    if (!item.proposedModifications)
       return;
-    const commandsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
-    if (commandsToExecute.length === 0) {
-      new import_obsidian14.Notice("No modifications selected");
+    const cmdsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
+    if (cmdsToExecute.length === 0)
       return;
+    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute);
+    item.proposedModifications = void 0;
+    await this.renderMessages();
+    await this.saveCurrentConversation();
+  }
+  renderProposedPlan(item, index, messageDiv) {
+    if (!item.proposedPlan)
+      return;
+    const plan = item.proposedPlan;
+    const planDiv = messageDiv.createDiv("vault-ai-proposed-plan");
+    planDiv.style.cssText = `
+      margin-top: 15px;
+      padding: 15px;
+      background: var(--background-secondary-alt);
+      border: 1px solid var(--interactive-accent);
+      border-radius: 8px;
+      border-left: 5px solid var(--interactive-accent);
+    `;
+    planDiv.createEl("h4", {
+      text: "\u26A1 Review Investigation Plan",
+      cls: "vault-ai-plan-title"
+    }).style.marginTop = "0";
+    if (plan.planSummary) {
+      const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
+      import_obsidian14.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
-    let successCount = 0;
-    const progressNotice = new import_obsidian14.Notice("Applying graph changes...", 0);
-    const indexToUuidMap = /* @__PURE__ */ new Map();
-    for (let i = 0; i < commandsToExecute.length; i++) {
-      const command = commandsToExecute[i];
-      try {
-        if (command.startsWith("@@create_entity")) {
-          const jsonStr = command.replace("@@create_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.type && data.properties) {
-            const label = data.label || getEntityLabel(data.type, data.properties);
-            const validation = validateEntityName(label, data.type);
-            if (!validation.isValid) {
-              console.warn(`[OSINT Copilot] Skipping creation of generic entity: "${label}". Error: ${validation.error}`);
-              continue;
-            }
-            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties, { manualLabel: label });
-            if (typeof data.temp_id === "number") {
-              indexToUuidMap.set(data.temp_id, entity.id);
-            }
-            successCount++;
-          }
-        } else if (command.startsWith("@@delete_entity")) {
-          const jsonStr = command.replace("@@delete_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteEntities([data.id]);
-            successCount++;
-          }
-        } else if (command.startsWith("@@create_link")) {
-          const jsonStr = command.replace("@@create_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.from !== void 0 && data.to !== void 0 && data.relationship) {
-            let fromId = data.from;
-            let toId = data.to;
-            if (typeof fromId === "number") {
-              if (indexToUuidMap.has(fromId)) {
-                fromId = indexToUuidMap.get(fromId);
-              } else {
-                console.warn(`[OSINT Copilot] Backend index ${fromId} not found in UUID map`);
-              }
-            }
-            if (typeof toId === "number") {
-              if (indexToUuidMap.has(toId)) {
-                toId = indexToUuidMap.get(toId);
-              } else {
-                console.warn(`[OSINT Copilot] Backend index ${toId} not found in UUID map`);
-              }
-            }
-            const resolvedFrom = this.plugin.entityManager.getEntity(fromId);
-            if (!resolvedFrom) {
-              const label = data.from_label || (typeof data.from === "string" ? data.from : "");
-              if (label) {
-                const f = this.plugin.entityManager.findEntityByLabel(label);
-                if (f) {
-                  fromId = f.id;
-                } else {
-                  console.warn(`[OSINT Copilot] Could not find 'From' entity by label: "${label}"`);
-                }
-              }
-            }
-            const resolvedTo = this.plugin.entityManager.getEntity(toId);
-            if (!resolvedTo) {
-              const label = data.to_label || (typeof data.to === "string" ? data.to : "");
-              if (label) {
-                const t = this.plugin.entityManager.findEntityByLabel(label);
-                if (t) {
-                  toId = t.id;
-                } else {
-                  console.warn(`[OSINT Copilot] Could not find 'To' entity by label: "${label}"`);
-                }
-              }
-            }
-            if (this.plugin.entityManager.getEntity(fromId) && this.plugin.entityManager.getEntity(toId)) {
-              await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-              successCount++;
-            } else {
-              console.error(`[OSINT Copilot] Connection resolution failure: From=${fromId} (${data.from_label || "no label"}), To=${toId} (${data.to_label || "no label"})`);
-            }
-          }
-        } else if (command.startsWith("@@delete_link")) {
-          const jsonStr = command.replace("@@delete_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
-            successCount++;
-          }
-        }
-      } catch (err) {
-        console.error("[OSINT Copilot] Failed to apply modification:", command, err);
-      }
+    const toolList = planDiv.createEl("ul", { cls: "vault-ai-plan-tools" });
+    toolList.style.fontSize = "small";
+    if (plan.toolsToCall && plan.toolsToCall.length > 0) {
+      plan.toolsToCall.forEach((tool) => {
+        toolList.createEl("li", { text: `\u{1F50D} Module: ${tool.replace("_", " ")}` });
+      });
     }
-    progressNotice.hide();
-    if (successCount > 0) {
-      new import_obsidian14.Notice(`Successfully applied ${successCount} change(s)`);
-      this.chatHistory[index].proposedModifications = void 0;
-      await this.saveCurrentConversation();
-      await this.renderMessages();
-      await this.plugin.refreshOrOpenGraphView();
-    } else {
-      new import_obsidian14.Notice("Failed to apply changes");
+    const actionRow = planDiv.createDiv();
+    actionRow.style.display = "flex";
+    actionRow.style.gap = "12px";
+    actionRow.style.marginTop = "15px";
+    const executeBtn = actionRow.createEl("button", {
+      text: "\u{1F680} Run Investigation",
+      cls: "mod-cta"
+    });
+    executeBtn.addEventListener("click", () => {
+      void this.executeProposedPlan(index);
+    });
+    const hint = planDiv.createEl("small", {
+      text: "Reply to this message to add modules or refine the plan.",
+      cls: "vault-ai-plan-hint"
+    });
+    hint.style.cssText = `
+      display: block;
+      margin-top: 10px;
+      color: var(--text-muted);
+      font-style: italic;
+    `;
+  }
+  async executeProposedPlan(index) {
+    const item = this.chatHistory[index];
+    if (!item.proposedPlan)
+      return;
+    item.proposedPlan.isProposal = false;
+    item.content = "\u{1F680} *Executing investigation plan...*";
+    item.progress = { message: "Launching investigative modules...", percent: 20 };
+    await this.renderMessages();
+    try {
+      await this.handleOrchestrationAgent("Proceed with the investigation plan as proposed.", "");
+    } catch (e) {
+      console.error("Execution failed:", e);
     }
   }
   async handleCustomChat(query) {

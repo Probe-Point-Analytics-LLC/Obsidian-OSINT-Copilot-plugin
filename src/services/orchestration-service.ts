@@ -6,6 +6,8 @@ import { ConfirmModal } from '../modals/confirm-modal';
 
 export interface OrchestrationPlan {
     reasoning: string;
+    planSummary?: string; // Summary of what will be done for user review
+    isProposal?: boolean; // If true, the agent is asking for approval
     toolsToCall: string[]; // e.g., ['DARK_WEB', 'LOCAL_VAULT', 'OSINT_SEARCH', 'CORPORATE_REPORTS']
     graphCommands: string[]; // e.g., ['@@CREATE: {...}', '@@DELETE: {...}']
     directResponse?: string; // If no tools needed or as a final response
@@ -18,71 +20,6 @@ export class OrchestrationService {
         this.plugin = plugin;
     }
 
-    /**
-     * Main entry point triggered by ChatView.handleSend()
-     */
-    public async processRequest(
-        query: string,
-        attachmentsContext: string,
-        currentGraphState: any,
-        conversationMemory: { role: string, content: string }[],
-        onProgress: (msg: string, percent: number) => void
-    ): Promise<{ finalResponse: string, proposedCommands?: string[] }> {
-        try {
-            onProgress("Verifying provider and credits...", 10);
-            await this.verifyProviderAndCredits();
-
-            // Implicit URL Extraction (Phase 3)
-            const urlRegex = /(https?:\/\/[^\s]+)/g;
-            const urls = query.match(urlRegex);
-            if (urls && urls.length > 0) {
-                onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
-                for (const url of urls) {
-                    try {
-                        const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
-                        attachmentsContext += `\n\n=== Content from ${url} ===\n${extractedText}`;
-                    } catch (e) {
-                        console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
-                        attachmentsContext += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
-                    }
-                }
-            }
-
-            onProgress("Classifying intent and formulating plan...", 20);
-            const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
-
-            let toolResults: Record<string, any> = {};
-            if (plan.toolsToCall.length > 0) {
-                onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 50);
-                toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
-            }
-
-            if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
-                onProgress("Generating graph entities from tool results...", 70);
-                const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
-                if (extraCommands.length > 0) {
-                    if (!plan.graphCommands) plan.graphCommands = [];
-                    plan.graphCommands = [...plan.graphCommands, ...extraCommands];
-                }
-            }
-
-            let proposedCommands: string[] | undefined;
-            if (plan.graphCommands.length > 0) {
-                onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
-                proposedCommands = plan.graphCommands;
-            }
-
-            onProgress("Synthesizing final response...", 90);
-            const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory); // Updated call signature
-
-            onProgress("Complete", 100);
-            return { finalResponse, proposedCommands }; // Return both the response and the commands
-        } catch (error) {
-            console.error("[OrchestrationService] Error:", error);
-            this.handleError(error);
-            throw error;
-        }
-    }
 
     private async verifyProviderAndCredits(): Promise<void> {
         if (this.plugin.settings.orchestrationProvider === 'osint-copilot') {
@@ -113,6 +50,78 @@ export class OrchestrationService {
         }
     }
 
+    public async processRequest(
+        query: string,
+        attachmentsContext: string,
+        currentGraphState: any,
+        conversationMemory: { role: string, content: string }[],
+        onProgress: (msg: string, percent: number) => void
+    ): Promise<{ finalResponse: string, proposedCommands?: string[], proposedPlan?: OrchestrationPlan }> {
+        try {
+            onProgress("Verifying provider and credits...", 10);
+            await this.verifyProviderAndCredits();
+
+            // Implicit URL Extraction (Phase 3)
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const urls = query.match(urlRegex);
+            if (urls && urls.length > 0) {
+                onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
+                for (const url of urls) {
+                    try {
+                        const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+                        attachmentsContext += `\n\n=== Content from ${url} ===\n${extractedText}`;
+                    } catch (e) {
+                        console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+                        attachmentsContext += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
+                    }
+                }
+            }
+
+            onProgress("Classifying intent and formulating plan...", 20);
+            const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
+
+            // HITL: If the plan is a proposal, return immediately for user review
+            if (plan.isProposal && plan.toolsToCall.length > 0) {
+                onProgress("Investigation plan proposed for review.", 100);
+                return {
+                    finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
+                    proposedPlan: plan
+                };
+            }
+
+            let toolResults: Record<string, any> = {};
+            if (plan.toolsToCall.length > 0) {
+                onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 50);
+                toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+            }
+
+            if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
+                onProgress("Generating graph entities from tool results...", 70);
+                const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
+                if (extraCommands.length > 0) {
+                    if (!plan.graphCommands) plan.graphCommands = [];
+                    plan.graphCommands = [...plan.graphCommands, ...extraCommands];
+                }
+            }
+
+            let proposedCommands: string[] | undefined;
+            if (plan.graphCommands && plan.graphCommands.length > 0) {
+                onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
+                proposedCommands = plan.graphCommands;
+            }
+
+            onProgress("Synthesizing final response...", 90);
+            const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory);
+
+            onProgress("Complete", 100);
+            return { finalResponse, proposedCommands };
+        } catch (error) {
+            console.error("[OrchestrationService] Error:", error);
+            this.handleError(error);
+            throw error;
+        }
+    }
+
     private async classifyIntent(query: string, attachmentsContext: string, graphState: any, conversationMemory: { role: string, content: string }[]): Promise<OrchestrationPlan> {
         const systemPrompt = this.plugin.settings.orchestrationPrompt
             || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
@@ -125,30 +134,28 @@ export class OrchestrationService {
         const prompt = `
 ${systemPrompt}
 
+=== INVESTIGATION PLANNING PROTOCOL ===
+If the user's request requires using ANY tools (OSINT_SEARCH, DARK_WEB, etc.) and you have not yet proposed a plan that was approved, you MUST set "isProposal": true and provide a "planSummary" for the user to review. 
+Describe what you intend to do and ask for their feedback or extra modules to add.
+If the user says something like "Proceed", "Go", "Approved", or provides feedback to an existing plan, you should then set "isProposal": false and list the final tools to call.
+
 === CURRENT GRAPH STATE ===
-(Note: 'entities' lists all nodes. 'connections' lists all edges. Orphaned nodes are entities whose IDs do not appear in any connection's 'fromEntityId' or 'toEntityId' fields - these can be removed via @@delete_entity if requested.)
 ${JSON.stringify(graphState, null, 2)}
 
 === CONVERSATION HISTORY ===
 ${memoryContext}
 
-=== ATTACHMENTS CONTEXT ===
-${attachmentsContext ? attachmentsContext : "No attachments provided."}
-
 === USER REQUEST ===
 ${query}
 
-Respond ONLY with a valid JSON object matching this structure. Do not use markdown backticks around the JSON.
+Respond ONLY with a valid JSON object.
 {
-  "reasoning": "Explain your thought process here",
-  "toolsToCall": ["DARK_WEB", "OSINT_SEARCH", "CORPORATE_REPORTS", "LOCAL_VAULT", "EXTRACT_TO_GRAPH"], // Array of strings (0 to many)
-  "graphCommands": [
-    "@@create_entity {\"type\":\"Person\", \"label\":\"John Doe\", \"properties\":{}}",
-    "@@delete_entity {\"id\":\"...\"}",
-    "@@create_link {\"from\":\"John Doe\", \"to\":\"Jane Smith\", \"relationship\":\"KNOWS\"}",
-    "@@delete_link {\"id\":\"...\"}"
-  ], // Array of valid graph command strings. Do NOT ask for permission or state that you lack internal IDs, you can use exact entity labels instead of IDs.
-  "directResponse": "A direct answer if no tools are needed, or conversational response"
+  "reasoning": "Explain your thought process",
+  "planSummary": "Summarize the investigation steps for the user (Markdown)",
+  "isProposal": true/false,
+  "toolsToCall": ["DARK_WEB", "..."], 
+  "graphCommands": ["@@create_entity..."], 
+  "directResponse": "Conversational reply summarizing the proposal or answering directly"
 }`;
 
         try {
@@ -175,7 +182,9 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
                     reasoning: plan.reasoning || "No reasoning provided.",
                     toolsToCall: plan.toolsToCall || [],
                     graphCommands: plan.graphCommands || [],
-                    directResponse: plan.directResponse
+                    directResponse: plan.directResponse,
+                    isProposal: plan.isProposal || false,
+                    planSummary: plan.planSummary
                 };
             } else {
                 throw new Error("Could not parse JSON from LLM response.");
@@ -395,7 +404,7 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
         return commands;
     }
 
-    private async executeGraphModifications(commands: string[]): Promise<void> {
+    public async executeGraphModifications(commands: string[]): Promise<void> {
         if (!commands || commands.length === 0) return;
 
         const checkboxItems: { label: string, value: string, checked: boolean }[] = [];
