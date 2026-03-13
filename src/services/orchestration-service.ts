@@ -57,9 +57,13 @@ export class OrchestrationService {
                 toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
             }
 
-            if (this.shouldExtractEntities(toolResults)) {
+            if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
                 onProgress("Generating graph entities from tool results...", 70);
-                await this.feedResultsToGraphExtraction(toolResults);
+                const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
+                if (extraCommands.length > 0) {
+                    if (!plan.graphCommands) plan.graphCommands = [];
+                    plan.graphCommands = [...plan.graphCommands, ...extraCommands];
+                }
             }
 
             let proposedCommands: string[] | undefined;
@@ -338,13 +342,57 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
         return results;
     }
 
-    private shouldExtractEntities(toolResults: Record<string, any>): boolean {
-        // TODO: Determine if tool results contain extractable entities (e.g., non-empty object)
-        return Object.keys(toolResults).length > 0;
-    }
+    private async feedResultsToGraphExtraction(results: Record<string, any>): Promise<string[]> {
+        const commands: string[] = [];
 
-    private async feedResultsToGraphExtraction(results: Record<string, any>): Promise<void> {
-        // TODO: Transform results to text and call GraphApiService for extraction
+        // 1. Group results by tool
+        let textToProcess = "=== AUTOMATED INVESTIGATION RESULTS ===\n";
+        for (const [tool, result] of Object.entries(results)) {
+            textToProcess += `\n\n--- TOOL: ${tool} ---\n`;
+            if (typeof result === 'string') {
+                textToProcess += result;
+            } else {
+                textToProcess += JSON.stringify(result, null, 2);
+            }
+        }
+
+        // 2. Call GraphApiService for extraction
+        try {
+            const extraction = await this.plugin.graphApiService.processText(
+                textToProcess,
+                this.plugin.entityManager.getAllEntities(),
+                new Date().toISOString()
+            );
+
+            if (extraction.success && extraction.operations) {
+                // Convert extracted operations (entities/connections) into graph commands
+                extraction.operations.forEach(op => {
+                    if (op.entities) {
+                        op.entities.forEach(entity => {
+                            commands.push(`@@create_entity ${JSON.stringify({
+                                type: entity.type,
+                                label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
+                                properties: entity.properties
+                            })}`);
+                        });
+                    }
+
+                    if (op.connections) {
+                        op.connections.forEach(conn => {
+                            commands.push(`@@create_link ${JSON.stringify({
+                                from: conn.from_label || conn.from.toString(),
+                                to: conn.to_label || conn.to.toString(),
+                                relationship: conn.relationship
+                            })}`);
+                        });
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("[OrchestrationService] Post-search extraction failed:", error);
+        }
+
+        return commands;
     }
 
     private async executeGraphModifications(commands: string[]): Promise<void> {

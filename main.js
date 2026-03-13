@@ -11356,9 +11356,14 @@ ${extractedText}`;
         onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 50);
         toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
       }
-      if (this.shouldExtractEntities(toolResults)) {
+      if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
         onProgress("Generating graph entities from tool results...", 70);
-        await this.feedResultsToGraphExtraction(toolResults);
+        const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
+        if (extraCommands.length > 0) {
+          if (!plan.graphCommands)
+            plan.graphCommands = [];
+          plan.graphCommands = [...plan.graphCommands, ...extraCommands];
+        }
       }
       let proposedCommands;
       if (plan.graphCommands.length > 0) {
@@ -11601,10 +11606,52 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
     await Promise.all(promises);
     return results;
   }
-  shouldExtractEntities(toolResults) {
-    return Object.keys(toolResults).length > 0;
-  }
   async feedResultsToGraphExtraction(results) {
+    const commands = [];
+    let textToProcess = "=== AUTOMATED INVESTIGATION RESULTS ===\n";
+    for (const [tool, result] of Object.entries(results)) {
+      textToProcess += `
+
+--- TOOL: ${tool} ---
+`;
+      if (typeof result === "string") {
+        textToProcess += result;
+      } else {
+        textToProcess += JSON.stringify(result, null, 2);
+      }
+    }
+    try {
+      const extraction = await this.plugin.graphApiService.processText(
+        textToProcess,
+        this.plugin.entityManager.getAllEntities(),
+        (/* @__PURE__ */ new Date()).toISOString()
+      );
+      if (extraction.success && extraction.operations) {
+        extraction.operations.forEach((op) => {
+          if (op.entities) {
+            op.entities.forEach((entity) => {
+              commands.push(`@@create_entity ${JSON.stringify({
+                type: entity.type,
+                label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
+                properties: entity.properties
+              })}`);
+            });
+          }
+          if (op.connections) {
+            op.connections.forEach((conn) => {
+              commands.push(`@@create_link ${JSON.stringify({
+                from: conn.from_label || conn.from.toString(),
+                to: conn.to_label || conn.to.toString(),
+                relationship: conn.relationship
+              })}`);
+            });
+          }
+        });
+      }
+    } catch (error) {
+      console.error("[OrchestrationService] Post-search extraction failed:", error);
+    }
+    return commands;
   }
   async executeGraphModifications(commands) {
     if (!commands || commands.length === 0)
@@ -11880,6 +11927,8 @@ var DEFAULT_SETTINGS = {
   themeMode: "system",
   // Default to system theme
   orchestrationPrompt: `You are the OSINT Copilot Orchestrator. You are not a passive chatbot; you are an active investigative partner. Your primary directive is to synthesize global intelligence with local knowledge, mapping everything into a structured Knowledge Graph.
+
+MANDATORY GRAPH RULE: Every investigative finding MUST be mapped to the Knowledge Graph. Do not skip extraction.
 
 The Reasoning Loop (Think Before You Act):
 1. IDENTIFY the entities involved.
