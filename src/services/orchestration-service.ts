@@ -249,47 +249,77 @@ Respond ONLY with a valid JSON object matching this structure. Do not use markdo
 
                         if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
                             // Automatically insert these entities into the local Obsidian graph!
-                            const generatedGraph = graphGenRes.json;
-                            const createdEntitiesMap: Map<number, any> = new Map();
+                            const result = graphGenRes.json;
+                            const globalEntitiesMap: Map<number, any> = new Map();
                             const entityLabelMap: Map<string, any> = new Map();
+                            let globalIndexOffset = 0;
+                            let entitiesCreated = 0;
+                            let connectionsCreated = 0;
 
-                            if (generatedGraph && generatedGraph.entities) {
-                                for (let i = 0; i < generatedGraph.entities.length; i++) {
-                                    const ent = generatedGraph.entities[i];
-                                    try {
-                                        const entity = await this.plugin.entityManager.createEntity(ent.type, ent.properties);
-                                        createdEntitiesMap.set(i, entity);
-                                        entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
-                                    } catch (e) {
-                                        console.error(`[OrchestrationService] Failed to create entity:`, e);
+                            if (result && result.operations) {
+                                for (const operation of result.operations) {
+                                    const operationEntities: Array<any | null> = [];
+
+                                    // 1. Create entities for this operation
+                                    if (operation.action === "create" && operation.entities) {
+                                        for (let i = 0; i < operation.entities.length; i++) {
+                                            const ent = operation.entities[i];
+                                            try {
+                                                const entity = await this.plugin.entityManager.createEntity(ent.type, ent.properties);
+                                                operationEntities.push(entity);
+                                                const globalIdx = globalIndexOffset + i;
+                                                globalEntitiesMap.set(globalIdx, entity);
+                                                entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+                                                entitiesCreated++;
+                                            } catch (e) {
+                                                console.error(`[OrchestrationService] Failed to create entity:`, e);
+                                                operationEntities.push(null);
+                                            }
+                                        }
+                                        globalIndexOffset += operation.entities.length;
+                                    }
+
+                                    // 2. Create connections for this operation
+                                    if (operation.connections) {
+                                        for (const conn of operation.connections) {
+                                            try {
+                                                let fromEntity: any | undefined;
+                                                let toEntity: any | undefined;
+
+                                                // Try relative indices (operation level)
+                                                fromEntity = operationEntities[conn.from];
+                                                toEntity = operationEntities[conn.to];
+
+                                                // Try global indices (backend multi-step behavior)
+                                                if (!fromEntity && typeof conn.from === 'number' && conn.from >= 0) {
+                                                    fromEntity = globalEntitiesMap.get(conn.from);
+                                                }
+                                                if (!toEntity && typeof conn.to === 'number' && conn.to >= 0) {
+                                                    toEntity = globalEntitiesMap.get(conn.to);
+                                                }
+
+                                                // Try label fallback
+                                                if (!fromEntity && conn.from_label) {
+                                                    fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
+                                                        this.plugin.entityManager.findEntityByLabel(conn.from_label);
+                                                }
+                                                if (!toEntity && conn.to_label) {
+                                                    toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
+                                                        this.plugin.entityManager.findEntityByLabel(conn.to_label);
+                                                }
+
+                                                if (fromEntity && toEntity) {
+                                                    await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
+                                                    connectionsCreated++;
+                                                }
+                                            } catch (e) {
+                                                console.error(`[OrchestrationService] Failed to create connection:`, e);
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if (generatedGraph && generatedGraph.connections) {
-                                for (const conn of generatedGraph.connections) {
-                                    try {
-                                        let fromEntity = createdEntitiesMap.get(conn.from);
-                                        let toEntity = createdEntitiesMap.get(conn.to);
-
-                                        // Try label fallback for existing entities or missed indices
-                                        if (!fromEntity && conn.from_label) {
-                                            fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
-                                                this.plugin.entityManager.findEntityByLabel(conn.from_label);
-                                        }
-                                        if (!toEntity && conn.to_label) {
-                                            toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
-                                                this.plugin.entityManager.findEntityByLabel(conn.to_label);
-                                        }
-
-                                        if (fromEntity && toEntity) {
-                                            await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
-                                        }
-                                    } catch (e) {
-                                        console.error(`[OrchestrationService] Failed to create connection:`, e);
-                                    }
-                                }
-                            }
-                            results["EXTRACT_TO_GRAPH"] = `Successfully extracted ${generatedGraph?.entities?.length || 0} entities and ${generatedGraph?.connections?.length || 0} connections into the graph.`;
+                            results["EXTRACT_TO_GRAPH"] = `Successfully extracted ${entitiesCreated} entities and ${connectionsCreated} connections into the graph.`;
                         } else {
                             results["EXTRACT_TO_GRAPH"] = `Extraction failed: ${graphGenRes.status}`;
                         }

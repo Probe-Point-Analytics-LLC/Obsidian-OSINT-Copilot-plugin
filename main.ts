@@ -38,7 +38,7 @@ interface ApiKeyInfo {
 }
 
 // Graph plugin imports
-import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName } from './src/entities/types';
+import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity } from './src/services/api-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
@@ -4987,17 +4987,14 @@ export class ChatView extends ItemView {
               }
 
               // Validate entity name is not generic
-              const config = ENTITY_CONFIGS[entityType];
-              const labelField = config?.labelField;
-              const entityLabel = labelField ? entityData.properties[labelField] : null;
+              // Use the same logic as EntityManager to determine the label that will be used
+              const finalLabel = getEntityLabel(entityType, entityData.properties);
+              const nameValidation = validateEntityName(finalLabel, entityType);
 
-              if (entityLabel) {
-                const nameValidation = validateEntityName(entityLabel as string, entityType);
-                if (!nameValidation.isValid) {
-                  console.warn(`[GraphGeneration] Skipping entity with generic name: "${entityLabel}" - ${nameValidation.error}`);
-                  operationEntities.push(null);
-                  continue;
-                }
+              if (!nameValidation.isValid) {
+                console.warn(`[GraphGeneration] Skipping entity with generic name: "${finalLabel}" - ${nameValidation.error}`);
+                operationEntities.push(null);
+                continue;
               }
 
               console.debug('[GraphGeneration] Creating entity with type:', entityType);
