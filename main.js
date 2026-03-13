@@ -2307,15 +2307,16 @@ var EntityManager = class {
   async loadEntitiesFromNotes() {
     this.entities.clear();
     this.connections.clear();
-    for (const type of Object.values(EntityType)) {
-      const folderPath = (0, import_obsidian2.normalizePath)(`${this.basePath}/${type}`);
-      const folder = this.app.vault.getAbstractFileByPath(folderPath);
-      if (folder instanceof import_obsidian2.TFolder) {
-        for (const file of folder.children) {
-          if (file instanceof import_obsidian2.TFile && file.extension === "md") {
-            const entity = await this.parseEntityFromNote(file);
-            if (entity) {
-              this.entities.set(entity.id, entity);
+    const baseFolder = this.app.vault.getAbstractFileByPath(this.basePath);
+    if (baseFolder instanceof import_obsidian2.TFolder) {
+      for (const child of baseFolder.children) {
+        if (child instanceof import_obsidian2.TFolder) {
+          for (const file of child.children) {
+            if (file instanceof import_obsidian2.TFile && file.extension === "md") {
+              const entity = await this.parseEntityFromNote(file);
+              if (entity) {
+                this.entities.set(entity.id, entity);
+              }
             }
           }
         }
@@ -2335,15 +2336,14 @@ var EntityManager = class {
         return null;
       }
       const type = frontmatter.type;
-      if (!Object.values(EntityType).includes(type)) {
+      if (!type) {
         return null;
       }
       const properties = {};
-      const config = ENTITY_CONFIGS[type];
-      const allProps = [...config.properties, ...COMMON_PROPERTIES];
-      for (const prop of allProps) {
-        if (frontmatter[prop] !== void 0) {
-          properties[prop] = frontmatter[prop];
+      const internalKeys = ["id", "type", "label", "filePath"];
+      for (const [key, value] of Object.entries(frontmatter)) {
+        if (!internalKeys.includes(key) && value !== void 0 && value !== null) {
+          properties[key] = value;
         }
       }
       return {

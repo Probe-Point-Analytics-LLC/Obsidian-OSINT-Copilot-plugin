@@ -78,16 +78,17 @@ export class EntityManager {
         this.entities.clear();
         this.connections.clear();
 
-        for (const type of Object.values(EntityType)) {
-            const folderPath = normalizePath(`${this.basePath}/${type}`);
-            const folder = this.app.vault.getAbstractFileByPath(folderPath);
-
-            if (folder instanceof TFolder) {
-                for (const file of folder.children) {
-                    if (file instanceof TFile && file.extension === 'md') {
-                        const entity = await this.parseEntityFromNote(file);
-                        if (entity) {
-                            this.entities.set(entity.id, entity);
+        const baseFolder = this.app.vault.getAbstractFileByPath(this.basePath);
+        if (baseFolder instanceof TFolder) {
+            for (const child of baseFolder.children) {
+                if (child instanceof TFolder) {
+                    // This is an entity type folder (e.g., Person, LegalEntity, etc.)
+                    for (const file of child.children) {
+                        if (file instanceof TFile && file.extension === 'md') {
+                            const entity = await this.parseEntityFromNote(file);
+                            if (entity) {
+                                this.entities.set(entity.id, entity);
+                            }
                         }
                     }
                 }
@@ -113,19 +114,18 @@ export class EntityManager {
                 return null;
             }
 
-            const type = frontmatter.type as EntityType;
-            if (!Object.values(EntityType).includes(type)) {
+            const type = frontmatter.type as string;
+            // Allow both legacy EntityType and FTM schema types
+            if (!type) {
                 return null;
             }
 
-            // Extract properties from frontmatter
+            // Extract all properties except internal ones
             const properties: Record<string, unknown> = {};
-            const config = ENTITY_CONFIGS[type];
-            const allProps = [...config.properties, ...COMMON_PROPERTIES];
-
-            for (const prop of allProps) {
-                if (frontmatter[prop] !== undefined) {
-                    properties[prop] = frontmatter[prop];
+            const internalKeys = ['id', 'type', 'label', 'filePath'];
+            for (const [key, value] of Object.entries(frontmatter)) {
+                if (!internalKeys.includes(key) && value !== undefined && value !== null) {
+                    properties[key] = value;
                 }
             }
 
