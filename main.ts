@@ -4376,7 +4376,7 @@ export class ChatView extends ItemView {
               continue;
             }
 
-            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties);
+            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties, { manualLabel: label });
 
             // Map the backend index (if provided) to the new UUID
             if (typeof data.temp_id === 'number') {
@@ -4400,26 +4400,45 @@ export class ChatView extends ItemView {
             let toId = data.to;
 
             // Resolve IDs from the map if they are backend indices
-            if (typeof fromId === 'number' && indexToUuidMap.has(fromId)) {
-              fromId = indexToUuidMap.get(fromId);
+            if (typeof fromId === 'number') {
+              if (indexToUuidMap.has(fromId)) {
+                fromId = indexToUuidMap.get(fromId);
+              } else {
+                console.warn(`[OSINT Copilot] Backend index ${fromId} not found in UUID map`);
+              }
             }
-            if (typeof toId === 'number' && indexToUuidMap.has(toId)) {
-              toId = indexToUuidMap.get(toId);
+            if (typeof toId === 'number') {
+              if (indexToUuidMap.has(toId)) {
+                toId = indexToUuidMap.get(toId);
+              } else {
+                console.warn(`[OSINT Copilot] Backend index ${toId} not found in UUID map`);
+              }
             }
 
-            // Fallback to label resolution if ID lookup fails
-            if (!this.plugin.entityManager.getEntity(fromId)) {
+            // Fallback to label resolution if ID lookup fails (i.e., not a UUID)
+            const resolvedFrom = this.plugin.entityManager.getEntity(fromId);
+            if (!resolvedFrom) {
               const label = data.from_label || (typeof data.from === 'string' ? data.from : "");
               if (label) {
                 const f = this.plugin.entityManager.findEntityByLabel(label);
-                if (f) fromId = f.id;
+                if (f) {
+                  fromId = f.id;
+                } else {
+                  console.warn(`[OSINT Copilot] Could not find 'From' entity by label: "${label}"`);
+                }
               }
             }
-            if (!this.plugin.entityManager.getEntity(toId)) {
+
+            const resolvedTo = this.plugin.entityManager.getEntity(toId);
+            if (!resolvedTo) {
               const label = data.to_label || (typeof data.to === 'string' ? data.to : "");
               if (label) {
                 const t = this.plugin.entityManager.findEntityByLabel(label);
-                if (t) toId = t.id;
+                if (t) {
+                  toId = t.id;
+                } else {
+                  console.warn(`[OSINT Copilot] Could not find 'To' entity by label: "${label}"`);
+                }
               }
             }
 
@@ -4428,7 +4447,7 @@ export class ChatView extends ItemView {
               await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
               successCount++;
             } else {
-              console.error(`[OSINT Copilot] Could not resolve connection endpoints: From=${fromId}, To=${toId}`);
+              console.error(`[OSINT Copilot] Connection resolution failure: From=${fromId} (${data.from_label || 'no label'}), To=${toId} (${data.to_label || 'no label'})`);
             }
           }
         } else if (command.startsWith("@@delete_link")) {

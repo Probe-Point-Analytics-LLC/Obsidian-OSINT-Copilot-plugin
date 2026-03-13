@@ -330,7 +330,7 @@ export class EntityManager {
     async createEntity(
         type: EntityType,
         properties: Record<string, unknown>,
-        options?: { skipAutoGeocode?: boolean }
+        options?: { skipAutoGeocode?: boolean, manualLabel?: string }
     ): Promise<Entity> {
         const id = generateId();
 
@@ -340,7 +340,7 @@ export class EntityManager {
             properties = await this.geocodeLocationIfNeeded(properties);
         }
 
-        const label = getEntityLabel(type, properties);
+        const label = options?.manualLabel || getEntityLabel(type, properties);
 
         const entity: Entity = {
             id,
@@ -368,7 +368,7 @@ export class EntityManager {
     async createFTMEntity(
         schemaName: string,
         properties: Record<string, unknown>,
-        options?: { skipAutoGeocode?: boolean }
+        options?: { skipAutoGeocode?: boolean, manualLabel?: string }
     ): Promise<Entity> {
         const id = generateId();
         const config = getFTMEntityConfig(schemaName);
@@ -383,8 +383,8 @@ export class EntityManager {
             properties = await this.geocodeAddressIfNeeded(properties);
         }
 
-        // Get label from FTM schema
-        const label = ftmSchemaService.getEntityLabel(schemaName, properties);
+        // Get label from FTM schema or use manual label
+        const label = options?.manualLabel || ftmSchemaService.getEntityLabel(schemaName, properties);
 
         const entity: Entity = {
             id,

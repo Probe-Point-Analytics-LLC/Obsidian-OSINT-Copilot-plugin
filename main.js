@@ -2527,7 +2527,7 @@ var EntityManager = class {
     if (type === "Location" /* Location */ && !options?.skipAutoGeocode) {
       properties = await this.geocodeLocationIfNeeded(properties);
     }
-    const label = getEntityLabel(type, properties);
+    const label = options?.manualLabel || getEntityLabel(type, properties);
     const entity = {
       id,
       type,
@@ -2556,7 +2556,7 @@ var EntityManager = class {
     if (schemaName === "Address" && !options?.skipAutoGeocode) {
       properties = await this.geocodeAddressIfNeeded(properties);
     }
-    const label = ftmSchemaService.getEntityLabel(schemaName, properties);
+    const label = options?.manualLabel || ftmSchemaService.getEntityLabel(schemaName, properties);
     const entity = {
       id,
       type: schemaName,
@@ -15148,7 +15148,7 @@ ${fileList}` : fileList;
               console.warn(`[OSINT Copilot] Skipping creation of generic entity: "${label}". Error: ${validation.error}`);
               continue;
             }
-            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties);
+            const entity = await this.plugin.entityManager.createEntity(data.type, data.properties, { manualLabel: label });
             if (typeof data.temp_id === "number") {
               indexToUuidMap.set(data.temp_id, entity.id);
             }
@@ -15167,33 +15167,49 @@ ${fileList}` : fileList;
           if (data.from !== void 0 && data.to !== void 0 && data.relationship) {
             let fromId = data.from;
             let toId = data.to;
-            if (typeof fromId === "number" && indexToUuidMap.has(fromId)) {
-              fromId = indexToUuidMap.get(fromId);
+            if (typeof fromId === "number") {
+              if (indexToUuidMap.has(fromId)) {
+                fromId = indexToUuidMap.get(fromId);
+              } else {
+                console.warn(`[OSINT Copilot] Backend index ${fromId} not found in UUID map`);
+              }
             }
-            if (typeof toId === "number" && indexToUuidMap.has(toId)) {
-              toId = indexToUuidMap.get(toId);
+            if (typeof toId === "number") {
+              if (indexToUuidMap.has(toId)) {
+                toId = indexToUuidMap.get(toId);
+              } else {
+                console.warn(`[OSINT Copilot] Backend index ${toId} not found in UUID map`);
+              }
             }
-            if (!this.plugin.entityManager.getEntity(fromId)) {
+            const resolvedFrom = this.plugin.entityManager.getEntity(fromId);
+            if (!resolvedFrom) {
               const label = data.from_label || (typeof data.from === "string" ? data.from : "");
               if (label) {
                 const f = this.plugin.entityManager.findEntityByLabel(label);
-                if (f)
+                if (f) {
                   fromId = f.id;
+                } else {
+                  console.warn(`[OSINT Copilot] Could not find 'From' entity by label: "${label}"`);
+                }
               }
             }
-            if (!this.plugin.entityManager.getEntity(toId)) {
+            const resolvedTo = this.plugin.entityManager.getEntity(toId);
+            if (!resolvedTo) {
               const label = data.to_label || (typeof data.to === "string" ? data.to : "");
               if (label) {
                 const t = this.plugin.entityManager.findEntityByLabel(label);
-                if (t)
+                if (t) {
                   toId = t.id;
+                } else {
+                  console.warn(`[OSINT Copilot] Could not find 'To' entity by label: "${label}"`);
+                }
               }
             }
             if (this.plugin.entityManager.getEntity(fromId) && this.plugin.entityManager.getEntity(toId)) {
               await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
               successCount++;
             } else {
-              console.error(`[OSINT Copilot] Could not resolve connection endpoints: From=${fromId}, To=${toId}`);
+              console.error(`[OSINT Copilot] Connection resolution failure: From=${fromId} (${data.from_label || "no label"}), To=${toId} (${data.to_label || "no label"})`);
             }
           }
         } else if (command.startsWith("@@delete_link")) {
