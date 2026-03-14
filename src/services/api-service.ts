@@ -85,9 +85,9 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
     maxRetries: 3,              // Reduced retries since we have proper timeouts now
     baseDelayMs: 1000,          // Start with 1 second delay
     maxDelayMs: 10000,          // Cap at 10 seconds max delay
-    baseTimeoutMs: 90000,       // 90 second timeout - MUST be under Cloudflare's 100s limit
-    maxTimeoutMs: 90000,        // 90 second max - stay under Cloudflare limit
-    timeoutMultiplierOnTimeout: 1.0  // Don't increase timeout (Cloudflare caps at 100s)
+    baseTimeoutMs: 120000,      // 120 second timeout
+    maxTimeoutMs: 120000,       // 120 second max timeout
+    timeoutMultiplierOnTimeout: 1.0  // Don't increase timeout
 };
 
 // Local interface to avoid circular dependency with main.ts

@@ -3484,12 +3484,12 @@ var DEFAULT_RETRY_CONFIG = {
   // Start with 1 second delay
   maxDelayMs: 1e4,
   // Cap at 10 seconds max delay
-  baseTimeoutMs: 9e4,
-  // 90 second timeout - MUST be under Cloudflare's 100s limit
-  maxTimeoutMs: 9e4,
-  // 90 second max - stay under Cloudflare limit
+  baseTimeoutMs: 12e4,
+  // 120 second timeout
+  maxTimeoutMs: 12e4,
+  // 120 second max timeout
   timeoutMultiplierOnTimeout: 1
-  // Don't increase timeout (Cloudflare caps at 100s)
+  // Don't increase timeout
 };
 var GraphApiService = class {
   constructor(baseUrl = "https://api.osint-copilot.com", apiKey = "") {
