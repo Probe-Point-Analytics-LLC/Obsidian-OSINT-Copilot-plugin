@@ -842,7 +842,7 @@ export class GraphApiService {
     /**
      * Split text into chunks, trying to break at paragraph boundaries.
      */
-    private splitTextIntoChunks(text: string, chunkSize: number = 8000): string[] {
+    private splitTextIntoChunks(text: string, chunkSize: number = 1000): string[] {
         const chunks: string[] = [];
         let remaining = text;
 
@@ -887,8 +887,8 @@ export class GraphApiService {
         onRetry?: RetryCallback,
         signal?: AbortSignal
     ): Promise<ProcessTextResponse> {
-        const CHUNK_SIZE = 8000;  // Characters per chunk
-        const CHUNK_THRESHOLD = 10000;  // Only chunk if text is larger than this
+        const CHUNK_SIZE = 1000;  // Characters per chunk (small chunks to avoid proxy timeout)
+        const CHUNK_THRESHOLD = 1500;  // Only chunk if text is larger than this
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
