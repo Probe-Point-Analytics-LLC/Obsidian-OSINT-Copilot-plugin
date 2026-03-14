@@ -4556,14 +4556,22 @@ export class ChatView extends ItemView {
       };
 
       console.log(`[OSINT Copilot] Calling graphApiService.processTextInChunks (Text length: ${inputText.length})...`);
+
+      // Create AbortController so the cancel button in the progress bar works
+      const controller = new AbortController();
+      this.activeAbortControllers.set(messageIndex, controller);
+      this.updateProgressBar(messageIndex, { message: "Sending text to AI for entity extraction...", percent: 30 });
+
       const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         inputText,
         existingEntities,
         undefined,
         onChunkProgress,
-        onRetry
+        onRetry,
+        controller.signal
       );
 
+      this.activeAbortControllers.delete(messageIndex); // Clean up after success
       console.log(`[OSINT Copilot] Extraction API Result:`, result.success ? "Success" : "Failed", result.error || "");
 
       updateProgress("Processing API response...", 50);
