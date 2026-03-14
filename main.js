@@ -14097,7 +14097,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           throw new Error("No content could be extracted from this URL");
         }
         closeModal();
-        const displayUrl = url.length > 60 ? url.substring(0, 60) + "..." : url;
+        const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
         new import_obsidian14.Notice(`Extracted content from URL. Processing entities...`);

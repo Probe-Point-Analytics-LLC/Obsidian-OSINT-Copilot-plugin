@@ -2965,8 +2965,8 @@ export class ChatView extends ItemView {
         // Close modal
         closeModal();
 
-        // Show user message in chat with just the URL
-        const displayUrl = url.length > 60 ? url.substring(0, 60) + "..." : url;
+        // Show user message in chat with the full URL
+        const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `🔗 ${displayUrl}` });
         await this.renderMessages();
 
