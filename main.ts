@@ -4631,8 +4631,21 @@ export class ChatView extends ItemView {
         if (operation.connections) {
           for (let connIdx = 0; connIdx < operation.connections.length; connIdx++) {
             const conn = operation.connections[connIdx];
-            const fromName = conn.from_label || `Index ${conn.from}`;
-            const toName = conn.to_label || `Index ${conn.to}`;
+            let fromName = conn.from_label || `Index ${conn.from}`;
+            let toName = conn.to_label || `Index ${conn.to}`;
+
+            // Resolve indices to names if possible from the current operation's entities
+            if (operation.entities) {
+              if (!conn.from_label && operation.entities[conn.from]) {
+                const ent = operation.entities[conn.from];
+                fromName = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label || `Index ${conn.from}`;
+              }
+              if (!conn.to_label && operation.entities[conn.to]) {
+                const ent = operation.entities[conn.to];
+                toName = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label || `Index ${conn.to}`;
+              }
+            }
+
             checkboxItems.push({
               label: `🔗 Connect: [**${fromName}**] ──(${conn.relationship})──> [**${toName}**]`,
               value: `conn_${opIdx}_${connIdx}`,
