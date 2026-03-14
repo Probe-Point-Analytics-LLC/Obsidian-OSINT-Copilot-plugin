@@ -4036,7 +4036,7 @@ var GraphApiService = class {
   /**
    * Split text into chunks, trying to break at paragraph boundaries.
    */
-  splitTextIntoChunks(text, chunkSize = 5e3) {
+  splitTextIntoChunks(text, chunkSize = 8e3) {
     const chunks = [];
     let remaining = text;
     while (remaining.length > 0) {
@@ -4066,7 +4066,7 @@ var GraphApiService = class {
    * For texts larger than CHUNK_THRESHOLD, splits into chunks and processes each.
    */
   async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal) {
-    const CHUNK_SIZE = 5e3;
+    const CHUNK_SIZE = 8e3;
     const CHUNK_THRESHOLD = 1e4;
     if (text.length <= CHUNK_THRESHOLD) {
       return this.processText(text, existingEntities, referenceTime, onRetry, signal);
