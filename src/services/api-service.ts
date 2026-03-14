@@ -912,6 +912,8 @@ export class GraphApiService {
             const chunk = chunks[i];
             const chunkNum = i + 1;
 
+            console.log(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (Size: ${chunk.length} chars, Start: ${i * CHUNK_SIZE})`);
+
             if (onChunkProgress) {
                 onChunkProgress(chunkNum, chunks.length, `Processing chunk ${chunkNum}/${chunks.length}...`);
             }
@@ -928,6 +930,7 @@ export class GraphApiService {
                 }
 
                 if (result.operations) {
+                    console.log(`[GraphApiService] Chunk ${chunkNum} succeeded, found ${result.operations.length} potential operations`);
                     // Deduplicate entities
                     for (const op of result.operations) {
                         if (op.action === 'create' && op.entities) {
@@ -979,7 +982,7 @@ export class GraphApiService {
             };
         }
 
-        console.debug(`[GraphApiService] Chunking complete. Total operations: ${allOperations.length}`);
+        console.log(`[GraphApiService] All chunks processed. Total operations after filter/dedupe: ${allOperations.length}`);
 
         return {
             success: true,
@@ -1021,7 +1024,8 @@ export class GraphApiService {
         // If the API is down, the request will fail with a proper timeout error.
         // This prevents blocking on a hanging health check.
 
-        console.debug('[GraphApiService] Processing text with AI:', text.substring(0, 100) + '...');
+        console.log(`[GraphApiService] Starting text processing (Input length: ${text.length} chars)`);
+        console.debug('[GraphApiService] Text snippet:', text.substring(0, 100) + '...');
 
         const { maxRetries, baseTimeoutMs } = this.retryConfig;
         let currentTimeout = baseTimeoutMs;
@@ -1041,7 +1045,7 @@ export class GraphApiService {
                     console.debug(`[GraphApiService] Increased timeout to ${currentTimeout}ms after timeout error`);
                 }
 
-                console.debug(`[GraphApiService] Attempt ${attempt}/${maxRetries} with ${currentTimeout}ms timeout`);
+                console.log(`[GraphApiService] Attempt ${attempt}/${maxRetries} (Timeout: ${currentTimeout}ms, Provider: ${this.settings?.apiProvider || 'default'})`);
 
                 const response = await this.fetchWithTimeout(
                     `${this.baseUrl}/api/process-text`,
@@ -1068,7 +1072,8 @@ export class GraphApiService {
                 // Handle non-OK responses
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`[GraphApiService] API error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
+                    console.error(`[GraphApiService] API Error! Status: ${response.status}`);
+                    console.error(`[GraphApiService] Error Details:`, errorText);
                     lastStatusCode = response.status;
 
                     // Non-retryable client errors (4xx except 429)

@@ -4444,11 +4444,9 @@ export class ChatView extends ItemView {
       console.error("Execution failed:", e);
     }
   }
-
   async handleCustomChat(query: string) {
     const assistantIndex = this.chatHistory.length;
 
-    // Initial user message placeholder
     this.chatHistory.push({
       role: "assistant",
       content: "",
@@ -4456,9 +4454,7 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
-    // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
-      // Check if cancelled
       if (this.activeAbortControllers.has(assistantIndex)) {
         this.chatHistory[assistantIndex].progress = { message, percent };
         this.updateProgressBar(assistantIndex, { message, percent });
@@ -4468,12 +4464,8 @@ export class ChatView extends ItemView {
     updateProgress("Sending to custom provider...", 30);
 
     try {
-      // Create new abort controller for this operation
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
-
-      // Call the custom provider (OpenAI compatible)
-      // Pass system prompt from settings or default
 
       const checkpoint = this.plugin.settings.customCheckpoints.find(c => c.id === this.activeCheckpointId);
 
@@ -4489,18 +4481,14 @@ export class ChatView extends ItemView {
         controller.signal
       );
 
-      // Clear controller on completion
       this.activeAbortControllers.delete(assistantIndex);
 
-      // Display the response
       this.chatHistory[assistantIndex].content = aiResponse;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
 
-      // If Graph Generation is ALSO enabled, feed the custom AI response into the graph extractor
       if (this.graphGenerationMode) {
         try {
-          // Pass the AI response as "text to process", but keep original query for context
           await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
         } catch (graphError) {
           console.error("[OSINT Copilot] Graph generation from custom chat failed:", graphError);
@@ -4508,14 +4496,11 @@ export class ChatView extends ItemView {
         }
       }
     } catch (error) {
-      this.activeAbortControllers.delete(assistantIndex); // Ensure controller is cleared on error
+      this.activeAbortControllers.delete(assistantIndex);
       const errorMsg = error instanceof Error ? error.message : String(error);
-
-      // Handle user cancellation gracefully
       if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted') || errorMsg.includes('Request was cancelled')) {
-        return; // UI already handled by handleCancel
+        return;
       }
-
       console.error("Custom chat error:", error);
       this.chatHistory[assistantIndex].content = `Error calling custom provider: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
@@ -4528,7 +4513,7 @@ export class ChatView extends ItemView {
    * This mode is active when graphGenerationMode is ON and all main modes are OFF.
    */
   async handleGraphOnlyMode(inputText: string) {
-    // Add processing placeholder with progress bar
+    console.log(`[OSINT Copilot] Starting handleGraphOnlyMode (Input snippet: ${inputText.substring(0, 50)}...)`);
     const messageIndex = this.chatHistory.length;
     this.chatHistory.push({
       role: "assistant",
@@ -4537,7 +4522,6 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
-    // Helper to update progress
     const updateProgress = (message: string, percent: number) => {
       this.chatHistory[messageIndex].progress = { message, percent };
       this.chatHistory[messageIndex].content = `🏷️ ${message}`;
@@ -4545,11 +4529,9 @@ export class ChatView extends ItemView {
     };
 
     try {
-      // Get existing entities to avoid duplicates
       const existingEntities = this.plugin.entityManager.getAllEntities();
       updateProgress("Checking existing entities...", 20);
 
-      // Retry callback to show status to user during entity extraction
       const onRetry = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => {
         const delaySeconds = Math.round(nextDelayMs / 1000);
         let reasonText = 'Network interrupted';
@@ -4567,13 +4549,13 @@ export class ChatView extends ItemView {
 
       updateProgress("Sending text to AI for entity extraction...", 30);
 
-      // Chunk progress callback to show user which chunk is being processed
       const onChunkProgress = (chunkIndex: number, totalChunks: number, message: string) => {
         const chunkPercent = 30 + Math.round((chunkIndex / totalChunks) * 20);
+        console.log(`[OSINT Copilot] Extraction Progress: ${message}`);
         updateProgress(`📦 ${message}`, chunkPercent);
       };
 
-      // Call the API to extract entities - uses chunking for large texts
+      console.log(`[OSINT Copilot] Calling graphApiService.processTextInChunks (Text length: ${inputText.length})...`);
       const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
         inputText,
         existingEntities,
@@ -4581,6 +4563,8 @@ export class ChatView extends ItemView {
         onChunkProgress,
         onRetry
       );
+
+      console.log(`[OSINT Copilot] Extraction API Result:`, result.success ? "Success" : "Failed", result.error || "");
 
       updateProgress("Processing API response...", 50);
 
@@ -4647,6 +4631,8 @@ export class ChatView extends ItemView {
           }
         }
       }
+
+      console.log(`[OSINT Copilot] Generated ${proposedCommands.length} graph commands for proposal list.`);
 
       if (proposedCommands.length === 0) {
         this.chatHistory[messageIndex].progress = undefined;
