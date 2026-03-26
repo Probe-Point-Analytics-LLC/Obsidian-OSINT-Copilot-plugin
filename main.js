@@ -11438,6 +11438,8 @@ ${extractedText}`;
     const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
 ${msg.content}`).join("\n\n") : "No previous conversation.";
     const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
+    const hasAttachments = attachmentsContext && attachmentsContext.trim().length > 0;
+    const extractToGraphTool = hasAttachments ? '\n- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.' : "";
     const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
 
 === CRITICAL RULES ===
@@ -11452,8 +11454,7 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
 - "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
 - "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
 - "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.
-- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.
+- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -11498,9 +11499,13 @@ Respond with this exact JSON structure:
       if (match) {
         const rawPlan = JSON.parse(match[0]);
         console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1e3));
+        let toolsToCall = rawPlan.toolsToCall || rawPlan.tools_to_call || [];
+        if (!hasAttachments) {
+          toolsToCall = toolsToCall.filter((t) => t !== "EXTRACT_TO_GRAPH");
+        }
         const plan = {
           reasoning: rawPlan.reasoning || "No reasoning provided.",
-          toolsToCall: rawPlan.toolsToCall || rawPlan.tools_to_call || [],
+          toolsToCall,
           graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
           directResponse: rawPlan.directResponse || rawPlan.direct_response,
           isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,
@@ -15389,11 +15394,30 @@ ${fileList}` : fileList;
         word-break: break-word;
         background: var(--background-primary);
       `;
+      let displayText = "";
       if (typeof result === "string") {
-        content.textContent = result;
+        displayText = result;
+      } else if (result && typeof result === "object") {
+        if (result.summary) {
+          displayText = result.summary;
+        } else if (result.results && Array.isArray(result.results)) {
+          displayText = result.results.map((r) => {
+            if (typeof r === "string")
+              return r;
+            return r.title ? `**${r.title}**
+${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
+          }).join("\n\n---\n\n");
+        } else if (result.text) {
+          displayText = result.text;
+        } else if (result.report) {
+          displayText = result.report;
+        } else {
+          displayText = JSON.stringify(result, null, 2);
+        }
       } else {
-        content.textContent = JSON.stringify(result, null, 2);
+        displayText = String(result);
       }
+      import_obsidian14.MarkdownRenderer.render(this.app, displayText, content, "", this);
       details.appendChild(summary);
       details.appendChild(content);
       toolResultsDiv.appendChild(details);
@@ -15456,9 +15480,12 @@ ${fileList}` : fileList;
       { id: "OSINT_SEARCH", icon: "\u{1F310}", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
       { id: "DARK_WEB", icon: "\u{1F578}\uFE0F", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
       { id: "CORPORATE_REPORTS", icon: "\u{1F3E2}", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
-      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Process attached files/links into the graph" }
+      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" }
     ];
+    const hasAttachments = !!(item.savedQuery && /https?:\/\/|\.(pdf|docx?|txt|md)$/i.test(item.savedQuery));
+    if (hasAttachments) {
+      allTools.push({ id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Process attached files/links into the graph" });
+    }
     const proposedTools = new Set(plan.toolsToCall || []);
     const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
     toolSection.style.marginTop = "12px";

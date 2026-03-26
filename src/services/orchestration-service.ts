@@ -182,6 +182,12 @@ export class OrchestrationService {
         // Check if the user is approving a previously proposed plan
         const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
 
+        // Only include EXTRACT_TO_GRAPH when attachments are present
+        const hasAttachments = attachmentsContext && attachmentsContext.trim().length > 0;
+        const extractToGraphTool = hasAttachments
+            ? '\n- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.'
+            : '';
+
         const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
 
 === CRITICAL RULES ===
@@ -196,8 +202,7 @@ export class OrchestrationService {
 - "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
 - "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
 - "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.
-- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.
+- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -247,9 +252,15 @@ Respond with this exact JSON structure:
                 console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1000));
 
                 // Handle both camelCase and snake_case keys from LLM
+                let toolsToCall = rawPlan.toolsToCall || rawPlan.tools_to_call || [];
+                // Filter out EXTRACT_TO_GRAPH when no attachments present
+                if (!hasAttachments) {
+                    toolsToCall = toolsToCall.filter((t: string) => t !== "EXTRACT_TO_GRAPH");
+                }
+
                 const plan: OrchestrationPlan = {
                     reasoning: rawPlan.reasoning || "No reasoning provided.",
-                    toolsToCall: rawPlan.toolsToCall || rawPlan.tools_to_call || [],
+                    toolsToCall,
                     graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
                     directResponse: rawPlan.directResponse || rawPlan.direct_response,
                     isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,

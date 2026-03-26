@@ -4516,11 +4516,31 @@ export class ChatView extends ItemView {
         background: var(--background-primary);
       `;
 
+      // Format the result for display
+      let displayText = '';
       if (typeof result === 'string') {
-        content.textContent = result;
+        displayText = result;
+      } else if (result && typeof result === 'object') {
+        // Extract meaningful text from API responses
+        if (result.summary) {
+          displayText = result.summary;
+        } else if (result.results && Array.isArray(result.results)) {
+          displayText = result.results.map((r: any) => {
+            if (typeof r === 'string') return r;
+            return r.title ? `**${r.title}**\n${r.snippet || r.content || ''}` : JSON.stringify(r, null, 2);
+          }).join('\n\n---\n\n');
+        } else if (result.text) {
+          displayText = result.text;
+        } else if (result.report) {
+          displayText = result.report;
+        } else {
+          displayText = JSON.stringify(result, null, 2);
+        }
       } else {
-        content.textContent = JSON.stringify(result, null, 2);
+        displayText = String(result);
       }
+      // Render as markdown for rich formatting
+      MarkdownRenderer.render(this.app, displayText, content, "", this);
 
       details.appendChild(summary);
       details.appendChild(content);
@@ -4594,8 +4614,13 @@ export class ChatView extends ItemView {
       { id: "DARK_WEB", icon: "🕸️", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
       { id: "CORPORATE_REPORTS", icon: "🏢", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
       { id: "LOCAL_VAULT", icon: "📁", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Process attached files/links into the graph" },
     ];
+
+    // Only show EXTRACT_TO_GRAPH if attachments/links are present
+    const hasAttachments = !!(item.savedQuery && /https?:\/\/|\.(pdf|docx?|txt|md)$/i.test(item.savedQuery));
+    if (hasAttachments) {
+      allTools.push({ id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Process attached files/links into the graph" });
+    }
 
     const proposedTools = new Set(plan.toolsToCall || []);
 
