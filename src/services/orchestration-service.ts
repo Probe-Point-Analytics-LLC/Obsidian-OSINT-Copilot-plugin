@@ -13,6 +13,15 @@ export interface OrchestrationPlan {
     directResponse?: string; // If no tools needed or as a final response
 }
 
+export interface OrchestrationResult {
+    finalResponse: string;
+    proposedCommands?: string[];
+    proposedPlan?: OrchestrationPlan;
+    toolResults?: Record<string, any>;
+    plan?: OrchestrationPlan;
+    phase?: "PLAN_PROPOSED" | "TOOLS_COMPLETE" | "SYNTHESIS_COMPLETE";
+}
+
 export class OrchestrationService {
     private plugin: VaultAIPlugin;
 
@@ -56,7 +65,7 @@ export class OrchestrationService {
         currentGraphState: any,
         conversationMemory: { role: string, content: string }[],
         onProgress: (msg: string, percent: number) => void
-    ): Promise<{ finalResponse: string, proposedCommands?: string[], proposedPlan?: OrchestrationPlan }> {
+    ): Promise<OrchestrationResult> {
         try {
             onProgress("Verifying provider and credits...", 10);
             await this.verifyProviderAndCredits();
@@ -85,18 +94,57 @@ export class OrchestrationService {
                 onProgress("Investigation plan proposed for review.", 100);
                 return {
                     finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
-                    proposedPlan: plan
+                    proposedPlan: plan,
+                    phase: "PLAN_PROPOSED"
                 };
             }
 
-            let toolResults: Record<string, any> = {};
-            if (plan.toolsToCall.length > 0) {
-                onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 50);
-                toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+            // If no tools needed, generate direct response
+            if (plan.toolsToCall.length === 0) {
+                onProgress("Generating response...", 90);
+                const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
+                onProgress("Complete", 100);
+                return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
             }
 
+            // Execute tools in parallel
+            onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 40);
+            const toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+
+            // Return tool results for user review BEFORE synthesis
+            onProgress("Tools complete. Awaiting review...", 60);
+            return {
+                finalResponse: "Investigation tools have completed. Review the results below, then click **📊 Generate Analysis & Graph** to proceed.",
+                toolResults: toolResults,
+                plan: plan,
+                phase: "TOOLS_COMPLETE"
+            };
+
+        } catch (error) {
+            console.error("[OrchestrationService] Error:", error);
+            this.handleError(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Phase 2: Called AFTER user reviews tool results.
+     * Synthesizes the final response and generates graph modifications from all combined tool data.
+     */
+    public async continueAfterToolReview(
+        toolResults: Record<string, any>,
+        plan: OrchestrationPlan,
+        query: string,
+        currentGraphState: any,
+        conversationMemory: { role: string, content: string }[],
+        onProgress: (msg: string, percent: number) => void
+    ): Promise<OrchestrationResult> {
+        try {
+            let proposedCommands: string[] | undefined;
+
+            // Generate graph entities from ALL combined tool results
             if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
-                onProgress("Generating graph entities from tool results...", 70);
+                onProgress("Generating graph entities from all tool results...", 30);
                 const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
                 if (extraCommands.length > 0) {
                     if (!plan.graphCommands) plan.graphCommands = [];
@@ -104,19 +152,19 @@ export class OrchestrationService {
                 }
             }
 
-            let proposedCommands: string[] | undefined;
             if (plan.graphCommands && plan.graphCommands.length > 0) {
-                onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
+                onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 50);
                 proposedCommands = plan.graphCommands;
             }
 
-            onProgress("Synthesizing final response...", 90);
+            // Synthesize final analytical response
+            onProgress("Synthesizing final analysis from all tool results...", 70);
             const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory);
 
             onProgress("Complete", 100);
-            return { finalResponse, proposedCommands };
+            return { finalResponse, proposedCommands, phase: "SYNTHESIS_COMPLETE" };
         } catch (error) {
-            console.error("[OrchestrationService] Error:", error);
+            console.error("[OrchestrationService] Error in continueAfterToolReview:", error);
             this.handleError(error);
             throw error;
         }

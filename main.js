@@ -11378,16 +11378,40 @@ ${extractedText}`;
         onProgress("Investigation plan proposed for review.", 100);
         return {
           finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
-          proposedPlan: plan
+          proposedPlan: plan,
+          phase: "PLAN_PROPOSED"
         };
       }
-      let toolResults = {};
-      if (plan.toolsToCall.length > 0) {
-        onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 50);
-        toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+      if (plan.toolsToCall.length === 0) {
+        onProgress("Generating response...", 90);
+        const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
+        onProgress("Complete", 100);
+        return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
       }
+      onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 40);
+      const toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+      onProgress("Tools complete. Awaiting review...", 60);
+      return {
+        finalResponse: "Investigation tools have completed. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.",
+        toolResults,
+        plan,
+        phase: "TOOLS_COMPLETE"
+      };
+    } catch (error) {
+      console.error("[OrchestrationService] Error:", error);
+      this.handleError(error);
+      throw error;
+    }
+  }
+  /**
+   * Phase 2: Called AFTER user reviews tool results.
+   * Synthesizes the final response and generates graph modifications from all combined tool data.
+   */
+  async continueAfterToolReview(toolResults, plan, query, currentGraphState, conversationMemory, onProgress) {
+    try {
+      let proposedCommands;
       if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
-        onProgress("Generating graph entities from tool results...", 70);
+        onProgress("Generating graph entities from all tool results...", 30);
         const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
         if (extraCommands.length > 0) {
           if (!plan.graphCommands)
@@ -11395,17 +11419,16 @@ ${extractedText}`;
           plan.graphCommands = [...plan.graphCommands, ...extraCommands];
         }
       }
-      let proposedCommands;
       if (plan.graphCommands && plan.graphCommands.length > 0) {
-        onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 80);
+        onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 50);
         proposedCommands = plan.graphCommands;
       }
-      onProgress("Synthesizing final response...", 90);
+      onProgress("Synthesizing final analysis from all tool results...", 70);
       const finalResponse = await this.generateFinalResponse(plan, toolResults, query, currentGraphState, conversationMemory);
       onProgress("Complete", 100);
-      return { finalResponse, proposedCommands };
+      return { finalResponse, proposedCommands, phase: "SYNTHESIS_COMPLETE" };
     } catch (error) {
-      console.error("[OrchestrationService] Error:", error);
+      console.error("[OrchestrationService] Error in continueAfterToolReview:", error);
       this.handleError(error);
       throw error;
     }
@@ -14757,6 +14780,9 @@ var ChatView = class extends import_obsidian14.ItemView {
       if (item.role === "assistant" && item.proposedPlan && item.proposedPlan.isProposal) {
         this.renderProposedPlan(item, i, messageDiv);
       }
+      if (item.role === "assistant" && item.toolResults && Object.keys(item.toolResults).length > 0) {
+        this.renderToolResults(item, i, messageDiv);
+      }
       if (item.role === "assistant" && item.proposedModifications && item.proposedModifications.length > 0) {
         const proposedDiv = messageDiv.createDiv("vault-ai-proposed-modifications");
         proposedDiv.style.cssText = `
@@ -15185,6 +15211,15 @@ ${fileList}` : fileList;
         updateProgress
       );
       this.activeAbortControllers.delete(assistantIndex);
+      if (result.phase === "TOOLS_COMPLETE" && result.toolResults) {
+        this.chatHistory[assistantIndex].content = result.finalResponse || "Tools complete. Review results below.";
+        this.chatHistory[assistantIndex].toolResults = result.toolResults;
+        this.chatHistory[assistantIndex].savedPlan = result.plan;
+        this.chatHistory[assistantIndex].savedQuery = query;
+        this.chatHistory[assistantIndex].progress = void 0;
+        await this.renderMessages();
+        return;
+      }
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
       this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
@@ -15199,6 +15234,155 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].progress = void 0;
       await this.renderMessages();
     }
+  }
+  /**
+   * Phase 2: Continue after the user has reviewed tool results.
+   * Calls continueAfterToolReview on the OrchestrationService to synthesize + generate graph.
+   */
+  async continueFromToolResults(sourceIndex) {
+    const item = this.chatHistory[sourceIndex];
+    if (!item.toolResults || !item.savedPlan)
+      return;
+    const toolResults = item.toolResults;
+    const plan = item.savedPlan;
+    const originalQuery = item.savedQuery || "";
+    item.toolResults = void 0;
+    item.savedPlan = void 0;
+    item.savedQuery = void 0;
+    const synthesisIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "\u{1F4CA} Synthesizing analysis from all tool results...",
+      progress: { message: "Generating graph and analysis...", percent: 10 }
+    });
+    await this.renderMessages();
+    const updateProgress = (message, percent) => {
+      if (this.activeAbortControllers.has(synthesisIndex)) {
+        this.chatHistory[synthesisIndex].progress = { message, percent };
+        this.updateProgressBar(synthesisIndex, { message, percent });
+      }
+    };
+    try {
+      const controller = new AbortController();
+      this.activeAbortControllers.set(synthesisIndex, controller);
+      const currentGraphState = {
+        entities: this.plugin.entityManager.getAllEntities(),
+        connections: this.plugin.entityManager.getAllConnections()
+      };
+      const conversationMemory = this.chatHistory.slice(0, synthesisIndex).map((msg) => ({ role: msg.role, content: msg.content }));
+      const result = await this.plugin.orchestrationService.continueAfterToolReview(
+        toolResults,
+        plan,
+        originalQuery,
+        currentGraphState,
+        conversationMemory,
+        updateProgress
+      );
+      this.activeAbortControllers.delete(synthesisIndex);
+      this.chatHistory[synthesisIndex].content = result.finalResponse || "Analysis complete.";
+      this.chatHistory[synthesisIndex].proposedModifications = result.proposedCommands;
+      this.chatHistory[synthesisIndex].progress = void 0;
+      await this.renderMessages();
+      await this.saveCurrentConversation();
+    } catch (e) {
+      this.activeAbortControllers.delete(synthesisIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+        return;
+      this.chatHistory[synthesisIndex].content = `Synthesis Error: ${errorMsg}`;
+      this.chatHistory[synthesisIndex].progress = void 0;
+      await this.renderMessages();
+    }
+  }
+  /**
+   * Renders collapsible tool result sections and a "Generate Analysis & Graph" button.
+   */
+  renderToolResults(item, index, messageDiv) {
+    if (!item.toolResults || Object.keys(item.toolResults).length === 0)
+      return;
+    const toolResultsDiv = messageDiv.createDiv("vault-ai-tool-results");
+    toolResultsDiv.style.cssText = `
+      margin-top: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+    const toolIcons = {
+      "DARK_WEB": "\u{1F578}\uFE0F Dark Web",
+      "OSINT_SEARCH": "\u{1F310} OSINT Search",
+      "CORPORATE_REPORTS": "\u{1F3E2} Corporate Reports",
+      "LOCAL_VAULT": "\u{1F4C1} Local Vault",
+      "EXTRACT_TO_GRAPH": "\u{1F3F7}\uFE0F Graph Extraction"
+    };
+    for (const [tool, result] of Object.entries(item.toolResults)) {
+      const details = document.createElement("details");
+      details.style.cssText = `
+        border: 1px solid var(--background-modifier-border);
+        border-radius: 8px;
+        overflow: hidden;
+      `;
+      const summary = document.createElement("summary");
+      summary.style.cssText = `
+        padding: 10px 14px;
+        cursor: pointer;
+        font-weight: 600;
+        background: var(--background-secondary);
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      `;
+      summary.textContent = toolIcons[tool] || `\u{1F527} ${tool}`;
+      const badge = document.createElement("span");
+      const resultText = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      const wordCount = resultText.split(/\s+/).length;
+      badge.textContent = `${wordCount} words`;
+      badge.style.cssText = `
+        font-size: 11px;
+        font-weight: normal;
+        color: var(--text-muted);
+        margin-left: auto;
+      `;
+      summary.appendChild(badge);
+      const content = document.createElement("div");
+      content.style.cssText = `
+        padding: 12px 14px;
+        font-size: 13px;
+        max-height: 400px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: var(--background-primary);
+      `;
+      if (typeof result === "string") {
+        content.textContent = result;
+      } else {
+        content.textContent = JSON.stringify(result, null, 2);
+      }
+      details.appendChild(summary);
+      details.appendChild(content);
+      toolResultsDiv.appendChild(details);
+    }
+    const actionRow = toolResultsDiv.createDiv();
+    actionRow.style.cssText = `
+      display: flex;
+      gap: 12px;
+      margin-top: 10px;
+      justify-content: center;
+    `;
+    const continueBtn = actionRow.createEl("button", {
+      text: "\u{1F4CA} Generate Analysis & Graph",
+      cls: "mod-cta"
+    });
+    continueBtn.style.cssText = `
+      padding: 8px 20px;
+      font-size: 14px;
+    `;
+    continueBtn.addEventListener("click", () => {
+      continueBtn.disabled = true;
+      continueBtn.textContent = "\u23F3 Generating...";
+      void this.continueFromToolResults(index);
+    });
   }
   async applyProposedModifications(index, selectedIndices) {
     const item = this.chatHistory[index];
