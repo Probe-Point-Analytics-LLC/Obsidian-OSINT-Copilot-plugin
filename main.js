@@ -11906,6 +11906,30 @@ ${matchingNotes.join("\n\n---\n\n")}` : `No relevant notes found in the vault fo
     const systemPrompt = this.plugin.settings.orchestrationPrompt || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
     const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
 ${msg.content}`).join("\n\n") : "No previous conversation.";
+    const MAX_TOTAL_CHARS = 5e4;
+    const resultEntries = Object.entries(toolResults);
+    let currentTotal = 0;
+    const truncatedResults = {};
+    for (const [key, value] of resultEntries) {
+      const strVal = typeof value === "string" ? value : JSON.stringify(value);
+      currentTotal += strVal.length;
+    }
+    if (currentTotal > MAX_TOTAL_CHARS) {
+      console.warn(`[OrchestrationService] Total tool result size (${currentTotal} chars) exceeds limit. Truncating for synthesis...`);
+      const perResultLimit = Math.floor(MAX_TOTAL_CHARS / resultEntries.length);
+      for (const [key, value] of resultEntries) {
+        let strVal = typeof value === "string" ? value : JSON.stringify(value);
+        if (strVal.length > perResultLimit) {
+          const keep = Math.floor(perResultLimit / 2) - 100;
+          strVal = strVal.substring(0, keep) + "\n\n[... TRUNCATED DUE TO SIZE ...] \n\n" + strVal.substring(strVal.length - keep);
+        }
+        truncatedResults[key] = strVal;
+      }
+    } else {
+      for (const [key, value] of resultEntries) {
+        truncatedResults[key] = typeof value === "string" ? value : JSON.stringify(value);
+      }
+    }
     const prompt = `
 ${systemPrompt}
 
@@ -11922,7 +11946,7 @@ ${query}
 ${plan.reasoning}
 
 === TOOL EXECUTION RESULTS ===
-${JSON.stringify(toolResults, null, 2)}
+${JSON.stringify(truncatedResults, null, 2)}
 
 Synthesize the tool results, graph state, and the user's request into a conversational, well-formatted response to the user. Do not output raw JSON, write in Markdown.
 `;

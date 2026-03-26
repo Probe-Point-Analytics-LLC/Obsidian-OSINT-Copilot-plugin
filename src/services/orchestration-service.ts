@@ -708,6 +708,36 @@ Be thorough and structured. Use markdown formatting.`
             ? conversationMemory.map(msg => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
             : "No previous conversation.";
 
+        // --- SMART TRUNCATION FOR CONTEXT SIZE CONTROL ---
+        // Large tool results can trigger 524 Gateway Timeouts. We truncate if total char count exceeds ~50k.
+        const MAX_TOTAL_CHARS = 50000;
+        const resultEntries = Object.entries(toolResults);
+        let currentTotal = 0;
+        const truncatedResults: Record<string, string> = {};
+
+        // Calculate total length first
+        for (const [key, value] of resultEntries) {
+            const strVal = typeof value === 'string' ? value : JSON.stringify(value);
+            currentTotal += strVal.length;
+        }
+
+        if (currentTotal > MAX_TOTAL_CHARS) {
+            console.warn(`[OrchestrationService] Total tool result size (${currentTotal} chars) exceeds limit. Truncating for synthesis...`);
+            const perResultLimit = Math.floor(MAX_TOTAL_CHARS / resultEntries.length);
+            for (const [key, value] of resultEntries) {
+                let strVal = typeof value === 'string' ? value : JSON.stringify(value);
+                if (strVal.length > perResultLimit) {
+                    const keep = Math.floor(perResultLimit / 2) - 100;
+                    strVal = strVal.substring(0, keep) + "\n\n[... TRUNCATED DUE TO SIZE ...] \n\n" + strVal.substring(strVal.length - keep);
+                }
+                truncatedResults[key] = strVal;
+            }
+        } else {
+            for (const [key, value] of resultEntries) {
+                truncatedResults[key] = typeof value === 'string' ? value : JSON.stringify(value);
+            }
+        }
+
         const prompt = `
 ${systemPrompt}
 
@@ -724,7 +754,7 @@ ${query}
 ${plan.reasoning}
 
 === TOOL EXECUTION RESULTS ===
-${JSON.stringify(toolResults, null, 2)}
+${JSON.stringify(truncatedResults, null, 2)}
 
 Synthesize the tool results, graph state, and the user's request into a conversational, well-formatted response to the user. Do not output raw JSON, write in Markdown.
 `;
