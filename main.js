@@ -3484,12 +3484,12 @@ var DEFAULT_RETRY_CONFIG = {
   // Start with 1 second delay
   maxDelayMs: 1e4,
   // Cap at 10 seconds max delay
-  baseTimeoutMs: 12e4,
-  // 120 second timeout
-  maxTimeoutMs: 12e4,
-  // 120 second max timeout
-  timeoutMultiplierOnTimeout: 1
-  // Don't increase timeout
+  baseTimeoutMs: 3e5,
+  // 300 second timeout (5 minutes)
+  maxTimeoutMs: 6e5,
+  // 600 second max timeout (10 minutes)
+  timeoutMultiplierOnTimeout: 1.5
+  // Increase timeout by 50% on each timeout retry
 };
 var GraphApiService = class {
   constructor(baseUrl = "https://api.osint-copilot.com", apiKey = "") {
@@ -4083,7 +4083,6 @@ var GraphApiService = class {
       }
       const chunk = chunks[i];
       const chunkNum = i + 1;
-      console.log(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (Size: ${chunk.length} chars, Start: ${i * CHUNK_SIZE})`);
       if (onChunkProgress) {
         onChunkProgress(chunkNum, chunks.length, `Processing chunk ${chunkNum}/${chunks.length}...`);
       }
@@ -4095,7 +4094,6 @@ var GraphApiService = class {
           continue;
         }
         if (result.operations) {
-          console.log(`[GraphApiService] Chunk ${chunkNum} succeeded, found ${result.operations.length} potential operations`);
           for (const op of result.operations) {
             if (op.action === "create" && op.entities) {
               const dedupedEntities = op.entities.filter((entity) => {
@@ -4138,7 +4136,7 @@ var GraphApiService = class {
         error: "Failed to extract entities from any chunks"
       };
     }
-    console.log(`[GraphApiService] All chunks processed. Total operations after filter/dedupe: ${allOperations.length}`);
+    console.debug(`[GraphApiService] Chunking complete. Total operations: ${allOperations.length}`);
     return {
       success: true,
       operations: allOperations
@@ -4168,8 +4166,7 @@ var GraphApiService = class {
    * @returns ProcessTextResponse with extracted entities and relationships
    */
   async processText(text, existingEntities, referenceTime, onRetry, signal) {
-    console.log(`[GraphApiService] Starting text processing (Input length: ${text.length} chars)`);
-    console.debug("[GraphApiService] Text snippet:", text.substring(0, 100) + "...");
+    console.debug("[GraphApiService] Processing text with AI:", text.substring(0, 100) + "...");
     const { maxRetries, baseTimeoutMs } = this.retryConfig;
     let currentTimeout = baseTimeoutMs;
     let lastError = null;
@@ -4184,7 +4181,7 @@ var GraphApiService = class {
           currentTimeout = this.calculateTimeout(currentTimeout, true);
           console.debug(`[GraphApiService] Increased timeout to ${currentTimeout}ms after timeout error`);
         }
-        console.log(`[GraphApiService] Attempt ${attempt}/${maxRetries} (Timeout: ${currentTimeout}ms, Provider: ${this.settings?.apiProvider || "default"})`);
+        console.debug(`[GraphApiService] Attempt ${attempt}/${maxRetries} with ${currentTimeout}ms timeout`);
         const response = await this.fetchWithTimeout(
           `${this.baseUrl}/api/process-text`,
           {
@@ -4208,8 +4205,7 @@ var GraphApiService = class {
         );
         if (!response.ok) {
           const errorText = await response.text();
-          console.error(`[GraphApiService] API Error! Status: ${response.status}`);
-          console.error(`[GraphApiService] Error Details:`, errorText);
+          console.error(`[GraphApiService] API error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
           lastStatusCode = response.status;
           if (response.status >= 400 && response.status < 500 && response.status !== 429) {
             if (response.status === 401 || response.status === 403) {
