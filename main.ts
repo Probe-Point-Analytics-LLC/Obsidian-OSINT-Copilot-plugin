@@ -4361,6 +4361,7 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
       this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
+      this.chatHistory[assistantIndex].savedQuery = query; // Save query for tool execution
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
 
@@ -4587,29 +4588,92 @@ export class ChatView extends ItemView {
       MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
 
-    const toolList = planDiv.createEl("ul", { cls: "vault-ai-plan-tools" });
-    toolList.style.fontSize = "small";
-    if (plan.toolsToCall && plan.toolsToCall.length > 0) {
-      plan.toolsToCall.forEach((tool: string) => {
-        toolList.createEl("li", { text: `🔍 Module: ${tool.replace('_', ' ')}` });
+    // All available tools with icons and descriptions
+    const allTools: { id: string; icon: string; label: string; desc: string }[] = [
+      { id: "OSINT_SEARCH", icon: "🌐", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
+      { id: "DARK_WEB", icon: "🕸️", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
+      { id: "CORPORATE_REPORTS", icon: "🏢", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
+      { id: "LOCAL_VAULT", icon: "📁", label: "Local Vault", desc: "Search your existing Obsidian notes" },
+      { id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Process attached files/links into the graph" },
+    ];
+
+    const proposedTools = new Set(plan.toolsToCall || []);
+
+    // Tool selection section
+    const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
+    toolSection.style.marginTop = "12px";
+    toolSection.createEl("strong", { text: "Select investigation modules:" }).style.cssText = `
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+    `;
+
+    const checkboxes: Map<string, HTMLInputElement> = new Map();
+
+    for (const tool of allTools) {
+      const row = toolSection.createDiv();
+      row.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        margin-bottom: 4px;
+        cursor: pointer;
+        transition: background 0.15s;
+      `;
+      row.addEventListener("mouseenter", () => { row.style.background = "var(--background-modifier-hover)"; });
+      row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+
+      const cb = row.createEl("input", { type: "checkbox" }) as HTMLInputElement;
+      cb.checked = proposedTools.has(tool.id);
+      cb.style.cssText = "margin: 0; cursor: pointer;";
+      checkboxes.set(tool.id, cb);
+
+      const labelDiv = row.createDiv();
+      labelDiv.style.cssText = "flex: 1; cursor: pointer;";
+      labelDiv.createEl("span", { text: `${tool.icon} ${tool.label}` }).style.cssText = "font-weight: 600; font-size: 13px;";
+      labelDiv.createEl("span", { text: ` — ${tool.desc}` }).style.cssText = "font-size: 12px; color: var(--text-muted);";
+
+      // Toggle checkbox on row click
+      row.addEventListener("click", (e) => {
+        if (e.target !== cb) {
+          cb.checked = !cb.checked;
+        }
       });
     }
 
     const actionRow = planDiv.createDiv();
-    actionRow.style.display = "flex";
-    actionRow.style.gap = "12px";
-    actionRow.style.marginTop = "15px";
+    actionRow.style.cssText = `
+      display: flex;
+      gap: 12px;
+      margin-top: 15px;
+      align-items: center;
+    `;
 
     const executeBtn = actionRow.createEl("button", {
       text: "🚀 Run Investigation",
       cls: "mod-cta"
     });
     executeBtn.addEventListener("click", () => {
-      void this.executeProposedPlan(index);
+      // Collect selected tools
+      const selectedTools: string[] = [];
+      checkboxes.forEach((cb, toolId) => {
+        if (cb.checked) selectedTools.push(toolId);
+      });
+
+      if (selectedTools.length === 0) {
+        new Notice("Please select at least one investigation module.");
+        return;
+      }
+
+      executeBtn.disabled = true;
+      executeBtn.textContent = "⏳ Executing...";
+      void this.executeProposedPlan(index, selectedTools);
     });
 
     const hint = planDiv.createEl("small", {
-      text: "Reply to this message to add modules or refine the plan.",
+      text: "Check the modules you want to use, then click Run. Reply to refine the plan.",
       cls: "vault-ai-plan-hint"
     });
     hint.style.cssText = `
@@ -4620,23 +4684,77 @@ export class ChatView extends ItemView {
     `;
   }
 
-  private async executeProposedPlan(index: number) {
+  private async executeProposedPlan(index: number, selectedTools: string[]) {
     const item = this.chatHistory[index];
     if (!item.proposedPlan) return;
 
-    // 1. Update the item to show it's executing
-    item.proposedPlan.isProposal = false; // Mark as "Approved"
-    item.content = "🚀 *Executing investigation plan...*";
+    // Store the plan and selected tools for direct execution
+    const plan = { ...item.proposedPlan };
+    plan.toolsToCall = selectedTools;
+    plan.isProposal = false;
+
+    // Update the UI
+    item.proposedPlan.isProposal = false;
+    item.content = `🚀 *Executing investigation with: ${selectedTools.join(', ')}...*`;
     item.progress = { message: "Launching investigative modules...", percent: 20 };
     await this.renderMessages();
 
-    // 2. Trigger the orchestration service with a special "Proceed" query
-    // BUT we use the original reasoning/plan context by sending the history
+    // Execute the tools directly using the orchestration service
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: `Running ${selectedTools.length} module(s)...`, percent: 10 }
+    });
+    await this.renderMessages();
+
+    const updateProgress = (message: string, percent: number) => {
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+
     try {
-      await this.handleOrchestrationAgent("Proceed with the investigation plan as proposed.", "");
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
+      // Execute tools in parallel directly
+      updateProgress(`Executing tools: ${selectedTools.join(', ')}...`, 30);
+      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
+        selectedTools,
+        item.savedQuery || this.getLastUserQuery(),
+        "",
+        updateProgress
+      );
+
+      this.activeAbortControllers.delete(assistantIndex);
+
+      // Show tool results for review
+      this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **📊 Generate Analysis & Graph** to proceed.";
+      this.chatHistory[assistantIndex].toolResults = toolResults;
+      this.chatHistory[assistantIndex].savedPlan = plan;
+      this.chatHistory[assistantIndex].savedQuery = item.savedQuery || this.getLastUserQuery();
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+      await this.saveCurrentConversation();
+
     } catch (e) {
-      console.error("Execution failed:", e);
+      this.activeAbortControllers.delete(assistantIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
+
+      this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
     }
+  }
+
+  private getLastUserQuery(): string {
+    for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+      if (this.chatHistory[i].role === "user") return this.chatHistory[i].content;
+    }
+    return "";
   }
   async handleCustomChat(query: string) {
     const assistantIndex = this.chatHistory.length;

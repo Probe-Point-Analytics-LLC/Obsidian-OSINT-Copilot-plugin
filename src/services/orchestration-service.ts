@@ -179,16 +179,32 @@ export class OrchestrationService {
             ? conversationMemory.map(msg => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
             : "No previous conversation.";
 
-        const prompt = `
+        // Check if the user is approving a previously proposed plan
+        const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
+
+        const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
+
+=== CRITICAL RULES ===
+1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
+2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools.
+3. Set "isProposal" to true and list the tools you recommend.
+4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
+5. Your "directResponse" should describe your PLAN, never the answer to the question.
+6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
+
+=== AVAILABLE TOOLS ===
+- "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
+- "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
+- "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
+- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.
+- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.
+
+=== USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
 
-=== INVESTIGATION PLANNING PROTOCOL ===
-If the user's request requires using ANY tools (OSINT_SEARCH, DARK_WEB, etc.) and you have not yet proposed a plan that was approved, you MUST set "isProposal": true and provide a "planSummary" for the user to review. 
-Describe what you intend to do and ask for their feedback or extra modules to add.
-If the user says something like "Proceed", "Go", "Approved", or provides feedback to an existing plan, you should then set "isProposal": false and list the final tools to call.
-
-=== CURRENT GRAPH STATE ===
-${JSON.stringify(graphState, null, 2)}
+=== CURRENT GRAPH STATE (existing entities) ===
+Entities: ${Array.isArray(graphState?.entities) ? graphState.entities.length : 0} nodes
+${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e: any) => `- ${e.type}: ${e.label}`).join('\n') : 'Empty graph'}
 
 === CONVERSATION HISTORY ===
 ${memoryContext}
@@ -196,14 +212,16 @@ ${memoryContext}
 === USER REQUEST ===
 ${query}
 
-Respond ONLY with a valid JSON object.
+${isApproval ? '>>> THE USER IS APPROVING A PREVIOUS PLAN. Set "isProposal": false and list the final tools from the previous plan.' : '>>> THIS IS A NEW REQUEST. You MUST set "isProposal": true and propose tools.'}
+
+Respond with this exact JSON structure:
 {
-  "reasoning": "Explain your thought process",
-  "planSummary": "Summarize the investigation steps for the user (Markdown)",
-  "isProposal": true/false,
-  "toolsToCall": ["DARK_WEB", "..."], 
-  "graphCommands": ["@@create_entity..."], 
-  "directResponse": "Conversational reply summarizing the proposal or answering directly"
+  "reasoning": "Your analysis of the query and why you chose these tools",
+  "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
+  "isProposal": ${isApproval ? 'false' : 'true'},
+  "toolsToCall": ["OSINT_SEARCH"],
+  "graphCommands": [],
+  "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
 }`;
 
         try {
@@ -211,7 +229,7 @@ Respond ONLY with a valid JSON object.
             const responseText = await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
                 true, // Enforce JSON object mode
-                this.plugin.settings.orchestrationModel, // Pass the chosen orchestration model (e.g., gpt-4o)
+                this.plugin.settings.orchestrationModel,
                 undefined, // signal
                 {
                     provider: this.plugin.settings.orchestrationProvider,
@@ -220,36 +238,54 @@ Respond ONLY with a valid JSON object.
                 }
             );
 
+            console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2000));
+
             // Try to extract JSON from the response text
             const match = responseText.match(/\{[\s\S]*\}/);
             if (match) {
-                const plan = JSON.parse(match[0]) as OrchestrationPlan;
+                const rawPlan = JSON.parse(match[0]);
+                console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1000));
 
-                // Set defaults if missing
-                return {
-                    reasoning: plan.reasoning || "No reasoning provided.",
-                    toolsToCall: plan.toolsToCall || [],
-                    graphCommands: plan.graphCommands || [],
-                    directResponse: plan.directResponse,
-                    isProposal: plan.isProposal || false,
-                    planSummary: plan.planSummary
+                // Handle both camelCase and snake_case keys from LLM
+                const plan: OrchestrationPlan = {
+                    reasoning: rawPlan.reasoning || "No reasoning provided.",
+                    toolsToCall: rawPlan.toolsToCall || rawPlan.tools_to_call || [],
+                    graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
+                    directResponse: rawPlan.directResponse || rawPlan.direct_response,
+                    isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,
+                    planSummary: rawPlan.planSummary || rawPlan.plan_summary
                 };
+
+                // GUARD: If this is NOT an approval and the LLM still returned no tools,
+                // force a proposal with OSINT_SEARCH as default
+                if (!isApproval && plan.toolsToCall.length === 0) {
+                    console.warn("[OrchestrationService] LLM returned no tools for a non-approval query. Forcing OSINT_SEARCH proposal.");
+                    plan.isProposal = true;
+                    plan.toolsToCall = ["OSINT_SEARCH"];
+                    plan.planSummary = plan.planSummary || `### Investigation Plan\n1. **OSINT Search** — Search public intelligence sources for: "${query}"\n\n*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`;
+                    plan.directResponse = plan.directResponse || `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`;
+                }
+
+                console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
+                return plan;
             } else {
                 throw new Error("Could not parse JSON from LLM response.");
             }
         } catch (error) {
             console.error("[OrchestrationService] Failed to classify intent:", error);
-            // Fallback plan
+            // Fallback plan - still propose tools instead of giving up
             return {
-                reasoning: "Fallback due to error.",
-                toolsToCall: [],
+                reasoning: "Fallback due to classification error.",
+                toolsToCall: ["OSINT_SEARCH"],
                 graphCommands: [],
-                directResponse: "I encountered an error while trying to process your request."
+                isProposal: true,
+                planSummary: `### Investigation Plan\n1. **OSINT Search** — Search for: "${query}"\n\n*The classifier encountered an issue, but I've defaulted to an OSINT search. Add more tools or click Run.*`,
+                directResponse: `I'll search for intelligence on this topic. You can add DARK_WEB, CORPORATE_REPORTS, or other modules before I begin.`
             };
         }
     }
 
-    private async executeToolsInParallel(tools: string[], query: string, attachmentsContext: string, onProgress: (msg: string, percent: number) => void): Promise<Record<string, any>> {
+    public async executeToolsInParallel(tools: string[], query: string, attachmentsContext: string, onProgress: (msg: string, percent: number) => void): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
 
         const promises = tools.map(async (tool) => {

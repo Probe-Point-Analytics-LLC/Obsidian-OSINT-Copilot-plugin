@@ -11437,16 +11437,30 @@ ${extractedText}`;
     const systemPrompt = this.plugin.settings.orchestrationPrompt || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
     const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
 ${msg.content}`).join("\n\n") : "No previous conversation.";
-    const prompt = `
+    const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
+    const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
+
+=== CRITICAL RULES ===
+1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
+2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools.
+3. Set "isProposal" to true and list the tools you recommend.
+4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
+5. Your "directResponse" should describe your PLAN, never the answer to the question.
+6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
+
+=== AVAILABLE TOOLS ===
+- "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
+- "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
+- "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
+- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.
+- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.
+
+=== USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
 
-=== INVESTIGATION PLANNING PROTOCOL ===
-If the user's request requires using ANY tools (OSINT_SEARCH, DARK_WEB, etc.) and you have not yet proposed a plan that was approved, you MUST set "isProposal": true and provide a "planSummary" for the user to review. 
-Describe what you intend to do and ask for their feedback or extra modules to add.
-If the user says something like "Proceed", "Go", "Approved", or provides feedback to an existing plan, you should then set "isProposal": false and list the final tools to call.
-
-=== CURRENT GRAPH STATE ===
-${JSON.stringify(graphState, null, 2)}
+=== CURRENT GRAPH STATE (existing entities) ===
+Entities: ${Array.isArray(graphState?.entities) ? graphState.entities.length : 0} nodes
+${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e) => `- ${e.type}: ${e.label}`).join("\n") : "Empty graph"}
 
 === CONVERSATION HISTORY ===
 ${memoryContext}
@@ -11454,14 +11468,16 @@ ${memoryContext}
 === USER REQUEST ===
 ${query}
 
-Respond ONLY with a valid JSON object.
+${isApproval ? '>>> THE USER IS APPROVING A PREVIOUS PLAN. Set "isProposal": false and list the final tools from the previous plan.' : '>>> THIS IS A NEW REQUEST. You MUST set "isProposal": true and propose tools.'}
+
+Respond with this exact JSON structure:
 {
-  "reasoning": "Explain your thought process",
-  "planSummary": "Summarize the investigation steps for the user (Markdown)",
-  "isProposal": true/false,
-  "toolsToCall": ["DARK_WEB", "..."], 
-  "graphCommands": ["@@create_entity..."], 
-  "directResponse": "Conversational reply summarizing the proposal or answering directly"
+  "reasoning": "Your analysis of the query and why you chose these tools",
+  "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
+  "isProposal": ${isApproval ? "false" : "true"},
+  "toolsToCall": ["OSINT_SEARCH"],
+  "graphCommands": [],
+  "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
 }`;
     try {
       const responseText = await this.plugin.graphApiService.callRemoteModel(
@@ -11469,7 +11485,6 @@ Respond ONLY with a valid JSON object.
         true,
         // Enforce JSON object mode
         this.plugin.settings.orchestrationModel,
-        // Pass the chosen orchestration model (e.g., gpt-4o)
         void 0,
         // signal
         {
@@ -11478,27 +11493,46 @@ Respond ONLY with a valid JSON object.
           apiKey: this.plugin.settings.orchestrationApiKey
         }
       );
+      console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2e3));
       const match = responseText.match(/\{[\s\S]*\}/);
       if (match) {
-        const plan = JSON.parse(match[0]);
-        return {
-          reasoning: plan.reasoning || "No reasoning provided.",
-          toolsToCall: plan.toolsToCall || [],
-          graphCommands: plan.graphCommands || [],
-          directResponse: plan.directResponse,
-          isProposal: plan.isProposal || false,
-          planSummary: plan.planSummary
+        const rawPlan = JSON.parse(match[0]);
+        console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1e3));
+        const plan = {
+          reasoning: rawPlan.reasoning || "No reasoning provided.",
+          toolsToCall: rawPlan.toolsToCall || rawPlan.tools_to_call || [],
+          graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
+          directResponse: rawPlan.directResponse || rawPlan.direct_response,
+          isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,
+          planSummary: rawPlan.planSummary || rawPlan.plan_summary
         };
+        if (!isApproval && plan.toolsToCall.length === 0) {
+          console.warn("[OrchestrationService] LLM returned no tools for a non-approval query. Forcing OSINT_SEARCH proposal.");
+          plan.isProposal = true;
+          plan.toolsToCall = ["OSINT_SEARCH"];
+          plan.planSummary = plan.planSummary || `### Investigation Plan
+1. **OSINT Search** \u2014 Search public intelligence sources for: "${query}"
+
+*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`;
+          plan.directResponse = plan.directResponse || `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`;
+        }
+        console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
+        return plan;
       } else {
         throw new Error("Could not parse JSON from LLM response.");
       }
     } catch (error) {
       console.error("[OrchestrationService] Failed to classify intent:", error);
       return {
-        reasoning: "Fallback due to error.",
-        toolsToCall: [],
+        reasoning: "Fallback due to classification error.",
+        toolsToCall: ["OSINT_SEARCH"],
         graphCommands: [],
-        directResponse: "I encountered an error while trying to process your request."
+        isProposal: true,
+        planSummary: `### Investigation Plan
+1. **OSINT Search** \u2014 Search for: "${query}"
+
+*The classifier encountered an issue, but I've defaulted to an OSINT search. Add more tools or click Run.*`,
+        directResponse: `I'll search for intelligence on this topic. You can add DARK_WEB, CORPORATE_REPORTS, or other modules before I begin.`
       };
     }
   }
@@ -15223,6 +15257,7 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
       this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
+      this.chatHistory[assistantIndex].savedQuery = query;
       this.chatHistory[assistantIndex].progress = void 0;
       await this.renderMessages();
     } catch (e) {
@@ -15417,26 +15452,81 @@ ${fileList}` : fileList;
       const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
       import_obsidian14.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
-    const toolList = planDiv.createEl("ul", { cls: "vault-ai-plan-tools" });
-    toolList.style.fontSize = "small";
-    if (plan.toolsToCall && plan.toolsToCall.length > 0) {
-      plan.toolsToCall.forEach((tool) => {
-        toolList.createEl("li", { text: `\u{1F50D} Module: ${tool.replace("_", " ")}` });
+    const allTools = [
+      { id: "OSINT_SEARCH", icon: "\u{1F310}", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
+      { id: "DARK_WEB", icon: "\u{1F578}\uFE0F", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
+      { id: "CORPORATE_REPORTS", icon: "\u{1F3E2}", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
+      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
+      { id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Process attached files/links into the graph" }
+    ];
+    const proposedTools = new Set(plan.toolsToCall || []);
+    const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
+    toolSection.style.marginTop = "12px";
+    toolSection.createEl("strong", { text: "Select investigation modules:" }).style.cssText = `
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+    `;
+    const checkboxes = /* @__PURE__ */ new Map();
+    for (const tool of allTools) {
+      const row = toolSection.createDiv();
+      row.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        margin-bottom: 4px;
+        cursor: pointer;
+        transition: background 0.15s;
+      `;
+      row.addEventListener("mouseenter", () => {
+        row.style.background = "var(--background-modifier-hover)";
+      });
+      row.addEventListener("mouseleave", () => {
+        row.style.background = "transparent";
+      });
+      const cb = row.createEl("input", { type: "checkbox" });
+      cb.checked = proposedTools.has(tool.id);
+      cb.style.cssText = "margin: 0; cursor: pointer;";
+      checkboxes.set(tool.id, cb);
+      const labelDiv = row.createDiv();
+      labelDiv.style.cssText = "flex: 1; cursor: pointer;";
+      labelDiv.createEl("span", { text: `${tool.icon} ${tool.label}` }).style.cssText = "font-weight: 600; font-size: 13px;";
+      labelDiv.createEl("span", { text: ` \u2014 ${tool.desc}` }).style.cssText = "font-size: 12px; color: var(--text-muted);";
+      row.addEventListener("click", (e) => {
+        if (e.target !== cb) {
+          cb.checked = !cb.checked;
+        }
       });
     }
     const actionRow = planDiv.createDiv();
-    actionRow.style.display = "flex";
-    actionRow.style.gap = "12px";
-    actionRow.style.marginTop = "15px";
+    actionRow.style.cssText = `
+      display: flex;
+      gap: 12px;
+      margin-top: 15px;
+      align-items: center;
+    `;
     const executeBtn = actionRow.createEl("button", {
       text: "\u{1F680} Run Investigation",
       cls: "mod-cta"
     });
     executeBtn.addEventListener("click", () => {
-      void this.executeProposedPlan(index);
+      const selectedTools = [];
+      checkboxes.forEach((cb, toolId) => {
+        if (cb.checked)
+          selectedTools.push(toolId);
+      });
+      if (selectedTools.length === 0) {
+        new import_obsidian14.Notice("Please select at least one investigation module.");
+        return;
+      }
+      executeBtn.disabled = true;
+      executeBtn.textContent = "\u23F3 Executing...";
+      void this.executeProposedPlan(index, selectedTools);
     });
     const hint = planDiv.createEl("small", {
-      text: "Reply to this message to add modules or refine the plan.",
+      text: "Check the modules you want to use, then click Run. Reply to refine the plan.",
       cls: "vault-ai-plan-hint"
     });
     hint.style.cssText = `
@@ -15446,19 +15536,64 @@ ${fileList}` : fileList;
       font-style: italic;
     `;
   }
-  async executeProposedPlan(index) {
+  async executeProposedPlan(index, selectedTools) {
     const item = this.chatHistory[index];
     if (!item.proposedPlan)
       return;
+    const plan = { ...item.proposedPlan };
+    plan.toolsToCall = selectedTools;
+    plan.isProposal = false;
     item.proposedPlan.isProposal = false;
-    item.content = "\u{1F680} *Executing investigation plan...*";
+    item.content = `\u{1F680} *Executing investigation with: ${selectedTools.join(", ")}...*`;
     item.progress = { message: "Launching investigative modules...", percent: 20 };
     await this.renderMessages();
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: `Running ${selectedTools.length} module(s)...`, percent: 10 }
+    });
+    await this.renderMessages();
+    const updateProgress = (message, percent) => {
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
     try {
-      await this.handleOrchestrationAgent("Proceed with the investigation plan as proposed.", "");
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+      updateProgress(`Executing tools: ${selectedTools.join(", ")}...`, 30);
+      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
+        selectedTools,
+        item.savedQuery || this.getLastUserQuery(),
+        "",
+        updateProgress
+      );
+      this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.";
+      this.chatHistory[assistantIndex].toolResults = toolResults;
+      this.chatHistory[assistantIndex].savedPlan = plan;
+      this.chatHistory[assistantIndex].savedQuery = item.savedQuery || this.getLastUserQuery();
+      this.chatHistory[assistantIndex].progress = void 0;
+      await this.renderMessages();
+      await this.saveCurrentConversation();
     } catch (e) {
-      console.error("Execution failed:", e);
+      this.activeAbortControllers.delete(assistantIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+        return;
+      this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
+      this.chatHistory[assistantIndex].progress = void 0;
+      await this.renderMessages();
     }
+  }
+  getLastUserQuery() {
+    for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+      if (this.chatHistory[i].role === "user")
+        return this.chatHistory[i].content;
+    }
+    return "";
   }
   async handleCustomChat(query) {
     const assistantIndex = this.chatHistory.length;
