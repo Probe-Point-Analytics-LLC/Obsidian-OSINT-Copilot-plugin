@@ -2189,18 +2189,19 @@ export interface ChatHistoryItem {
   notes?: IndexedNote[];
   jobId?: string; // For DarkWeb investigations
   status?: string; // For DarkWeb investigation status
-  progress?: { message: string, percent: number }; // For DarkWeb investigation progress
-  query?: string; // For DarkWeb investigation query (used for saving reports)
-  intermediateResults?: string[]; // For report generation intermediate results
-  createdEntities?: CreatedEntityInfo[]; // For entity generation - clickable graph view links
-  connectionsCreated?: number; // Number of relationships created
-  reportFilePath?: string; // For report generation - path to the generated report file
-  usedEntities?: { id: string, label: string, type: string }[]; // Pinpointed graph entities
-  proposedModifications?: string[]; // Round 4: For persistent orchestration tool results
-  proposedPlan?: OrchestrationPlan; // Round 8: Interactive Investigation Planning
-  toolResults?: Record<string, any>; // Step-by-step: raw tool results for review
-  savedPlan?: OrchestrationPlan; // Step-by-step: saved plan for continuation
-  savedQuery?: string; // Step-by-step: original query for continuation
+  progress?: { message: string, percent: number }; // For legacy/single process progress
+  multiProgress?: Record<string, { message: string, percent: number }>; // For concurrent orchestration tools
+  query?: string; // For DarkWeb investigation query
+  intermediateResults?: string[]; // For report generation
+  createdEntities?: CreatedEntityInfo[]; // For entity generation
+  connectionsCreated?: number;
+  reportFilePath?: string;
+  usedEntities?: { id: string, label: string, type: string }[];
+  proposedModifications?: string[];
+  proposedPlan?: OrchestrationPlan;
+  toolResults?: Record<string, any>;
+  savedPlan?: OrchestrationPlan;
+  savedQuery?: string;
 }
 
 export class ChatView extends ItemView {
@@ -3574,6 +3575,54 @@ export class ChatView extends ItemView {
         });
       }
 
+      // NEW: Show multiple progress bars for concurrent investigation tools
+      if (item.role === "assistant" && item.multiProgress && Object.keys(item.multiProgress).length > 0) {
+        const multiProgressContainer = messageDiv.createDiv("vault-ai-multi-progress-container");
+        multiProgressContainer.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin: 12px 0;
+          padding: 12px;
+          background: var(--background-secondary);
+          border-radius: 8px;
+          border: 1px solid var(--background-modifier-border);
+        `;
+
+        for (const [tool, progress] of Object.entries(item.multiProgress)) {
+          const toolRow = multiProgressContainer.createDiv("vault-ai-tool-progress-row");
+          toolRow.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
+
+          const labelRow = toolRow.createDiv();
+          labelRow.style.cssText = "display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: bold;";
+          labelRow.createEl("span", { text: tool });
+          labelRow.createEl("span", { text: `${progress.percent}%`, cls: "vault-ai-progress-percent" });
+
+          const progressTrack = toolRow.createDiv("vault-ai-progress-track");
+          progressTrack.style.cssText = `
+            height: 6px;
+            background: var(--background-modifier-border);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+          `;
+
+          const progressFill = progressTrack.createDiv("vault-ai-progress-fill");
+          progressFill.style.cssText = `
+            height: 100%;
+            width: ${progress.percent}%;
+            background: var(--interactive-accent);
+            transition: width 0.3s ease-in-out;
+          `;
+
+          const statusText = toolRow.createEl("div", {
+            cls: "vault-ai-progress-status",
+            text: progress.message
+          });
+          statusText.style.cssText = "font-size: 10px; color: var(--text-muted);";
+        }
+      }
+
       // Show intermediate results for report generation
       if (item.role === "assistant" && item.intermediateResults && item.intermediateResults.length > 0) {
         const resultsContainer = messageDiv.createDiv("vault-ai-intermediate-results-container");
@@ -4102,6 +4151,87 @@ export class ChatView extends ItemView {
     // Don't remove results container if no new results - keep the last known results
   }
 
+  updateMultiProgressBar(messageIndex: number, toolName: string, progress: { message: string, percent: number }) {
+    const messageDiv = this.messagesContainer.querySelector(
+      `.vault-ai-chat-message[data-message-index="${messageIndex}"]`
+    ) as HTMLElement;
+    if (!messageDiv) return;
+
+    let multiContainer = messageDiv.querySelector(".vault-ai-multi-progress-container") as HTMLElement;
+    if (!multiContainer) {
+      // Create it if it doesn't exist (fallback)
+      const contentDiv = messageDiv.querySelector(".vault-ai-chat-content") as HTMLElement;
+      multiContainer = document.createElement("div");
+      multiContainer.className = "vault-ai-multi-progress-container";
+      if (contentDiv) {
+        contentDiv.insertAdjacentElement("afterend", multiContainer);
+      } else {
+        messageDiv.appendChild(multiContainer);
+      }
+    }
+
+    let toolRow = multiContainer.querySelector(`.vault-ai-tool-progress-row[data-tool="${toolName}"]`) as HTMLElement;
+    if (!toolRow) {
+      toolRow = multiContainer.createDiv('vault-ai-tool-progress-row');
+      toolRow.setAttribute('data-tool', toolName);
+      toolRow.style.marginBottom = '12px';
+      toolRow.style.padding = '8px';
+      toolRow.style.background = 'var(--background-secondary-alt)';
+      toolRow.style.borderRadius = '6px';
+      toolRow.style.border = '1px solid var(--background-modifier-border)';
+
+      const header = toolRow.createDiv('vault-ai-tool-header');
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.marginBottom = '6px';
+
+      const label = header.createDiv('vault-ai-tool-label');
+      label.textContent = toolName;
+      label.style.fontSize = '12px';
+      label.style.fontWeight = '600';
+      label.style.color = 'var(--text-normal)';
+
+      const percentText = header.createDiv('vault-ai-tool-percent');
+      percentText.style.fontSize = '11px';
+      percentText.style.color = 'var(--interactive-accent)';
+
+      const barContainer = toolRow.createDiv('vault-ai-tool-bar-container');
+      barContainer.style.height = '6px';
+      barContainer.style.background = 'var(--background-modifier-border)';
+      barContainer.style.borderRadius = '3px';
+      barContainer.style.overflow = 'hidden';
+      barContainer.style.position = 'relative';
+
+      const bar = barContainer.createDiv('vault-ai-tool-bar-fill');
+      bar.style.height = '100%';
+      bar.style.background = 'var(--interactive-accent)';
+      bar.style.width = '0%';
+      bar.style.transition = 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+
+      const status = toolRow.createDiv('vault-ai-tool-status');
+      status.style.fontSize = '11px';
+      status.style.color = 'var(--text-muted)';
+      status.style.marginTop = '6px';
+      status.style.whiteSpace = 'nowrap';
+      status.style.overflow = 'hidden';
+      status.style.textOverflow = 'ellipsis';
+    }
+
+    const bar = toolRow.querySelector('.vault-ai-tool-bar-fill') as HTMLElement;
+    const status = toolRow.querySelector('.vault-ai-tool-status') as HTMLElement;
+    const percentText = toolRow.querySelector('.vault-ai-tool-percent') as HTMLElement;
+
+    if (bar) bar.style.width = `${progress.percent}%`;
+    if (status) status.textContent = progress.message;
+    if (percentText) percentText.textContent = `${progress.percent}%`;
+
+    // Smooth pulse animation if it's 100%
+    if (progress.percent === 100 && bar) {
+      bar.style.background = 'var(--text-success)';
+    }
+  }
+
+
   async handleCancel(index: number) {
     const controller = this.activeAbortControllers.get(index);
     if (!controller) return;
@@ -4481,10 +4611,10 @@ export class ChatView extends ItemView {
     `;
 
     const toolIcons: Record<string, string> = {
-      "DARK_WEB": "🕸️ Dark Web",
-      "OSINT_SEARCH": "🌐 OSINT Search",
-      "CORPORATE_REPORTS": "🏢 Corporate Reports",
-      "LOCAL_VAULT": "📁 Local Vault",
+      "DARK_WEB": "🕸️ DarkWeb Search",
+      "OSINT_SEARCH": "🌐 Digital Footprint",
+      "CORPORATE_REPORTS": "🏢 Companies & People",
+      "LOCAL_VAULT": "📁 Local Search",
       "EXTRACT_TO_GRAPH": "🏷️ Graph Extraction"
     };
 
@@ -4746,14 +4876,34 @@ export class ChatView extends ItemView {
     this.chatHistory.push({
       role: "assistant",
       content: "",
-      progress: { message: `Running ${selectedTools.length} module(s)...`, percent: 10 }
+      multiProgress: {}
     });
+
+    // Initialize multiProgress for each selected tool with user-friendly names
+    const toolToDisplayName: Record<string, string> = {
+      "DARK_WEB": "DarkWeb Search",
+      "OSINT_SEARCH": "Digital Footprint",
+      "CORPORATE_REPORTS": "Companies & People",
+      "LOCAL_VAULT": "Local Search"
+    };
+
+    selectedTools.forEach(tool => {
+      const displayName = toolToDisplayName[tool] || tool;
+      this.chatHistory[assistantIndex].multiProgress![displayName] = {
+        message: "Initializing...",
+        percent: 5
+      };
+    });
+
     await this.renderMessages();
 
-    const updateProgress = (message: string, percent: number) => {
+    const updateProgress = (tool: string, message: string, percent: number) => {
       if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
+        if (!this.chatHistory[assistantIndex].multiProgress) {
+          this.chatHistory[assistantIndex].multiProgress = {};
+        }
+        this.chatHistory[assistantIndex].multiProgress![tool] = { message, percent };
+        this.updateMultiProgressBar(assistantIndex, tool, { message, percent });
       }
     };
 
@@ -4764,7 +4914,7 @@ export class ChatView extends ItemView {
       // Execute tools in parallel directly
       const queryForTools = item.savedQuery || this.getLastUserQuery();
       console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
-      updateProgress(`Executing tools: ${selectedTools.join(', ')}...`, 30);
+
       const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
         selectedTools,
         queryForTools,
