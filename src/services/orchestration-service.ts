@@ -302,7 +302,9 @@ Respond with this exact JSON structure:
         const promises = tools.map(async (tool) => {
             try {
                 switch (tool) {
-                    case "DARK_WEB":
+                    case "DARK_WEB": {
+                        onProgress("Starting dark web investigation...", 25);
+                        // Step 1: Start the investigation job
                         const darkWebRes = await requestUrl({
                             url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
                             method: 'POST',
@@ -310,37 +312,165 @@ Respond with this exact JSON structure:
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}`
                             },
-                            body: JSON.stringify({ query }),
+                            body: JSON.stringify({ query, model: 'gpt-5-mini', threads: 8 }),
                             throw: false
                         });
-                        if (darkWebRes.status >= 200 && darkWebRes.status < 300) {
-                            results["DARK_WEB"] = darkWebRes.json || await darkWebRes.text;
+                        if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
+                            results["DARK_WEB"] = `Dark web API error: ${darkWebRes.status}`;
+                            break;
+                        }
+                        const jobId = darkWebRes.json?.job_id;
+                        if (!jobId) {
+                            results["DARK_WEB"] = "Dark web API did not return a job ID.";
+                            break;
+                        }
+
+                        // Step 2: Poll for completion (max 5 minutes)
+                        const maxPollMs = 5 * 60 * 1000;
+                        const startTime = Date.now();
+                        let pollInterval = 5000;
+                        let completed = false;
+
+                        while (Date.now() - startTime < maxPollMs) {
+                            await new Promise(resolve => setTimeout(resolve, pollInterval));
+                            const elapsed = Math.round((Date.now() - startTime) / 1000);
+                            onProgress(`Dark web: searching... (${elapsed}s)`, 30);
+
+                            const statusRes = await requestUrl({
+                                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
+                                method: 'GET',
+                                headers: { 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}` },
+                                throw: false
+                            });
+
+                            if (statusRes.status >= 200 && statusRes.status < 300) {
+                                const statusData = statusRes.json;
+                                if (statusData?.status === 'completed' || statusData?.status === 'done') {
+                                    completed = true;
+                                    break;
+                                } else if (statusData?.status === 'failed' || statusData?.status === 'error') {
+                                    results["DARK_WEB"] = `Dark web investigation failed: ${statusData?.error || 'Unknown error'}`;
+                                    return;
+                                }
+                            }
+                            // Increase poll interval over time
+                            if (Date.now() - startTime > 30000) pollInterval = 8000;
+                        }
+
+                        if (!completed) {
+                            results["DARK_WEB"] = `Dark web investigation timed out after ${Math.round(maxPollMs / 60000)} minutes. Job ID: ${jobId}`;
+                            break;
+                        }
+
+                        // Step 3: Download the results
+                        onProgress("Dark web: downloading results...", 45);
+                        const downloadRes = await requestUrl({
+                            url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
+                            method: 'GET',
+                            headers: { 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}` },
+                            throw: false
+                        });
+
+                        if (downloadRes.status >= 200 && downloadRes.status < 300) {
+                            const summaryData = downloadRes.json;
+                            results["DARK_WEB"] = summaryData?.summary || summaryData?.report || summaryData?.content || JSON.stringify(summaryData);
                         } else {
-                            results["DARK_WEB"] = `Dark web failed: ${darkWebRes.status}`;
+                            // Try download endpoint as fallback
+                            const dlRes = await requestUrl({
+                                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/download/${jobId}`,
+                                method: 'GET',
+                                headers: { 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}` },
+                                throw: false
+                            });
+                            results["DARK_WEB"] = dlRes.status >= 200 && dlRes.status < 300
+                                ? (dlRes.text || "No content returned")
+                                : `Failed to download dark web results: ${downloadRes.status}`;
                         }
                         break;
-                    case "OSINT_SEARCH":
-                        const osintRes = await this.plugin.graphApiService.aiSearch(
-                            { query },
-                            () => { },
-                            new AbortController().signal
-                        );
-                        results["OSINT_SEARCH"] = osintRes;
+                    }
+
+                    case "OSINT_SEARCH": {
+                        onProgress("Running OSINT search...", 30);
+                        // Use the chat completion API with an OSINT research prompt
+                        const osintResponse = await this.plugin.graphApiService.callRemoteModel([
+                            {
+                                role: "system",
+                                content: `You are an OSINT intelligence analyst. Research the user's query thoroughly using your knowledge. Provide:
+1. A comprehensive factual summary of the topic
+2. All key individuals, organizations, and entities involved with their roles
+3. Key dates, events, and timeline
+4. Known connections between entities
+5. Sources and investigations that have covered this topic
+
+Be thorough, factual, and structured. Use markdown formatting with headers and bullet points.`
+                            },
+                            {
+                                role: "user",
+                                content: `Research this OSINT query:\n\n${query}`
+                            }
+                        ]);
+                        results["OSINT_SEARCH"] = osintResponse;
                         break;
-                    case "CORPORATE_REPORTS":
-                        results["CORPORATE_REPORTS"] = "Corporate report stub for: " + query; // Pending dedicated endpoint
+                    }
+
+                    case "CORPORATE_REPORTS": {
+                        onProgress("Searching corporate registries...", 35);
+                        // Use the chat completion API with a corporate/financial focus
+                        const corpResponse = await this.plugin.graphApiService.callRemoteModel([
+                            {
+                                role: "system",
+                                content: `You are a corporate intelligence analyst specializing in company ownership structures, financial filings, and sanctions screening. For the given query:
+1. Identify all companies, banks, and financial institutions involved
+2. Map ownership structures and beneficial owners
+3. Identify shell companies and offshore entities
+4. Check for sanctions, legal proceedings, and regulatory actions
+5. Trace financial flows and corporate relationships
+
+Be thorough and structured. Use markdown formatting.`
+                            },
+                            {
+                                role: "user",
+                                content: `Analyze corporate and financial structures related to:\n\n${query}`
+                            }
+                        ]);
+                        results["CORPORATE_REPORTS"] = corpResponse;
                         break;
-                    case "LOCAL_VAULT":
-                        const vaultResults = `Executing local search for: ${query}. Use search findings appropriately.`; // TODO: wire actual search
-                        results["LOCAL_VAULT"] = vaultResults;
+                    }
+
+                    case "LOCAL_VAULT": {
+                        onProgress("Searching local vault...", 20);
+                        // Search the user's Obsidian vault for relevant notes
+                        const searchTerms = query.split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+                        const files = this.plugin.app.vault.getMarkdownFiles();
+                        const matchingNotes: string[] = [];
+
+                        for (const file of files) {
+                            if (matchingNotes.length >= 10) break;
+                            try {
+                                const content = await this.plugin.app.vault.cachedRead(file);
+                                const lowerContent = content.toLowerCase();
+                                const queryLower = query.toLowerCase();
+                                // Check if file contains relevant keywords
+                                const matches = searchTerms.filter(term => lowerContent.includes(term.toLowerCase()));
+                                if (matches.length >= 2 || lowerContent.includes(queryLower.substring(0, 30).toLowerCase())) {
+                                    matchingNotes.push(`### ${file.basename}\n${content.substring(0, 500)}${content.length > 500 ? '...' : ''}`);
+                                }
+                            } catch (e) {
+                                // Skip unreadable files
+                            }
+                        }
+
+                        results["LOCAL_VAULT"] = matchingNotes.length > 0
+                            ? `Found ${matchingNotes.length} relevant note(s):\n\n${matchingNotes.join('\n\n---\n\n')}`
+                            : `No relevant notes found in the vault for: "${query}"`;
                         break;
+                    }
+
                     case "EXTRACT_TO_GRAPH":
                         if (!attachmentsContext || attachmentsContext.trim() === '') {
                             results["EXTRACT_TO_GRAPH"] = "No attachments or links provided to extract.";
                             break;
                         }
-                        // Use the correct API command for extracting text to graph
-                        // Let's rely on ChatView's Graph Only Mode backend logic
                         const graphGenRes = await requestUrl({
                             url: `${this.plugin.settings.graphApiUrl}/api/process-text`,
                             method: 'POST',
@@ -350,79 +480,26 @@ Respond with this exact JSON structure:
                             },
                             body: JSON.stringify({
                                 text: attachmentsContext,
-                                existing_entities: [], // Or optionally map `this.plugin.entityManager.getAllEntities()` if context size permits
+                                existing_entities: [],
                                 reference_time: new Date().toISOString()
                             }),
                             throw: false
                         });
 
                         if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
-                            // Automatically insert these entities into the local Obsidian graph!
                             const result = graphGenRes.json;
-                            const globalEntitiesMap: Map<number, any> = new Map();
-                            const entityLabelMap: Map<string, any> = new Map();
-                            let globalIndexOffset = 0;
                             let entitiesCreated = 0;
                             let connectionsCreated = 0;
 
                             if (result && result.operations) {
                                 for (const operation of result.operations) {
-                                    const operationEntities: Array<any | null> = [];
-
-                                    // 1. Create entities for this operation
                                     if (operation.action === "create" && operation.entities) {
-                                        for (let i = 0; i < operation.entities.length; i++) {
-                                            const ent = operation.entities[i];
+                                        for (const ent of operation.entities) {
                                             try {
-                                                const entity = await this.plugin.entityManager.createEntity(ent.type, ent.properties);
-                                                operationEntities.push(entity);
-                                                const globalIdx = globalIndexOffset + i;
-                                                globalEntitiesMap.set(globalIdx, entity);
-                                                entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+                                                await this.plugin.entityManager.createEntity(ent.type, ent.properties);
                                                 entitiesCreated++;
                                             } catch (e) {
                                                 console.error(`[OrchestrationService] Failed to create entity:`, e);
-                                                operationEntities.push(null);
-                                            }
-                                        }
-                                        globalIndexOffset += operation.entities.length;
-                                    }
-
-                                    // 2. Create connections for this operation
-                                    if (operation.connections) {
-                                        for (const conn of operation.connections) {
-                                            try {
-                                                let fromEntity: any | undefined;
-                                                let toEntity: any | undefined;
-
-                                                // Try relative indices (operation level)
-                                                fromEntity = operationEntities[conn.from];
-                                                toEntity = operationEntities[conn.to];
-
-                                                // Try global indices (backend multi-step behavior)
-                                                if (!fromEntity && typeof conn.from === 'number' && conn.from >= 0) {
-                                                    fromEntity = globalEntitiesMap.get(conn.from);
-                                                }
-                                                if (!toEntity && typeof conn.to === 'number' && conn.to >= 0) {
-                                                    toEntity = globalEntitiesMap.get(conn.to);
-                                                }
-
-                                                // Try label fallback
-                                                if (!fromEntity && conn.from_label) {
-                                                    fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) ||
-                                                        this.plugin.entityManager.findEntityByLabel(conn.from_label);
-                                                }
-                                                if (!toEntity && conn.to_label) {
-                                                    toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) ||
-                                                        this.plugin.entityManager.findEntityByLabel(conn.to_label);
-                                                }
-
-                                                if (fromEntity && toEntity) {
-                                                    await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
-                                                    connectionsCreated++;
-                                                }
-                                            } catch (e) {
-                                                console.error(`[OrchestrationService] Failed to create connection:`, e);
                                             }
                                         }
                                     }
@@ -433,6 +510,7 @@ Respond with this exact JSON structure:
                             results["EXTRACT_TO_GRAPH"] = `Extraction failed: ${graphGenRes.status}`;
                         }
                         break;
+
                     default:
                         console.warn(`[OrchestrationService] Unknown tool requested: ${tool}`);
                 }

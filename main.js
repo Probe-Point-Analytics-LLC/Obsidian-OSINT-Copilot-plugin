@@ -11546,7 +11546,8 @@ Respond with this exact JSON structure:
     const promises = tools.map(async (tool) => {
       try {
         switch (tool) {
-          case "DARK_WEB":
+          case "DARK_WEB": {
+            onProgress("Starting dark web investigation...", 25);
             const darkWebRes = await (0, import_obsidian12.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
               method: "POST",
@@ -11554,31 +11555,143 @@ Respond with this exact JSON structure:
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`
               },
-              body: JSON.stringify({ query }),
+              body: JSON.stringify({ query, model: "gpt-5-mini", threads: 8 }),
               throw: false
             });
-            if (darkWebRes.status >= 200 && darkWebRes.status < 300) {
-              results["DARK_WEB"] = darkWebRes.json || await darkWebRes.text;
+            if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
+              results["DARK_WEB"] = `Dark web API error: ${darkWebRes.status}`;
+              break;
+            }
+            const jobId = darkWebRes.json?.job_id;
+            if (!jobId) {
+              results["DARK_WEB"] = "Dark web API did not return a job ID.";
+              break;
+            }
+            const maxPollMs = 5 * 60 * 1e3;
+            const startTime = Date.now();
+            let pollInterval = 5e3;
+            let completed = false;
+            while (Date.now() - startTime < maxPollMs) {
+              await new Promise((resolve) => setTimeout(resolve, pollInterval));
+              const elapsed = Math.round((Date.now() - startTime) / 1e3);
+              onProgress(`Dark web: searching... (${elapsed}s)`, 30);
+              const statusRes = await (0, import_obsidian12.requestUrl)({
+                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
+                method: "GET",
+                headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
+                throw: false
+              });
+              if (statusRes.status >= 200 && statusRes.status < 300) {
+                const statusData = statusRes.json;
+                if (statusData?.status === "completed" || statusData?.status === "done") {
+                  completed = true;
+                  break;
+                } else if (statusData?.status === "failed" || statusData?.status === "error") {
+                  results["DARK_WEB"] = `Dark web investigation failed: ${statusData?.error || "Unknown error"}`;
+                  return;
+                }
+              }
+              if (Date.now() - startTime > 3e4)
+                pollInterval = 8e3;
+            }
+            if (!completed) {
+              results["DARK_WEB"] = `Dark web investigation timed out after ${Math.round(maxPollMs / 6e4)} minutes. Job ID: ${jobId}`;
+              break;
+            }
+            onProgress("Dark web: downloading results...", 45);
+            const downloadRes = await (0, import_obsidian12.requestUrl)({
+              url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
+              method: "GET",
+              headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
+              throw: false
+            });
+            if (downloadRes.status >= 200 && downloadRes.status < 300) {
+              const summaryData = downloadRes.json;
+              results["DARK_WEB"] = summaryData?.summary || summaryData?.report || summaryData?.content || JSON.stringify(summaryData);
             } else {
-              results["DARK_WEB"] = `Dark web failed: ${darkWebRes.status}`;
+              const dlRes = await (0, import_obsidian12.requestUrl)({
+                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/download/${jobId}`,
+                method: "GET",
+                headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
+                throw: false
+              });
+              results["DARK_WEB"] = dlRes.status >= 200 && dlRes.status < 300 ? dlRes.text || "No content returned" : `Failed to download dark web results: ${downloadRes.status}`;
             }
             break;
-          case "OSINT_SEARCH":
-            const osintRes = await this.plugin.graphApiService.aiSearch(
-              { query },
-              () => {
+          }
+          case "OSINT_SEARCH": {
+            onProgress("Running OSINT search...", 30);
+            const osintResponse = await this.plugin.graphApiService.callRemoteModel([
+              {
+                role: "system",
+                content: `You are an OSINT intelligence analyst. Research the user's query thoroughly using your knowledge. Provide:
+1. A comprehensive factual summary of the topic
+2. All key individuals, organizations, and entities involved with their roles
+3. Key dates, events, and timeline
+4. Known connections between entities
+5. Sources and investigations that have covered this topic
+
+Be thorough, factual, and structured. Use markdown formatting with headers and bullet points.`
               },
-              new AbortController().signal
-            );
-            results["OSINT_SEARCH"] = osintRes;
+              {
+                role: "user",
+                content: `Research this OSINT query:
+
+${query}`
+              }
+            ]);
+            results["OSINT_SEARCH"] = osintResponse;
             break;
-          case "CORPORATE_REPORTS":
-            results["CORPORATE_REPORTS"] = "Corporate report stub for: " + query;
+          }
+          case "CORPORATE_REPORTS": {
+            onProgress("Searching corporate registries...", 35);
+            const corpResponse = await this.plugin.graphApiService.callRemoteModel([
+              {
+                role: "system",
+                content: `You are a corporate intelligence analyst specializing in company ownership structures, financial filings, and sanctions screening. For the given query:
+1. Identify all companies, banks, and financial institutions involved
+2. Map ownership structures and beneficial owners
+3. Identify shell companies and offshore entities
+4. Check for sanctions, legal proceedings, and regulatory actions
+5. Trace financial flows and corporate relationships
+
+Be thorough and structured. Use markdown formatting.`
+              },
+              {
+                role: "user",
+                content: `Analyze corporate and financial structures related to:
+
+${query}`
+              }
+            ]);
+            results["CORPORATE_REPORTS"] = corpResponse;
             break;
-          case "LOCAL_VAULT":
-            const vaultResults = `Executing local search for: ${query}. Use search findings appropriately.`;
-            results["LOCAL_VAULT"] = vaultResults;
+          }
+          case "LOCAL_VAULT": {
+            onProgress("Searching local vault...", 20);
+            const searchTerms = query.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
+            const files = this.plugin.app.vault.getMarkdownFiles();
+            const matchingNotes = [];
+            for (const file of files) {
+              if (matchingNotes.length >= 10)
+                break;
+              try {
+                const content = await this.plugin.app.vault.cachedRead(file);
+                const lowerContent = content.toLowerCase();
+                const queryLower = query.toLowerCase();
+                const matches = searchTerms.filter((term) => lowerContent.includes(term.toLowerCase()));
+                if (matches.length >= 2 || lowerContent.includes(queryLower.substring(0, 30).toLowerCase())) {
+                  matchingNotes.push(`### ${file.basename}
+${content.substring(0, 500)}${content.length > 500 ? "..." : ""}`);
+                }
+              } catch (e) {
+              }
+            }
+            results["LOCAL_VAULT"] = matchingNotes.length > 0 ? `Found ${matchingNotes.length} relevant note(s):
+
+${matchingNotes.join("\n\n---\n\n")}` : `No relevant notes found in the vault for: "${query}"`;
             break;
+          }
           case "EXTRACT_TO_GRAPH":
             if (!attachmentsContext || attachmentsContext.trim() === "") {
               results["EXTRACT_TO_GRAPH"] = "No attachments or links provided to extract.";
@@ -11594,63 +11707,23 @@ Respond with this exact JSON structure:
               body: JSON.stringify({
                 text: attachmentsContext,
                 existing_entities: [],
-                // Or optionally map `this.plugin.entityManager.getAllEntities()` if context size permits
                 reference_time: (/* @__PURE__ */ new Date()).toISOString()
               }),
               throw: false
             });
             if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
               const result = graphGenRes.json;
-              const globalEntitiesMap = /* @__PURE__ */ new Map();
-              const entityLabelMap = /* @__PURE__ */ new Map();
-              let globalIndexOffset = 0;
               let entitiesCreated = 0;
               let connectionsCreated = 0;
               if (result && result.operations) {
                 for (const operation of result.operations) {
-                  const operationEntities = [];
                   if (operation.action === "create" && operation.entities) {
-                    for (let i = 0; i < operation.entities.length; i++) {
-                      const ent = operation.entities[i];
+                    for (const ent of operation.entities) {
                       try {
-                        const entity = await this.plugin.entityManager.createEntity(ent.type, ent.properties);
-                        operationEntities.push(entity);
-                        const globalIdx = globalIndexOffset + i;
-                        globalEntitiesMap.set(globalIdx, entity);
-                        entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+                        await this.plugin.entityManager.createEntity(ent.type, ent.properties);
                         entitiesCreated++;
                       } catch (e) {
                         console.error(`[OrchestrationService] Failed to create entity:`, e);
-                        operationEntities.push(null);
-                      }
-                    }
-                    globalIndexOffset += operation.entities.length;
-                  }
-                  if (operation.connections) {
-                    for (const conn of operation.connections) {
-                      try {
-                        let fromEntity;
-                        let toEntity;
-                        fromEntity = operationEntities[conn.from];
-                        toEntity = operationEntities[conn.to];
-                        if (!fromEntity && typeof conn.from === "number" && conn.from >= 0) {
-                          fromEntity = globalEntitiesMap.get(conn.from);
-                        }
-                        if (!toEntity && typeof conn.to === "number" && conn.to >= 0) {
-                          toEntity = globalEntitiesMap.get(conn.to);
-                        }
-                        if (!fromEntity && conn.from_label) {
-                          fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.from_label);
-                        }
-                        if (!toEntity && conn.to_label) {
-                          toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.to_label);
-                        }
-                        if (fromEntity && toEntity) {
-                          await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
-                          connectionsCreated++;
-                        }
-                      } catch (e) {
-                        console.error(`[OrchestrationService] Failed to create connection:`, e);
                       }
                     }
                   }
@@ -13567,6 +13640,11 @@ var ChatView = class extends import_obsidian14.ItemView {
     this.attachedFiles = [];
     // Track active operations for cancellation
     this.activeAbortControllers = /* @__PURE__ */ new Map();
+    /**
+     * Phase 2: Continue after the user has reviewed tool results.
+     * Calls continueAfterToolReview on the OrchestrationService to synthesize + generate graph.
+     */
+    this._awaitingToolReview = false;
     this.plugin = plugin;
   }
   getViewType() {
@@ -15256,6 +15334,7 @@ ${fileList}` : fileList;
         this.chatHistory[assistantIndex].savedPlan = result.plan;
         this.chatHistory[assistantIndex].savedQuery = query;
         this.chatHistory[assistantIndex].progress = void 0;
+        this._awaitingToolReview = true;
         await this.renderMessages();
         return;
       }
@@ -15275,11 +15354,15 @@ ${fileList}` : fileList;
       await this.renderMessages();
     }
   }
-  /**
-   * Phase 2: Continue after the user has reviewed tool results.
-   * Calls continueAfterToolReview on the OrchestrationService to synthesize + generate graph.
-   */
+  // Guard flag: only true after tools complete, before user clicks Generate
   async continueFromToolResults(sourceIndex) {
+    console.log("[continueFromToolResults] CALLED for sourceIndex:", sourceIndex, "_awaitingToolReview:", this._awaitingToolReview);
+    console.trace("[continueFromToolResults] Stack trace:");
+    if (!this._awaitingToolReview) {
+      console.warn("[continueFromToolResults] BLOCKED - not awaiting tool review. Ignoring ghost trigger.");
+      return;
+    }
+    this._awaitingToolReview = false;
     const item = this.chatHistory[sourceIndex];
     if (!item.toolResults || !item.savedPlan)
       return;
@@ -15338,8 +15421,11 @@ ${fileList}` : fileList;
    * Renders collapsible tool result sections and a "Generate Analysis & Graph" button.
    */
   renderToolResults(item, index, messageDiv) {
-    if (!item.toolResults || Object.keys(item.toolResults).length === 0)
+    console.log("[renderToolResults] Called for index:", index, "toolResults:", item.toolResults ? Object.keys(item.toolResults) : "null");
+    if (!item.toolResults || Object.keys(item.toolResults).length === 0) {
+      console.log("[renderToolResults] No tool results to render, skipping.");
       return;
+    }
     const toolResultsDiv = messageDiv.createDiv("vault-ai-tool-results");
     toolResultsDiv.style.cssText = `
       margin-top: 15px;
@@ -15590,19 +15676,28 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     try {
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
+      const queryForTools = item.savedQuery || this.getLastUserQuery();
+      console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
       updateProgress(`Executing tools: ${selectedTools.join(", ")}...`, 30);
       const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
         selectedTools,
-        item.savedQuery || this.getLastUserQuery(),
+        queryForTools,
         "",
         updateProgress
       );
       this.activeAbortControllers.delete(assistantIndex);
+      console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
+      for (const [key, val] of Object.entries(toolResults)) {
+        const preview = typeof val === "string" ? val.substring(0, 200) : JSON.stringify(val).substring(0, 200);
+        console.log(`[executeProposedPlan] Tool '${key}':`, preview);
+      }
       this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.";
       this.chatHistory[assistantIndex].toolResults = toolResults;
       this.chatHistory[assistantIndex].savedPlan = plan;
-      this.chatHistory[assistantIndex].savedQuery = item.savedQuery || this.getLastUserQuery();
+      this.chatHistory[assistantIndex].savedQuery = queryForTools;
       this.chatHistory[assistantIndex].progress = void 0;
+      this._awaitingToolReview = true;
+      console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
       await this.renderMessages();
       await this.saveCurrentConversation();
     } catch (e) {

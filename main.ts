@@ -4354,6 +4354,7 @@ export class ChatView extends ItemView {
         this.chatHistory[assistantIndex].savedPlan = result.plan;
         this.chatHistory[assistantIndex].savedQuery = query;
         this.chatHistory[assistantIndex].progress = undefined;
+        this._awaitingToolReview = true;
         await this.renderMessages();
         return;
       }
@@ -4380,7 +4381,19 @@ export class ChatView extends ItemView {
    * Phase 2: Continue after the user has reviewed tool results.
    * Calls continueAfterToolReview on the OrchestrationService to synthesize + generate graph.
    */
+  private _awaitingToolReview = false; // Guard flag: only true after tools complete, before user clicks Generate
+
   private async continueFromToolResults(sourceIndex: number) {
+    console.log("[continueFromToolResults] CALLED for sourceIndex:", sourceIndex, "_awaitingToolReview:", this._awaitingToolReview);
+    console.trace("[continueFromToolResults] Stack trace:");
+
+    // Guard: only proceed if we are genuinely awaiting tool review (user clicked the button)
+    if (!this._awaitingToolReview) {
+      console.warn("[continueFromToolResults] BLOCKED - not awaiting tool review. Ignoring ghost trigger.");
+      return;
+    }
+    this._awaitingToolReview = false;
+
     const item = this.chatHistory[sourceIndex];
     if (!item.toolResults || !item.savedPlan) return;
 
@@ -4453,7 +4466,11 @@ export class ChatView extends ItemView {
    * Renders collapsible tool result sections and a "Generate Analysis & Graph" button.
    */
   private renderToolResults(item: ChatHistoryItem, index: number, messageDiv: HTMLElement) {
-    if (!item.toolResults || Object.keys(item.toolResults).length === 0) return;
+    console.log("[renderToolResults] Called for index:", index, "toolResults:", item.toolResults ? Object.keys(item.toolResults) : "null");
+    if (!item.toolResults || Object.keys(item.toolResults).length === 0) {
+      console.log("[renderToolResults] No tool results to render, skipping.");
+      return;
+    }
 
     const toolResultsDiv = messageDiv.createDiv("vault-ai-tool-results");
     toolResultsDiv.style.cssText = `
@@ -4745,22 +4762,32 @@ export class ChatView extends ItemView {
       this.activeAbortControllers.set(assistantIndex, controller);
 
       // Execute tools in parallel directly
+      const queryForTools = item.savedQuery || this.getLastUserQuery();
+      console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
       updateProgress(`Executing tools: ${selectedTools.join(', ')}...`, 30);
       const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
         selectedTools,
-        item.savedQuery || this.getLastUserQuery(),
+        queryForTools,
         "",
         updateProgress
       );
 
       this.activeAbortControllers.delete(assistantIndex);
 
+      console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
+      for (const [key, val] of Object.entries(toolResults)) {
+        const preview = typeof val === 'string' ? val.substring(0, 200) : JSON.stringify(val).substring(0, 200);
+        console.log(`[executeProposedPlan] Tool '${key}':`, preview);
+      }
+
       // Show tool results for review
       this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **📊 Generate Analysis & Graph** to proceed.";
       this.chatHistory[assistantIndex].toolResults = toolResults;
       this.chatHistory[assistantIndex].savedPlan = plan;
-      this.chatHistory[assistantIndex].savedQuery = item.savedQuery || this.getLastUserQuery();
+      this.chatHistory[assistantIndex].savedQuery = queryForTools;
       this.chatHistory[assistantIndex].progress = undefined;
+      this._awaitingToolReview = true; // Enable the guard: user must click Generate to proceed
+      console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
       await this.renderMessages();
       await this.saveCurrentConversation();
 
