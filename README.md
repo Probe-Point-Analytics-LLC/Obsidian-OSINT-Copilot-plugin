@@ -44,97 +44,48 @@
 
 ## Installation
 
-### Prerequisites
+### Option A — BRAT (Recommended)
 
-- **Obsidian** installed on your system ([Download here](https://obsidian.md/))
-- **Git** installed (for cloning the repository)
-  - Windows: [Git for Windows](https://git-scm.com/download/win)
-  - macOS: Install via Homebrew (`brew install git`) or [download installer](https://git-scm.com/download/mac)
-  - Linux: Install via package manager (`sudo apt install git` or `sudo yum install git`)
+The easiest way to install OSINT Copilot in an existing vault:
 
-### Installation Steps
+1. **Install BRAT:** Settings → Community plugins → Browse → search **"BRAT"** → Install → Enable
+2. **Add OSINT Copilot:** Settings → BRAT → **Add Beta Plugin**
+3. **Paste the URL:** `https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
+4. **Enable the plugin:** Settings → Community Plugins → **OSINT Copilot** → Enable
 
-#### 1. **Locate your Obsidian plugins folder**
+BRAT will automatically keep the plugin up to date.
 
-First, you need to find where Obsidian stores plugins:
+### Option B — Pre-configured Template (Best for New Users)
 
-- Open Obsidian Settings (⚙️)
-- Navigate to **Community Plugins**
-- Click the folder icon (📁) next to "Installed plugins" to open your plugins folder
-
-![Obsidian Settings](screenshots/Copilot%20Obsidian%20settings.png)
-
-The plugins folder path typically looks like:
-- **Windows**: `C:\Users\YourName\Documents\YourVault\.obsidian\plugins\`
-- **macOS**: `/Users/YourName/Documents/YourVault/.obsidian/plugins/`
-- **Linux**: `/home/YourName/Documents/YourVault/.obsidian/plugins/`
-
-#### 2. **Clone the OSINT Copilot repository**
-
-Open a terminal/command prompt and navigate to your plugins folder, then clone the repository:
+Download our template vault which comes with the plugin pre-installed and an example investigation:
 
 ```bash
-# Navigate to your Obsidian plugins folder
-cd /path/to/your/vault/.obsidian/plugins/
-
-# Clone the OSINT Copilot repository
-git clone https://github.com/YourUsername/OSINT-copilot-plugin.git
+git clone --recursive https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-Obsidian-Template.git
 ```
 
-**Alternative: Download as ZIP**
+Then open the cloned folder as a vault in Obsidian.
 
-If you don't have Git installed:
-1. Visit the [OSINT Copilot repository](https://github.com/YourUsername/OSINT-copilot-plugin)
-2. Click the green **Code** button
-3. Select **Download ZIP**
-4. Extract the ZIP file
-5. Rename the extracted folder to `OSINT-copilot-plugin`
-6. Move the folder to your Obsidian plugins directory
+Alternatively, download the ZIP from the [template repository](https://github.com/Probe-Point-Analytics-LLC/OSINT-Copilot-Obsidian-Template) and extract it.
 
-#### 3. **Verify the installation files**
+### Option C — Manual Install
 
-After cloning, your plugin folder should contain these essential files:
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases)
+2. Create a folder: `.obsidian/plugins/Obsidian-OSINT-Copilot-plugin/`
+3. Copy the three files into that folder
+4. Restart Obsidian
+5. Enable in Settings → Community Plugins → **OSINT Copilot**
 
-```
-.obsidian/plugins/OSINT-copilot-plugin/
-├── main.js           # Pre-built plugin code (255KB)
-├── manifest.json     # Plugin metadata
-├── styles.css        # Plugin styles
-├── versions.json     # Version compatibility info
-├── README.md         # This file
-└── screenshots/      # Documentation images
-```
-
-**✅ No build required!** The repository includes pre-built distribution files (`main.js`, `manifest.json`, `styles.css`), so you don't need to run `npm install` or `npm run build`.
-
-#### 4. **Enable the plugin in Obsidian**
-
-- Return to Obsidian Settings → **Community Plugins**
-- You may need to click **Reload** or restart Obsidian
-- Find **"OSINT Copilot"** in the list of installed plugins
-- Toggle it **ON**
-
-![Enable Plugin](screenshots/Copilot%20Obsidian%20settings%20enabled%20plugin.png)
-
-#### 5. **Verify installation**
+### Verify Installation
 
 - You should see the OSINT Copilot icon in the left ribbon
 - Click the icon to open the chat interface
-- The plugin is now ready to use!
+- The plugin is ready to use!
 
 ### Updating the Plugin
 
-To update to the latest version:
+- **BRAT users:** Updates are automatic
+- **Template / Manual users:** `cd` into the plugin folder and run `git pull origin main`, then restart Obsidian
 
-```bash
-# Navigate to the plugin folder
-cd /path/to/your/vault/.obsidian/plugins/OSINT-copilot-plugin/
-
-# Pull the latest changes
-git pull origin main
-```
-
-Then reload Obsidian or restart the app to apply the updates.
 
 ---
 
