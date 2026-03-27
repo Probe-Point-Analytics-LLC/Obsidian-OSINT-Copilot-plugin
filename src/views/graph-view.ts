@@ -498,9 +498,37 @@ export class GraphView extends ItemView {
         fitBtn.title = 'Fit all entities in view';
         fitBtn.onclick = () => this.cy?.fit();
 
+        // Export button
+        const exportBtn = toolbar.createEl('button', { text: '📤 export' });
+        exportBtn.title = 'Export investigation to JSON file';
+        exportBtn.onclick = () => this.triggerExport();
+
         // Status indicator for connection mode
         this.statusIndicator = toolbar.createDiv({ cls: 'graph_copilot-connection-status' });
         this.statusIndicator.setCssProps({ display: 'none' });
+    }
+
+    /**
+     * Trigger the export of the investigation to a JSON file.
+     */
+    private triggerExport(): void {
+        try {
+            const json = this.entityManager.exportToJSON();
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+            a.href = url;
+            a.download = `osint-investigation-${timestamp}.json`;
+            a.click();
+
+            URL.revokeObjectURL(url);
+            new Notice('Investigation exported successfully');
+        } catch (error) {
+            console.error('[GraphView] Export failed:', error);
+            new Notice('Failed to export investigation');
+        }
     }
 
     /**

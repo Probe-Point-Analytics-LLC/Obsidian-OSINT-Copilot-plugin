@@ -427,6 +427,30 @@ export default class VaultAIPlugin extends Plugin {
       callback: () => { void this.openMapView(true); },
     });
 
+    this.addCommand({
+      id: "export-investigation",
+      name: "Export current investigation",
+      callback: () => {
+        try {
+          const json = this.entityManager.exportToJSON();
+          const blob = new Blob([json], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+          a.href = url;
+          a.download = `osint-investigation-${timestamp}.json`;
+          a.click();
+
+          URL.revokeObjectURL(url);
+          new Notice('Investigation exported successfully');
+        } catch (error) {
+          console.error('[OSINT Copilot] Export failed:', error);
+          new Notice('Failed to export investigation');
+        }
+      },
+    });
+
     // Utility commands
     this.addCommand({
       id: "ask-vault",

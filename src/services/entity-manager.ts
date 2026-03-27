@@ -1562,5 +1562,36 @@ ${this.buildConnectionPropertiesSection(connection)}
             await this.app.workspace.getLeaf().openFile(file);
         }
     }
+
+    /**
+     * Export the full investigation to a formatted JSON string.
+     */
+    exportToJSON(): string {
+        const graphData = this.getGraphData();
+        const exportData = {
+            metadata: {
+                version: "1.0.0",
+                export_date: new Date().toISOString(),
+                source: "OSINT Copilot Obsidian Plugin",
+                total_entities: graphData.entities.length,
+                total_connections: graphData.connections.length
+            },
+            entities: graphData.entities.map(e => ({
+                id: e.id,
+                type: e.type,
+                label: e.label,
+                properties: e.properties
+            })),
+            connections: graphData.connections.map(c => ({
+                id: c.id,
+                from_entity_id: c.fromEntityId,
+                to_entity_id: c.toEntityId,
+                relationship: c.relationship,
+                properties: c.properties
+            }))
+        };
+
+        return JSON.stringify(exportData, null, 2);
+    }
 }
 
