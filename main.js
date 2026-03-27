@@ -3473,6 +3473,35 @@ ${this.buildConnectionPropertiesSection(connection)}
       await this.app.workspace.getLeaf().openFile(file);
     }
   }
+  /**
+   * Export the full investigation to a formatted JSON string.
+   */
+  exportToJSON() {
+    const graphData = this.getGraphData();
+    const exportData = {
+      metadata: {
+        version: "1.0.0",
+        export_date: (/* @__PURE__ */ new Date()).toISOString(),
+        source: "OSINT Copilot Obsidian Plugin",
+        total_entities: graphData.entities.length,
+        total_connections: graphData.connections.length
+      },
+      entities: graphData.entities.map((e) => ({
+        id: e.id,
+        type: e.type,
+        label: e.label,
+        properties: e.properties
+      })),
+      connections: graphData.connections.map((c) => ({
+        id: c.id,
+        from_entity_id: c.fromEntityId,
+        to_entity_id: c.toEntityId,
+        relationship: c.relationship,
+        properties: c.properties
+      }))
+    };
+    return JSON.stringify(exportData, null, 2);
+  }
 };
 
 // src/services/api-service.ts
@@ -8051,8 +8080,31 @@ var GraphView = class extends import_obsidian8.ItemView {
     const fitBtn = toolbar.createEl("button", { text: "\u22A1 fit" });
     fitBtn.title = "Fit all entities in view";
     fitBtn.onclick = () => this.cy?.fit();
+    const exportBtn = toolbar.createEl("button", { text: "\u{1F4E4} export" });
+    exportBtn.title = "Export investigation to JSON file";
+    exportBtn.onclick = () => this.triggerExport();
     this.statusIndicator = toolbar.createDiv({ cls: "graph_copilot-connection-status" });
     this.statusIndicator.setCssProps({ display: "none" });
+  }
+  /**
+   * Trigger the export of the investigation to a JSON file.
+   */
+  triggerExport() {
+    try {
+      const json = this.entityManager.exportToJSON();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").substring(0, 19);
+      a.href = url;
+      a.download = `osint-investigation-${timestamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      new import_obsidian8.Notice("Investigation exported successfully");
+    } catch (error) {
+      console.error("[GraphView] Export failed:", error);
+      new import_obsidian8.Notice("Failed to export investigation");
+    }
   }
   /**
    * Toggle connection mode for node selection.
@@ -11389,7 +11441,14 @@ ${extractedText}`;
         return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
       }
       onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 40);
-      const toolResults = await this.executeToolsInParallel(plan.toolsToCall, query, attachmentsContext, onProgress);
+      const toolResults = await this.executeToolsInParallel(
+        plan.toolsToCall,
+        query,
+        attachmentsContext,
+        (tool, msg, percent) => {
+          onProgress(`[${tool}] ${msg}`, percent);
+        }
+      );
       onProgress("Tools complete. Awaiting review...", 60);
       return {
         finalResponse: "Investigation tools have completed. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.",
@@ -11543,11 +11602,18 @@ Respond with this exact JSON structure:
   }
   async executeToolsInParallel(tools, query, attachmentsContext, onProgress) {
     const results = {};
+    const toolToDisplayName = {
+      "DARK_WEB": "DarkWeb Search",
+      "OSINT_SEARCH": "Digital Footprint",
+      "CORPORATE_REPORTS": "Companies & People",
+      "LOCAL_VAULT": "Local Search"
+    };
     const promises = tools.map(async (tool) => {
+      const displayName = toolToDisplayName[tool] || tool;
       try {
         switch (tool) {
           case "DARK_WEB": {
-            onProgress("Starting dark web investigation...", 25);
+            onProgress(displayName, "Initializing job...", 10);
             const darkWebRes = await (0, import_obsidian12.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
               method: "POST",
@@ -11555,26 +11621,27 @@ Respond with this exact JSON structure:
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`
               },
-              body: JSON.stringify({ query, model: "gpt-5-mini", threads: 8 }),
+              body: JSON.stringify({ query, model: "gpt-4o", threads: 8 }),
               throw: false
             });
             if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
-              results["DARK_WEB"] = `Dark web API error: ${darkWebRes.status}`;
+              results["DARK_WEB"] = `API error: ${darkWebRes.status}`;
+              onProgress(displayName, "Failed", 100);
               break;
             }
             const jobId = darkWebRes.json?.job_id;
             if (!jobId) {
-              results["DARK_WEB"] = "Dark web API did not return a job ID.";
+              results["DARK_WEB"] = "No job ID returned.";
+              onProgress(displayName, "Failed", 100);
               break;
             }
             const maxPollMs = 5 * 60 * 1e3;
             const startTime = Date.now();
-            let pollInterval = 5e3;
             let completed = false;
             while (Date.now() - startTime < maxPollMs) {
-              await new Promise((resolve) => setTimeout(resolve, pollInterval));
+              await new Promise((resolve) => setTimeout(resolve, 5e3));
               const elapsed = Math.round((Date.now() - startTime) / 1e3);
-              onProgress(`Dark web: searching... (${elapsed}s)`, 30);
+              onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
               const statusRes = await (0, import_obsidian12.requestUrl)({
                 url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
                 method: "GET",
@@ -11582,119 +11649,71 @@ Respond with this exact JSON structure:
                 throw: false
               });
               if (statusRes.status >= 200 && statusRes.status < 300) {
-                const statusData = statusRes.json;
-                if (statusData?.status === "completed" || statusData?.status === "done") {
+                if (statusRes.json?.status === "completed" || statusRes.json?.status === "done") {
                   completed = true;
                   break;
-                } else if (statusData?.status === "failed" || statusData?.status === "error") {
-                  results["DARK_WEB"] = `Dark web investigation failed: ${statusData?.error || "Unknown error"}`;
-                  return;
+                } else if (statusRes.json?.status === "failed") {
+                  results["DARK_WEB"] = "Investigation failed.";
+                  break;
                 }
               }
-              if (Date.now() - startTime > 3e4)
-                pollInterval = 8e3;
             }
-            if (!completed) {
-              results["DARK_WEB"] = `Dark web investigation timed out after ${Math.round(maxPollMs / 6e4)} minutes. Job ID: ${jobId}`;
-              break;
-            }
-            onProgress("Dark web: downloading results...", 45);
-            const downloadRes = await (0, import_obsidian12.requestUrl)({
-              url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
-              method: "GET",
-              headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
-              throw: false
-            });
-            if (downloadRes.status >= 200 && downloadRes.status < 300) {
-              const summaryData = downloadRes.json;
-              results["DARK_WEB"] = summaryData?.summary || summaryData?.report || summaryData?.content || JSON.stringify(summaryData);
-            } else {
-              const dlRes = await (0, import_obsidian12.requestUrl)({
-                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/download/${jobId}`,
+            if (completed) {
+              onProgress(displayName, "Downloading results...", 90);
+              const downloadRes = await (0, import_obsidian12.requestUrl)({
+                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
                 method: "GET",
                 headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
                 throw: false
               });
-              results["DARK_WEB"] = dlRes.status >= 200 && dlRes.status < 300 ? dlRes.text || "No content returned" : `Failed to download dark web results: ${downloadRes.status}`;
+              results["DARK_WEB"] = downloadRes.status < 300 ? downloadRes.json?.summary : "Download failed.";
             }
+            onProgress(displayName, "Complete", 100);
             break;
           }
           case "OSINT_SEARCH": {
-            onProgress("Running OSINT search...", 30);
-            const osintResponse = await this.plugin.graphApiService.callRemoteModel([
-              {
-                role: "system",
-                content: `You are an OSINT intelligence analyst. Research the user's query thoroughly using your knowledge. Provide:
-1. A comprehensive factual summary of the topic
-2. All key individuals, organizations, and entities involved with their roles
-3. Key dates, events, and timeline
-4. Known connections between entities
-5. Sources and investigations that have covered this topic
-
-Be thorough, factual, and structured. Use markdown formatting with headers and bullet points.`
-              },
-              {
-                role: "user",
-                content: `Research this OSINT query:
-
-${query}`
-              }
+            onProgress(displayName, "Searching digital footprints...", 30);
+            const osintRes = await this.plugin.graphApiService.callRemoteModel([
+              { role: "system", content: "You are an expert OSINT researcher. Provide a detailed factual report on the query, including digital footprints and public records." },
+              { role: "user", content: query }
             ]);
-            results["OSINT_SEARCH"] = osintResponse;
+            results["OSINT_SEARCH"] = osintRes;
+            onProgress(displayName, "Complete", 100);
             break;
           }
           case "CORPORATE_REPORTS": {
-            onProgress("Searching corporate registries...", 35);
-            const corpResponse = await this.plugin.graphApiService.callRemoteModel([
-              {
-                role: "system",
-                content: `You are a corporate intelligence analyst specializing in company ownership structures, financial filings, and sanctions screening. For the given query:
-1. Identify all companies, banks, and financial institutions involved
-2. Map ownership structures and beneficial owners
-3. Identify shell companies and offshore entities
-4. Check for sanctions, legal proceedings, and regulatory actions
-5. Trace financial flows and corporate relationships
-
-Be thorough and structured. Use markdown formatting.`
-              },
-              {
-                role: "user",
-                content: `Analyze corporate and financial structures related to:
-
-${query}`
-              }
+            onProgress(displayName, "Analyzing corporate registries...", 30);
+            const corpRes = await this.plugin.graphApiService.callRemoteModel([
+              { role: "system", content: "You are a corporate intelligence analyst. Analyze ownership structures, financial links, and shell companies for the query." },
+              { role: "user", content: query }
             ]);
-            results["CORPORATE_REPORTS"] = corpResponse;
+            results["CORPORATE_REPORTS"] = corpRes;
+            onProgress(displayName, "Complete", 100);
             break;
           }
           case "LOCAL_VAULT": {
-            onProgress("Searching local vault...", 20);
+            onProgress(displayName, "Searching Obsidian vault...", 20);
             const searchTerms = query.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
             const files = this.plugin.app.vault.getMarkdownFiles();
-            const matchingNotes = [];
+            const matching = [];
             for (const file of files) {
-              if (matchingNotes.length >= 10)
+              if (matching.length >= 10)
                 break;
-              try {
-                const content = await this.plugin.app.vault.cachedRead(file);
-                const lowerContent = content.toLowerCase();
-                const queryLower = query.toLowerCase();
-                const matches = searchTerms.filter((term) => lowerContent.includes(term.toLowerCase()));
-                if (matches.length >= 2 || lowerContent.includes(queryLower.substring(0, 30).toLowerCase())) {
-                  matchingNotes.push(`### ${file.basename}
-${content.substring(0, 500)}${content.length > 500 ? "..." : ""}`);
-                }
-              } catch (e) {
+              const content = await this.plugin.app.vault.cachedRead(file);
+              if (searchTerms.some((t) => content.toLowerCase().includes(t.toLowerCase()))) {
+                matching.push(`File: ${file.path}
+Content Preview: ${content.substring(0, 500)}...`);
               }
             }
-            results["LOCAL_VAULT"] = matchingNotes.length > 0 ? `Found ${matchingNotes.length} relevant note(s):
-
-${matchingNotes.join("\n\n---\n\n")}` : `No relevant notes found in the vault for: "${query}"`;
+            results["LOCAL_VAULT"] = matching.length > 0 ? matching.join("\n\n---\n\n") : "No relevant local notes found.";
+            onProgress(displayName, "Complete", 100);
             break;
           }
-          case "EXTRACT_TO_GRAPH":
+          case "EXTRACT_TO_GRAPH": {
+            onProgress(displayName, "Extracting entities to graph...", 40);
             if (!attachmentsContext || attachmentsContext.trim() === "") {
-              results["EXTRACT_TO_GRAPH"] = "No attachments or links provided to extract.";
+              results["EXTRACT_TO_GRAPH"] = "No attachments provided.";
+              onProgress(displayName, "No context", 100);
               break;
             }
             const graphGenRes = await (0, import_obsidian12.requestUrl)({
@@ -11711,35 +11730,17 @@ ${matchingNotes.join("\n\n---\n\n")}` : `No relevant notes found in the vault fo
               }),
               throw: false
             });
-            if (graphGenRes.status >= 200 && graphGenRes.status < 300) {
-              const result = graphGenRes.json;
-              let entitiesCreated = 0;
-              let connectionsCreated = 0;
-              if (result && result.operations) {
-                for (const operation of result.operations) {
-                  if (operation.action === "create" && operation.entities) {
-                    for (const ent of operation.entities) {
-                      try {
-                        await this.plugin.entityManager.createEntity(ent.type, ent.properties);
-                        entitiesCreated++;
-                      } catch (e) {
-                        console.error(`[OrchestrationService] Failed to create entity:`, e);
-                      }
-                    }
-                  }
-                }
-              }
-              results["EXTRACT_TO_GRAPH"] = `Successfully extracted ${entitiesCreated} entities and ${connectionsCreated} connections into the graph.`;
-            } else {
-              results["EXTRACT_TO_GRAPH"] = `Extraction failed: ${graphGenRes.status}`;
-            }
+            results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
+            onProgress(displayName, "Complete", 100);
             break;
+          }
           default:
-            console.warn(`[OrchestrationService] Unknown tool requested: ${tool}`);
+            console.warn(`[OrchestrationService] Unknown tool: ${tool}`);
         }
-      } catch (e) {
-        console.error(`[OrchestrationService] Tool execution failed for ${tool}:`, e);
-        results[tool] = `Error: ${e instanceof Error ? e.message : String(e)}`;
+      } catch (error) {
+        console.error(`[OrchestrationService] Tool ${tool} failed:`, error);
+        results[tool] = `Error: ${error instanceof Error ? error.message : String(error)}`;
+        onProgress(displayName, "Failed", 100);
       }
     });
     await Promise.all(promises);
@@ -12048,6 +12049,47 @@ var UpdaterService = class {
     }
   }
   /**
+   * Downloads the newest version of the plugin directly from the GitHub main branch,
+   * regardless of the last official release.
+   */
+  async updateFromMain() {
+    try {
+      const baseUrl = "https://raw.githubusercontent.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/main";
+      const filesToDownload = ["main.js", "manifest.json", "styles.css"];
+      let success = true;
+      for (const fileName of filesToDownload) {
+        const url = `${baseUrl}/${fileName}`;
+        const fileSuccess = await this.downloadRawFile(url, fileName);
+        if (!fileSuccess && fileName !== "styles.css") {
+          success = false;
+        }
+      }
+      return success;
+    } catch (error) {
+      console.error("Error updating from main branch:", error);
+      return false;
+    }
+  }
+  /**
+   * Downloads a raw file from GitHub and writes it to the plugin folder.
+   */
+  async downloadRawFile(url, fileName) {
+    try {
+      const response = await (0, import_obsidian13.requestUrl)({ url });
+      if (response.status === 200) {
+        const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
+        await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
+        return true;
+      } else {
+        console.error(`Failed to download ${fileName} from ${url} (Status: ${response.status})`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`Error downloading ${fileName}:`, error);
+      return false;
+    }
+  }
+  /**
    * Compares two semantic version strings.
    * Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal.
    */
@@ -12162,12 +12204,6 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
     }
     this.orchestrationService = new OrchestrationService(this);
     this.updaterService = new UpdaterService(this);
-    setTimeout(async () => {
-      const release = await this.updaterService.checkLatestRelease();
-      if (release) {
-        new import_obsidian14.Notice(`OSINT Copilot: Update ${release.tag_name} available! Go to Settings to apply.`);
-      }
-    }, 5e3);
     if (this.settings.enableGraphFeatures) {
       try {
         await this.entityManager.initialize();
@@ -12308,6 +12344,27 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       name: "Open location map in new pane",
       callback: () => {
         void this.openMapView(true);
+      }
+    });
+    this.addCommand({
+      id: "export-investigation",
+      name: "Export current investigation",
+      callback: () => {
+        try {
+          const json = this.entityManager.exportToJSON();
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").substring(0, 19);
+          a.href = url;
+          a.download = `osint-investigation-${timestamp}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          new import_obsidian14.Notice("Investigation exported successfully");
+        } catch (error) {
+          console.error("[OSINT Copilot] Export failed:", error);
+          new import_obsidian14.Notice("Failed to export investigation");
+        }
       }
     });
     this.addCommand({
@@ -14747,6 +14804,47 @@ var ChatView = class extends import_obsidian14.ItemView {
           text: `${item.progress.message || "Processing..."} (${item.progress.percent}%)`
         });
       }
+      if (item.role === "assistant" && item.multiProgress && Object.keys(item.multiProgress).length > 0) {
+        const multiProgressContainer = messageDiv.createDiv("vault-ai-multi-progress-container");
+        multiProgressContainer.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin: 12px 0;
+          padding: 12px;
+          background: var(--background-secondary);
+          border-radius: 8px;
+          border: 1px solid var(--background-modifier-border);
+        `;
+        for (const [tool, progress] of Object.entries(item.multiProgress)) {
+          const toolRow = multiProgressContainer.createDiv("vault-ai-tool-progress-row");
+          toolRow.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
+          const labelRow = toolRow.createDiv();
+          labelRow.style.cssText = "display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: bold;";
+          labelRow.createEl("span", { text: tool });
+          labelRow.createEl("span", { text: `${progress.percent}%`, cls: "vault-ai-progress-percent" });
+          const progressTrack = toolRow.createDiv("vault-ai-progress-track");
+          progressTrack.style.cssText = `
+            height: 6px;
+            background: var(--background-modifier-border);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+          `;
+          const progressFill = progressTrack.createDiv("vault-ai-progress-fill");
+          progressFill.style.cssText = `
+            height: 100%;
+            width: ${progress.percent}%;
+            background: var(--interactive-accent);
+            transition: width 0.3s ease-in-out;
+          `;
+          const statusText = toolRow.createEl("div", {
+            cls: "vault-ai-progress-status",
+            text: progress.message
+          });
+          statusText.style.cssText = "font-size: 10px; color: var(--text-muted);";
+        }
+      }
       if (item.role === "assistant" && item.intermediateResults && item.intermediateResults.length > 0) {
         const resultsContainer = messageDiv.createDiv("vault-ai-intermediate-results-container");
         resultsContainer.createEl("strong", { text: "Intermediate results:" });
@@ -15170,6 +15268,76 @@ var ChatView = class extends import_obsidian14.ItemView {
       });
     }
   }
+  updateMultiProgressBar(messageIndex, toolName, progress) {
+    const messageDiv = this.messagesContainer.querySelector(
+      `.vault-ai-chat-message[data-message-index="${messageIndex}"]`
+    );
+    if (!messageDiv)
+      return;
+    let multiContainer = messageDiv.querySelector(".vault-ai-multi-progress-container");
+    if (!multiContainer) {
+      const contentDiv = messageDiv.querySelector(".vault-ai-chat-content");
+      multiContainer = document.createElement("div");
+      multiContainer.className = "vault-ai-multi-progress-container";
+      if (contentDiv) {
+        contentDiv.insertAdjacentElement("afterend", multiContainer);
+      } else {
+        messageDiv.appendChild(multiContainer);
+      }
+    }
+    let toolRow = multiContainer.querySelector(`.vault-ai-tool-progress-row[data-tool="${toolName}"]`);
+    if (!toolRow) {
+      toolRow = multiContainer.createDiv("vault-ai-tool-progress-row");
+      toolRow.setAttribute("data-tool", toolName);
+      toolRow.style.marginBottom = "12px";
+      toolRow.style.padding = "8px";
+      toolRow.style.background = "var(--background-secondary-alt)";
+      toolRow.style.borderRadius = "6px";
+      toolRow.style.border = "1px solid var(--background-modifier-border)";
+      const header = toolRow.createDiv("vault-ai-tool-header");
+      header.style.display = "flex";
+      header.style.justifyContent = "space-between";
+      header.style.marginBottom = "6px";
+      const label = header.createDiv("vault-ai-tool-label");
+      label.textContent = toolName;
+      label.style.fontSize = "12px";
+      label.style.fontWeight = "600";
+      label.style.color = "var(--text-normal)";
+      const percentText2 = header.createDiv("vault-ai-tool-percent");
+      percentText2.style.fontSize = "11px";
+      percentText2.style.color = "var(--interactive-accent)";
+      const barContainer = toolRow.createDiv("vault-ai-tool-bar-container");
+      barContainer.style.height = "6px";
+      barContainer.style.background = "var(--background-modifier-border)";
+      barContainer.style.borderRadius = "3px";
+      barContainer.style.overflow = "hidden";
+      barContainer.style.position = "relative";
+      const bar2 = barContainer.createDiv("vault-ai-tool-bar-fill");
+      bar2.style.height = "100%";
+      bar2.style.background = "var(--interactive-accent)";
+      bar2.style.width = "0%";
+      bar2.style.transition = "width 0.4s cubic-bezier(0.4, 0, 0.2, 1)";
+      const status2 = toolRow.createDiv("vault-ai-tool-status");
+      status2.style.fontSize = "11px";
+      status2.style.color = "var(--text-muted)";
+      status2.style.marginTop = "6px";
+      status2.style.whiteSpace = "nowrap";
+      status2.style.overflow = "hidden";
+      status2.style.textOverflow = "ellipsis";
+    }
+    const bar = toolRow.querySelector(".vault-ai-tool-bar-fill");
+    const status = toolRow.querySelector(".vault-ai-tool-status");
+    const percentText = toolRow.querySelector(".vault-ai-tool-percent");
+    if (bar)
+      bar.style.width = `${progress.percent}%`;
+    if (status)
+      status.textContent = progress.message;
+    if (percentText)
+      percentText.textContent = `${progress.percent}%`;
+    if (progress.percent === 100 && bar) {
+      bar.style.background = "var(--text-success)";
+    }
+  }
   async handleCancel(index) {
     const controller = this.activeAbortControllers.get(index);
     if (!controller)
@@ -15458,10 +15626,10 @@ ${fileList}` : fileList;
       gap: 8px;
     `;
     const toolIcons = {
-      "DARK_WEB": "\u{1F578}\uFE0F Dark Web",
-      "OSINT_SEARCH": "\u{1F310} OSINT Search",
-      "CORPORATE_REPORTS": "\u{1F3E2} Corporate Reports",
-      "LOCAL_VAULT": "\u{1F4C1} Local Vault",
+      "DARK_WEB": "\u{1F578}\uFE0F DarkWeb Search",
+      "OSINT_SEARCH": "\u{1F310} Digital Footprint",
+      "CORPORATE_REPORTS": "\u{1F3E2} Companies & People",
+      "LOCAL_VAULT": "\u{1F4C1} Local Search",
       "EXTRACT_TO_GRAPH": "\u{1F3F7}\uFE0F Graph Extraction"
     };
     for (const [tool, result] of Object.entries(item.toolResults)) {
@@ -15688,13 +15856,29 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     this.chatHistory.push({
       role: "assistant",
       content: "",
-      progress: { message: `Running ${selectedTools.length} module(s)...`, percent: 10 }
+      multiProgress: {}
+    });
+    const toolToDisplayName = {
+      "DARK_WEB": "DarkWeb Search",
+      "OSINT_SEARCH": "Digital Footprint",
+      "CORPORATE_REPORTS": "Companies & People",
+      "LOCAL_VAULT": "Local Search"
+    };
+    selectedTools.forEach((tool) => {
+      const displayName = toolToDisplayName[tool] || tool;
+      this.chatHistory[assistantIndex].multiProgress[displayName] = {
+        message: "Initializing...",
+        percent: 5
+      };
     });
     await this.renderMessages();
-    const updateProgress = (message, percent) => {
+    const updateProgress = (tool, message, percent) => {
       if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
+        if (!this.chatHistory[assistantIndex].multiProgress) {
+          this.chatHistory[assistantIndex].multiProgress = {};
+        }
+        this.chatHistory[assistantIndex].multiProgress[tool] = { message, percent };
+        this.updateMultiProgressBar(assistantIndex, tool, { message, percent });
       }
     };
     try {
@@ -15702,7 +15886,6 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       this.activeAbortControllers.set(assistantIndex, controller);
       const queryForTools = item.savedQuery || this.getLastUserQuery();
       console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
-      updateProgress(`Executing tools: ${selectedTools.join(", ")}...`, 30);
       const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
         selectedTools,
         queryForTools,
@@ -17108,34 +17291,33 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     new import_obsidian14.Setting(containerEl).setName("Plugin updates").setHeading();
-    const versionSetting = new import_obsidian14.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Checking for updates...");
-    this.plugin.updaterService.checkLatestRelease().then((release) => {
-      if (release) {
-        versionSetting.setDesc(`Update available: ${release.tag_name}`);
-        versionSetting.addButton(
-          (btn) => btn.setButtonText("Update plugin now").setCta().onClick(async () => {
-            btn.setButtonText("Downloading...");
-            btn.setDisabled(true);
-            const success = await this.plugin.updaterService.downloadReleaseAssets(release);
-            if (success) {
-              btn.setButtonText("Reloading plugin...");
-              await this.plugin.updaterService.reloadPlugin();
-            } else {
-              btn.setButtonText("Update failed");
-              new import_obsidian14.Notice("Failed to download update. Check console for details.");
-            }
-          })
-        );
-      } else {
-        versionSetting.setDesc("You are on the latest version.");
-        versionSetting.addButton(
-          (btn) => btn.setButtonText("Check for updates").onClick(() => {
-            new import_obsidian14.Notice("Checking for updates...");
-            this.display();
-          })
-        );
-      }
-    });
+    new import_obsidian14.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+      (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
+        const originalText = btn.buttonEl.innerText;
+        btn.setButtonText("Updating...");
+        btn.setDisabled(true);
+        new import_obsidian14.Notice("Updating plugin from GitHub main branch...");
+        try {
+          const success = await this.plugin.updaterService.updateFromMain();
+          if (success) {
+            btn.setButtonText("Reloading...");
+            new import_obsidian14.Notice("Update successful! Reloading plugin...");
+            await this.plugin.updaterService.reloadPlugin();
+          } else {
+            btn.setButtonText("Update failed");
+            btn.setDisabled(false);
+            setTimeout(() => btn.setButtonText(originalText), 3e3);
+            new import_obsidian14.Notice("Failed to download update. Check console for details.");
+          }
+        } catch (error) {
+          console.error("[OSINT Copilot] Update failed:", error);
+          btn.setButtonText("Update failed");
+          btn.setDisabled(false);
+          setTimeout(() => btn.setButtonText(originalText), 3e3);
+          new import_obsidian14.Notice("An error occurred during update.");
+        }
+      })
+    );
     new import_obsidian14.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
