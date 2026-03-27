@@ -254,14 +254,8 @@ export default class VaultAIPlugin extends Plugin {
     // Initialize Orchestration Service
     this.orchestrationService = new OrchestrationService(this);
 
-    // Initialize Updater Service and check for updates
+    // Initialize Updater Service
     this.updaterService = new UpdaterService(this);
-    setTimeout(async () => {
-      const release = await this.updaterService.checkLatestRelease();
-      if (release) {
-        new Notice(`OSINT Copilot: Update ${release.tag_name} available! Go to Settings to apply.`);
-      }
-    }, 5000);
 
     // Initialize entity manager if graph features are enabled
     // This is done separately from API health check to ensure local features work
@@ -6606,40 +6600,41 @@ class VaultAISettingTab extends PluginSettingTab {
     // Plugin Updates Section
     new Setting(containerEl).setName("Plugin updates").setHeading();
 
-    const versionSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName("Current version: " + this.plugin.manifest.version)
-      .setDesc("Checking for updates...");
+      .setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.")
+      .addButton(btn =>
+        btn.setButtonText("Update plugin")
+          .setCta()
+          .setTooltip("Download and install the latest version from GitHub main branch")
+          .onClick(async () => {
+            const originalText = btn.buttonEl.innerText;
+            btn.setButtonText("Updating...");
+            btn.setDisabled(true);
 
-    this.plugin.updaterService.checkLatestRelease().then(release => {
-      if (release) {
-        versionSetting.setDesc(`Update available: ${release.tag_name}`);
-        versionSetting.addButton(btn =>
-          btn.setButtonText("Update plugin now")
-            .setCta()
-            .onClick(async () => {
-              btn.setButtonText("Downloading...");
-              btn.setDisabled(true);
-              const success = await this.plugin.updaterService.downloadReleaseAssets(release);
+            new Notice("Updating plugin from GitHub main branch...");
+            try {
+              const success = await this.plugin.updaterService.updateFromMain();
+
               if (success) {
-                btn.setButtonText("Reloading plugin...");
+                btn.setButtonText("Reloading...");
+                new Notice("Update successful! Reloading plugin...");
                 await this.plugin.updaterService.reloadPlugin();
               } else {
                 btn.setButtonText("Update failed");
+                btn.setDisabled(false);
+                setTimeout(() => btn.setButtonText(originalText), 3000);
                 new Notice("Failed to download update. Check console for details.");
               }
-            })
-        );
-      } else {
-        versionSetting.setDesc("You are on the latest version.");
-        versionSetting.addButton(btn =>
-          btn.setButtonText("Check for updates")
-            .onClick(() => {
-              new Notice("Checking for updates...");
-              this.display(); // Refresh settings UI
-            })
-        );
-      }
-    });
+            } catch (error) {
+              console.error("[OSINT Copilot] Update failed:", error);
+              btn.setButtonText("Update failed");
+              btn.setDisabled(false);
+              setTimeout(() => btn.setButtonText(originalText), 3000);
+              new Notice("An error occurred during update.");
+            }
+          })
+      );
 
     // Max Notes
     new Setting(containerEl)

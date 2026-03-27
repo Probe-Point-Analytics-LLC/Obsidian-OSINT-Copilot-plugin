@@ -103,6 +103,53 @@ export class UpdaterService {
     }
 
     /**
+     * Downloads the newest version of the plugin directly from the GitHub main branch,
+     * regardless of the last official release.
+     */
+    async updateFromMain(): Promise<boolean> {
+        try {
+            const baseUrl = "https://raw.githubusercontent.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/main";
+            const filesToDownload = ["main.js", "manifest.json", "styles.css"];
+            let success = true;
+
+            for (const fileName of filesToDownload) {
+                const url = `${baseUrl}/${fileName}`;
+                const fileSuccess = await this.downloadRawFile(url, fileName);
+                if (!fileSuccess && fileName !== "styles.css") {
+                    // styles.css is optional, but main.js and manifest.json are critical
+                    success = false;
+                }
+            }
+
+            return success;
+        } catch (error) {
+            console.error("Error updating from main branch:", error);
+            return false;
+        }
+    }
+
+    /**
+     * Downloads a raw file from GitHub and writes it to the plugin folder.
+     */
+    private async downloadRawFile(url: string, fileName: string): Promise<boolean> {
+        try {
+            const response = await requestUrl({ url });
+
+            if (response.status === 200) {
+                const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
+                await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
+                return true;
+            } else {
+                console.error(`Failed to download ${fileName} from ${url} (Status: ${response.status})`);
+                return false;
+            }
+        } catch (error) {
+            console.error(`Error downloading ${fileName}:`, error);
+            return false;
+        }
+    }
+
+    /**
      * Compares two semantic version strings.
      * Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal.
      */
