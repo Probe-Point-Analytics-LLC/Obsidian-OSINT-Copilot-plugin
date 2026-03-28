@@ -11614,6 +11614,7 @@ Respond with this exact JSON structure:
       try {
         switch (tool) {
           case "DARK_WEB": {
+            const darkWebModel = "gpt-5-mini";
             onProgress(displayName, "Initializing job...", 10);
             const darkWebRes = await (0, import_obsidian12.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
@@ -11622,7 +11623,7 @@ Respond with this exact JSON structure:
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`
               },
-              body: JSON.stringify({ query, model: "gpt-4o", threads: 8 }),
+              body: JSON.stringify({ query, model: darkWebModel, threads: 8 }),
               throw: false
             });
             if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
@@ -11667,7 +11668,22 @@ Respond with this exact JSON structure:
                 headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
                 throw: false
               });
-              results["DARK_WEB"] = downloadRes.status < 300 ? downloadRes.json?.summary : "Download failed.";
+              if (downloadRes.status < 300 && downloadRes.json?.summary) {
+                const summary = downloadRes.json.summary;
+                let savedFileName = "";
+                try {
+                  if (typeof this.plugin.saveDarkWebReportToVault === "function") {
+                    savedFileName = await this.plugin.saveDarkWebReportToVault(summary, query, jobId);
+                  }
+                } catch (e) {
+                  console.error("Could not save dark web report to vault", e);
+                }
+                results["DARK_WEB"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**
+
+${summary}` : summary;
+              } else {
+                results["DARK_WEB"] = "Download failed.";
+              }
             }
             onProgress(displayName, "Complete", 100);
             break;
@@ -11701,7 +11717,19 @@ Respond with this exact JSON structure:
                   }
                 }
               );
-              results["CORPORATE_REPORTS"] = reportData.content;
+              let savedFileName = "";
+              try {
+                savedFileName = await this.plugin.saveReportToVault(
+                  reportData.content,
+                  query,
+                  reportData.filename
+                );
+              } catch (e) {
+                console.error("Could not save corporate report to vault", e);
+              }
+              results["CORPORATE_REPORTS"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**
+
+${reportData.content}` : reportData.content;
             } catch (e) {
               results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
             }
