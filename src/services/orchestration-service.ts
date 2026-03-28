@@ -526,7 +526,7 @@ Respond with this exact JSON structure:
 
         // 2. Call GraphApiService for extraction
         try {
-            const extraction = await this.plugin.graphApiService.processText(
+            const extraction = await this.plugin.graphApiService.processTextInChunks(
                 textToProcess,
                 this.plugin.entityManager.getAllEntities(),
                 new Date().toISOString()

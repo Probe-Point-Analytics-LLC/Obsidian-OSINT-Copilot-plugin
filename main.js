@@ -11806,7 +11806,7 @@ Content Preview: ${content.substring(0, 500)}...`);
       }
     }
     try {
-      const extraction = await this.plugin.graphApiService.processText(
+      const extraction = await this.plugin.graphApiService.processTextInChunks(
         textToProcess,
         this.plugin.entityManager.getAllEntities(),
         (/* @__PURE__ */ new Date()).toISOString()
