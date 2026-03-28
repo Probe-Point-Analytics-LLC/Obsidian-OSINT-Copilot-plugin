@@ -15,9 +15,7 @@ export class UpdaterService {
     private app: App;
     private readonly REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
 
-    // This is the relative path from the vault root to the plugin folder
-    // In Obsidian, plugins are stored in .obsidian/plugins/
-    private readonly PLUGIN_FOLDER = ".obsidian/plugins/Obsidian-OSINT-Copilot-plugin";
+    private readonly PLUGIN_FOLDER = ".obsidian/plugins/osint-copilot";
 
     constructor(plugin: Plugin) {
         this.plugin = plugin;

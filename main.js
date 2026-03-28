@@ -11996,9 +11996,7 @@ var import_obsidian13 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
-    // This is the relative path from the vault root to the plugin folder
-    // In Obsidian, plugins are stored in .obsidian/plugins/
-    this.PLUGIN_FOLDER = ".obsidian/plugins/Obsidian-OSINT-Copilot-plugin";
+    this.PLUGIN_FOLDER = ".obsidian/plugins/osint-copilot";
     this.plugin = plugin;
     this.app = plugin.app;
   }
