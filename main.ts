@@ -4490,6 +4490,7 @@ export class ChatView extends ItemView {
         attachmentsContext,
         currentGraphState, // Also pass the graph state
         conversationMemory, // Send the memory history
+        this.currentConversation,
         updateProgress
       );
 
@@ -4937,6 +4938,7 @@ export class ChatView extends ItemView {
         selectedTools,
         queryForTools,
         "",
+        this.currentConversation,
         updateProgress
       );
 

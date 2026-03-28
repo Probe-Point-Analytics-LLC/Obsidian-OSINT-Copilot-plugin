@@ -64,6 +64,7 @@ export class OrchestrationService {
         attachmentsContext: string,
         currentGraphState: any,
         conversationMemory: { role: string, content: string }[],
+        currentConversation: any,
         onProgress: (msg: string, percent: number) => void
     ): Promise<OrchestrationResult> {
         try {
@@ -113,6 +114,7 @@ export class OrchestrationService {
                 plan.toolsToCall,
                 query,
                 attachmentsContext,
+                currentConversation,
                 (tool, msg, percent) => {
                     onProgress(`[${tool}] ${msg}`, percent);
                 }
@@ -307,6 +309,7 @@ Respond with this exact JSON structure:
         tools: string[],
         query: string,
         attachmentsContext: string,
+        currentConversation: any,
         onProgress: (tool: string, message: string, percent: number) => void
     ): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
@@ -387,22 +390,39 @@ Respond with this exact JSON structure:
 
                     case "OSINT_SEARCH": {
                         onProgress(displayName, "Searching digital footprints...", 30);
-                        const osintRes = await this.plugin.graphApiService.callRemoteModel([
-                            { role: "system", content: "You are an expert OSINT researcher. Provide a detailed factual report on the query, including digital footprints and public records." },
-                            { role: "user", content: query }
-                        ]);
-                        results["OSINT_SEARCH"] = osintRes;
+                        try {
+                            const osintRes = await this.plugin.graphApiService.aiSearch({
+                                query,
+                                max_providers: 5,
+                                parallel: true
+                            });
+                            results["OSINT_SEARCH"] = osintRes;
+                        } catch (e: any) {
+                            results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
+                        }
                         onProgress(displayName, "Complete", 100);
                         break;
                     }
 
                     case "CORPORATE_REPORTS": {
-                        onProgress(displayName, "Analyzing corporate registries...", 30);
-                        const corpRes = await this.plugin.graphApiService.callRemoteModel([
-                            { role: "system", content: "You are a corporate intelligence analyst. Analyze ownership structures, financial links, and shell companies for the query." },
-                            { role: "user", content: query }
-                        ]);
-                        results["CORPORATE_REPORTS"] = corpRes;
+                        onProgress(displayName, "Generating corporate intelligence report...", 10);
+                        try {
+                            // Use the plugin's native report generation which hits /api/generate-report
+                            const reportData = await this.plugin.generateReport(
+                                query,
+                                currentConversation || null,
+                                (status, progress) => {
+                                    if (progress) {
+                                        onProgress(displayName, progress.message, progress.percent);
+                                    } else {
+                                        onProgress(displayName, status, 30);
+                                    }
+                                }
+                            );
+                            results["CORPORATE_REPORTS"] = reportData.content;
+                        } catch (e: any) {
+                            results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
+                        }
                         onProgress(displayName, "Complete", 100);
                         break;
                     }

@@ -11400,7 +11400,7 @@ var OrchestrationService = class {
       }
     }
   }
-  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, onProgress) {
+  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, currentConversation, onProgress) {
     try {
       onProgress("Verifying provider and credits...", 10);
       await this.verifyProviderAndCredits();
@@ -11445,6 +11445,7 @@ ${extractedText}`;
         plan.toolsToCall,
         query,
         attachmentsContext,
+        currentConversation,
         (tool, msg, percent) => {
           onProgress(`[${tool}] ${msg}`, percent);
         }
@@ -11600,7 +11601,7 @@ Respond with this exact JSON structure:
       };
     }
   }
-  async executeToolsInParallel(tools, query, attachmentsContext, onProgress) {
+  async executeToolsInParallel(tools, query, attachmentsContext, currentConversation, onProgress) {
     const results = {};
     const toolToDisplayName = {
       "DARK_WEB": "DarkWeb Search",
@@ -11673,21 +11674,37 @@ Respond with this exact JSON structure:
           }
           case "OSINT_SEARCH": {
             onProgress(displayName, "Searching digital footprints...", 30);
-            const osintRes = await this.plugin.graphApiService.callRemoteModel([
-              { role: "system", content: "You are an expert OSINT researcher. Provide a detailed factual report on the query, including digital footprints and public records." },
-              { role: "user", content: query }
-            ]);
-            results["OSINT_SEARCH"] = osintRes;
+            try {
+              const osintRes = await this.plugin.graphApiService.aiSearch({
+                query,
+                max_providers: 5,
+                parallel: true
+              });
+              results["OSINT_SEARCH"] = osintRes;
+            } catch (e) {
+              results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
+            }
             onProgress(displayName, "Complete", 100);
             break;
           }
           case "CORPORATE_REPORTS": {
-            onProgress(displayName, "Analyzing corporate registries...", 30);
-            const corpRes = await this.plugin.graphApiService.callRemoteModel([
-              { role: "system", content: "You are a corporate intelligence analyst. Analyze ownership structures, financial links, and shell companies for the query." },
-              { role: "user", content: query }
-            ]);
-            results["CORPORATE_REPORTS"] = corpRes;
+            onProgress(displayName, "Generating corporate intelligence report...", 10);
+            try {
+              const reportData = await this.plugin.generateReport(
+                query,
+                currentConversation || null,
+                (status, progress) => {
+                  if (progress) {
+                    onProgress(displayName, progress.message, progress.percent);
+                  } else {
+                    onProgress(displayName, status, 30);
+                  }
+                }
+              );
+              results["CORPORATE_REPORTS"] = reportData.content;
+            } catch (e) {
+              results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
+            }
             onProgress(displayName, "Complete", 100);
             break;
           }
@@ -15517,6 +15534,7 @@ ${fileList}` : fileList;
         // Also pass the graph state
         conversationMemory,
         // Send the memory history
+        this.currentConversation,
         updateProgress
       );
       this.activeAbortControllers.delete(assistantIndex);
@@ -15890,6 +15908,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
         selectedTools,
         queryForTools,
         "",
+        this.currentConversation,
         updateProgress
       );
       this.activeAbortControllers.delete(assistantIndex);
