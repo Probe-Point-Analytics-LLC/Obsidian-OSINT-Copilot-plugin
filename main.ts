@@ -2232,8 +2232,10 @@ export interface ChatHistoryItem {
   toolResults?: Record<string, any>;
   savedPlan?: OrchestrationPlan;
   savedQuery?: string;
-  /** During vault graph ingest: @@ commands accumulated so far (live preview before final review). */
+  /** During vault graph ingest: @@ commands accumulated so far (legacy preview). */
   vaultIngestPreviewCommands?: string[];
+  /** Vault ingest: human-readable lines as each entity/link is applied automatically. */
+  vaultIngestLiveLog?: string[];
 }
 
 export class ChatView extends ItemView {
@@ -4185,9 +4187,31 @@ export class ChatView extends ItemView {
         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
       }
 
+      const vaultLive = this.chatHistory[messageIndex]?.vaultIngestLiveLog;
       const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
       const existingIngestPreview = messageDiv.querySelector(".vault-ai-vault-ingest-preview") as HTMLElement;
-      if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
+      if (vaultLive && vaultLive.length > 0) {
+        const ingestPreview = existingIngestPreview || (() => {
+          const el = document.createElement("div");
+          el.className = "vault-ai-vault-ingest-preview";
+          progressContainer.insertAdjacentElement("afterend", el);
+          return el;
+        })();
+        ingestPreview.empty();
+        ingestPreview.style.marginTop = "10px";
+        ingestPreview.style.padding = "10px 12px";
+        ingestPreview.style.border = "1px solid var(--background-modifier-border)";
+        ingestPreview.style.borderRadius = "8px";
+        ingestPreview.style.background = "var(--background-secondary)";
+        ingestPreview.style.maxHeight = "240px";
+        ingestPreview.style.overflowY = "auto";
+        ingestPreview.style.fontSize = "12px";
+        ingestPreview.createEl("div", {
+          text: `Applied to graph (${vaultLive.length}) — one line per entity or link`,
+        }).style.marginBottom = "8px";
+        const mdBox = ingestPreview.createDiv();
+        void MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+      } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
           el.className = "vault-ai-vault-ingest-preview";
@@ -4645,10 +4669,11 @@ export class ChatView extends ItemView {
         (_displayName, msg, pct, detail) => {
           if (this.activeAbortControllers.has(assistantIndex)) {
             this.chatHistory[assistantIndex].progress = { message: msg, percent: pct };
-            if (detail?.vaultIngestAccumulatedCommands) {
-              this.chatHistory[assistantIndex].vaultIngestPreviewCommands = [
-                ...detail.vaultIngestAccumulatedCommands,
-              ];
+            if (detail?.vaultIngestAppliedLine) {
+              if (!this.chatHistory[assistantIndex].vaultIngestLiveLog) {
+                this.chatHistory[assistantIndex].vaultIngestLiveLog = [];
+              }
+              this.chatHistory[assistantIndex].vaultIngestLiveLog!.push(detail.vaultIngestAppliedLine);
             }
             this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
           }
@@ -4680,6 +4705,7 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       this.chatHistory[assistantIndex].vaultIngestPreviewCommands = undefined;
+      this.chatHistory[assistantIndex].vaultIngestLiveLog = undefined;
       await this.renderMessages();
     }
   }
@@ -4846,10 +4872,19 @@ export class ChatView extends ItemView {
       if (typeof result === 'string') {
         displayText = result;
       } else if (result && typeof result === 'object') {
-        // Vault ingest: show summary + command count (full @@ list was visible during progress)
+        // Vault ingest: entities applied during run; optional count from appliedOperationsCount
         if (result.__vaultIngest && result.summary) {
-          const n = Array.isArray(result.graphCommands) ? result.graphCommands.length : 0;
-          displayText = `${result.summary}\n\n**${n}** proposed graph command(s) — confirm with **📊 Generate Analysis & Graph**, then review the full list in the next step.`;
+          const n =
+            typeof result.appliedOperationsCount === "number"
+              ? result.appliedOperationsCount
+              : Array.isArray(result.graphCommands)
+                ? result.graphCommands.length
+                : 0;
+          if (result.__vaultIngestAutoApplied) {
+            displayText = `${result.summary}\n\n**${n}** operation(s) were applied to the graph automatically. Use **📊 Generate Analysis & Graph** for the written summary (no second confirmation list).`;
+          } else {
+            displayText = `${result.summary}\n\n**${n}** proposed graph command(s) — confirm with **📊 Generate Analysis & Graph**, then review the full list in the next step.`;
+          }
         } else if (result.summary) {
           displayText = result.summary;
         } else if (result.results && Array.isArray(result.results)) {
@@ -4869,6 +4904,18 @@ export class ChatView extends ItemView {
       }
       // Render as markdown for rich formatting
       MarkdownRenderer.render(this.app, displayText, content, "", this);
+
+      if (
+        tool === "VAULT_GRAPH_INGEST" &&
+        item.vaultIngestLiveLog &&
+        item.vaultIngestLiveLog.length > 0
+      ) {
+        content.createEl("hr");
+        content.createEl("strong", { text: "Applied to graph (during ingest):" });
+        const logDiv = content.createDiv();
+        logDiv.style.marginTop = "8px";
+        void MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+      }
 
       details.appendChild(summary);
       details.appendChild(content);

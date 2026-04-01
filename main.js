@@ -4107,7 +4107,7 @@ var GraphApiService = class {
     if (text.length <= CHUNK_THRESHOLD) {
       const result = await this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
       if (vaultChunkOptions?.onChunkOperations && result.success && result.operations?.length) {
-        vaultChunkOptions.onChunkOperations({
+        await vaultChunkOptions.onChunkOperations({
           chunkIndex: 1,
           totalChunks: 1,
           operations: result.operations
@@ -4174,7 +4174,7 @@ var GraphApiService = class {
             }
           }
           if (vaultChunkOptions?.onChunkOperations && chunkAddedOps.length > 0) {
-            vaultChunkOptions.onChunkOperations({
+            await vaultChunkOptions.onChunkOperations({
               chunkIndex: chunkNum,
               totalChunks: chunks.length,
               operations: chunkAddedOps
@@ -11551,6 +11551,7 @@ ${extractedText}`;
   async continueAfterToolReview(toolResults, plan, query, currentGraphState, conversationMemory, onProgress) {
     try {
       let proposedCommands;
+      const vaultIngestAutoApplied = toolResults["VAULT_GRAPH_INGEST"] && typeof toolResults["VAULT_GRAPH_INGEST"] === "object" && toolResults["VAULT_GRAPH_INGEST"].__vaultIngestAutoApplied === true;
       if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
         onProgress("Generating graph entities from all tool results...", 30);
         const extraCommands = await this.feedResultsToGraphExtraction(toolResults);
@@ -11560,7 +11561,7 @@ ${extractedText}`;
           plan.graphCommands = [...plan.graphCommands, ...extraCommands];
         }
       }
-      if (plan.graphCommands && plan.graphCommands.length > 0) {
+      if (!vaultIngestAutoApplied && plan.graphCommands && plan.graphCommands.length > 0) {
         onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 50);
         proposedCommands = plan.graphCommands;
       }
@@ -11838,10 +11839,25 @@ Respond with this exact JSON structure:
       }
       return Math.min(94, 5 + Math.floor(85 * frac));
     };
-    const emit = (message, fileIndexZeroBased, chunkNum, totalChunks) => {
+    const emit = (message, fileIndexZeroBased, chunkNum, totalChunks, extra) => {
       onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
-        vaultIngestAccumulatedCommands: [...graphCommands]
+        ...extra?.appliedLine ? { vaultIngestAppliedLine: extra.appliedLine } : {}
       });
+    };
+    const applyAndEmitNewCommands = async (newCmds, filePath, fileIndexZeroBased, chunkIndex, totalChunks) => {
+      graphCommands.push(...newCmds);
+      for (const cmd of newCmds) {
+        const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
+        for (const line of lines) {
+          emit(
+            `${filePath} (${chunkIndex}/${totalChunks})`,
+            fileIndexZeroBased,
+            chunkIndex,
+            totalChunks,
+            { appliedLine: line }
+          );
+        }
+      }
     };
     for (let i = 0; i < maxFiles; i++) {
       const file = files[i];
@@ -11914,7 +11930,7 @@ ${content}`;
         );
       }
     }
-    const summary = `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
+    const summary = `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
     return {
       summary,
       graphCommands,
@@ -12068,8 +12084,10 @@ ${reportData.content}` : reportData.content;
               });
               results["VAULT_GRAPH_INGEST"] = {
                 __vaultIngest: true,
+                __vaultIngestAutoApplied: true,
                 summary: out.summary,
-                graphCommands: out.graphCommands,
+                graphCommands: [],
+                appliedOperationsCount: out.graphCommands.length,
                 filesProcessed: out.filesProcessed,
                 filesTotal: out.filesTotal,
                 truncatedFiles: out.truncatedFiles,
@@ -12142,7 +12160,9 @@ Content Preview: ${content.substring(0, 500)}...`);
     let hasNonVaultTool = false;
     for (const [tool, result] of Object.entries(results)) {
       if (tool === "VAULT_GRAPH_INGEST" && result && typeof result === "object" && result.__vaultIngest === true && Array.isArray(result.graphCommands)) {
-        commands.push(...result.graphCommands);
+        if (!result.__vaultIngestAutoApplied) {
+          commands.push(...result.graphCommands);
+        }
         textToProcess += `
 
 --- TOOL: ${tool} (summary) ---
@@ -12177,6 +12197,75 @@ ${result.summary || ""}
       console.error("[OrchestrationService] Post-search extraction failed:", error);
     }
     return commands;
+  }
+  /**
+   * Apply @@ graph commands without modal (vault ingest). Returns one human-readable line per command.
+   */
+  async executeGraphCommandsImmediate(commands, options) {
+    const lines = [];
+    for (const command of commands) {
+      try {
+        if (command.startsWith("@@create_entity")) {
+          const jsonStr = command.replace("@@create_entity", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.type && data.properties) {
+            await this.plugin.entityManager.createEntity(data.type, data.properties);
+            const name = data.label || data.properties && data.properties.name || data.type;
+            lines.push(`\u2713 Created ${data.type}: **${name}**`);
+          }
+        } else if (command.startsWith("@@delete_entity")) {
+          const jsonStr = command.replace("@@delete_entity", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.id) {
+            const entity = this.plugin.entityManager.getEntity(data.id);
+            const name = entity ? entity.label : `ID: ${data.id}`;
+            await this.plugin.entityManager.deleteEntities([data.id]);
+            lines.push(`\u2713 Removed entity: **${name}**`);
+          }
+        } else if (command.startsWith("@@create_link")) {
+          const jsonStr = command.replace("@@create_link", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.from && data.to && data.relationship) {
+            let fromId = data.from;
+            let toId = data.to;
+            if (!this.plugin.entityManager.getEntity(fromId)) {
+              const fromEnt2 = this.plugin.entityManager.findEntityByLabel(data.from);
+              if (fromEnt2)
+                fromId = fromEnt2.id;
+            }
+            if (!this.plugin.entityManager.getEntity(toId)) {
+              const toEnt2 = this.plugin.entityManager.findEntityByLabel(data.to);
+              if (toEnt2)
+                toId = toEnt2.id;
+            }
+            await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+            const fromEnt = this.plugin.entityManager.getEntity(fromId);
+            const toEnt = this.plugin.entityManager.getEntity(toId);
+            const fromName = fromEnt ? fromEnt.label : String(data.from);
+            const toName = toEnt ? toEnt.label : String(data.to);
+            lines.push(`\u2713 Link: **${fromName}** \u2192 (${data.relationship}) \u2192 **${toName}**`);
+          }
+        } else if (command.startsWith("@@delete_link")) {
+          const jsonStr = command.replace("@@delete_link", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.id) {
+            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
+            lines.push(`\u2713 Removed link (id ${data.id})`);
+          }
+        } else {
+          console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);
+          lines.push(`\u26A0 Skipped unrecognized command`);
+        }
+      } catch (e) {
+        console.error(`[OrchestrationService] Failed to execute graph command '${command}':`, e);
+        const msg = e instanceof Error ? e.message : String(e);
+        lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
+        if (options.showErrorNotices) {
+          new import_obsidian12.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+        }
+      }
+    }
+    return lines;
   }
   async executeGraphModifications(commands) {
     if (!commands || commands.length === 0)
@@ -12230,57 +12319,8 @@ ${result.summary || ""}
       new import_obsidian12.Notice("No graph modifications selected.");
       return;
     }
-    let successCount = 0;
-    for (const command of cmdsToExecute) {
-      try {
-        if (command.startsWith("@@create_entity")) {
-          const jsonStr = command.replace("@@create_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.type && data.properties) {
-            await this.plugin.entityManager.createEntity(data.type, data.properties);
-            successCount++;
-          }
-        } else if (command.startsWith("@@delete_entity")) {
-          const jsonStr = command.replace("@@delete_entity", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteEntities([data.id]);
-            successCount++;
-          }
-        } else if (command.startsWith("@@create_link")) {
-          const jsonStr = command.replace("@@create_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.from && data.to && data.relationship) {
-            let fromId = data.from;
-            let toId = data.to;
-            if (!this.plugin.entityManager.getEntity(fromId)) {
-              const fromEnt = this.plugin.entityManager.findEntityByLabel(data.from);
-              if (fromEnt)
-                fromId = fromEnt.id;
-            }
-            if (!this.plugin.entityManager.getEntity(toId)) {
-              const toEnt = this.plugin.entityManager.findEntityByLabel(data.to);
-              if (toEnt)
-                toId = toEnt.id;
-            }
-            await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-            successCount++;
-          }
-        } else if (command.startsWith("@@delete_link")) {
-          const jsonStr = command.replace("@@delete_link", "").trim();
-          const data = JSON.parse(jsonStr);
-          if (data.id) {
-            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
-            successCount++;
-          }
-        } else {
-          console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);
-        }
-      } catch (e) {
-        console.error(`[OrchestrationService] Failed to execute graph command '${command}':`, e);
-        new import_obsidian12.Notice(`Error executing command: ${command.substring(0, 30)}...`);
-      }
-    }
+    const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
+    const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
       new import_obsidian12.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
@@ -15683,9 +15723,31 @@ var ChatView = class extends import_obsidian14.ItemView {
         disclaimer.style.fontStyle = "italic";
         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
       }
+      const vaultLive = this.chatHistory[messageIndex]?.vaultIngestLiveLog;
       const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
       const existingIngestPreview = messageDiv.querySelector(".vault-ai-vault-ingest-preview");
-      if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
+      if (vaultLive && vaultLive.length > 0) {
+        const ingestPreview = existingIngestPreview || (() => {
+          const el = document.createElement("div");
+          el.className = "vault-ai-vault-ingest-preview";
+          progressContainer.insertAdjacentElement("afterend", el);
+          return el;
+        })();
+        ingestPreview.empty();
+        ingestPreview.style.marginTop = "10px";
+        ingestPreview.style.padding = "10px 12px";
+        ingestPreview.style.border = "1px solid var(--background-modifier-border)";
+        ingestPreview.style.borderRadius = "8px";
+        ingestPreview.style.background = "var(--background-secondary)";
+        ingestPreview.style.maxHeight = "240px";
+        ingestPreview.style.overflowY = "auto";
+        ingestPreview.style.fontSize = "12px";
+        ingestPreview.createEl("div", {
+          text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
+        }).style.marginBottom = "8px";
+        const mdBox = ingestPreview.createDiv();
+        void import_obsidian14.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+      } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
           el.className = "vault-ai-vault-ingest-preview";
@@ -16042,10 +16104,11 @@ ${fileList}` : fileList;
         (_displayName, msg, pct, detail) => {
           if (this.activeAbortControllers.has(assistantIndex)) {
             this.chatHistory[assistantIndex].progress = { message: msg, percent: pct };
-            if (detail?.vaultIngestAccumulatedCommands) {
-              this.chatHistory[assistantIndex].vaultIngestPreviewCommands = [
-                ...detail.vaultIngestAccumulatedCommands
-              ];
+            if (detail?.vaultIngestAppliedLine) {
+              if (!this.chatHistory[assistantIndex].vaultIngestLiveLog) {
+                this.chatHistory[assistantIndex].vaultIngestLiveLog = [];
+              }
+              this.chatHistory[assistantIndex].vaultIngestLiveLog.push(detail.vaultIngestAppliedLine);
             }
             this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
           }
@@ -16073,6 +16136,8 @@ ${fileList}` : fileList;
         return;
       this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].vaultIngestPreviewCommands = void 0;
+      this.chatHistory[assistantIndex].vaultIngestLiveLog = void 0;
       await this.renderMessages();
     }
   }
@@ -16208,10 +16273,16 @@ ${fileList}` : fileList;
         displayText = result;
       } else if (result && typeof result === "object") {
         if (result.__vaultIngest && result.summary) {
-          const n = Array.isArray(result.graphCommands) ? result.graphCommands.length : 0;
-          displayText = `${result.summary}
+          const n = typeof result.appliedOperationsCount === "number" ? result.appliedOperationsCount : Array.isArray(result.graphCommands) ? result.graphCommands.length : 0;
+          if (result.__vaultIngestAutoApplied) {
+            displayText = `${result.summary}
+
+**${n}** operation(s) were applied to the graph automatically. Use **\u{1F4CA} Generate Analysis & Graph** for the written summary (no second confirmation list).`;
+          } else {
+            displayText = `${result.summary}
 
 **${n}** proposed graph command(s) \u2014 confirm with **\u{1F4CA} Generate Analysis & Graph**, then review the full list in the next step.`;
+          }
         } else if (result.summary) {
           displayText = result.summary;
         } else if (result.results && Array.isArray(result.results)) {
@@ -16232,6 +16303,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
         displayText = String(result);
       }
       import_obsidian14.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
+        content.createEl("hr");
+        content.createEl("strong", { text: "Applied to graph (during ingest):" });
+        const logDiv = content.createDiv();
+        logDiv.style.marginTop = "8px";
+        void import_obsidian14.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+      }
       details.appendChild(summary);
       details.appendChild(content);
       toolResultsDiv.appendChild(details);

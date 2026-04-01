@@ -23,7 +23,7 @@ export interface VaultProcessTextChunkOptions {
         chunkIndex: number;
         totalChunks: number;
         operations: AIOperation[];
-    }) => void;
+    }) => void | Promise<void>;
 }
 
 export interface ApiHealthResponse {
@@ -915,7 +915,7 @@ export class GraphApiService {
         if (text.length <= CHUNK_THRESHOLD) {
             const result = await this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
             if (vaultChunkOptions?.onChunkOperations && result.success && result.operations?.length) {
-                vaultChunkOptions.onChunkOperations({
+                await vaultChunkOptions.onChunkOperations({
                     chunkIndex: 1,
                     totalChunks: 1,
                     operations: result.operations,
@@ -999,7 +999,7 @@ export class GraphApiService {
                         }
                     }
                     if (vaultChunkOptions?.onChunkOperations && chunkAddedOps.length > 0) {
-                        vaultChunkOptions.onChunkOperations({
+                        await vaultChunkOptions.onChunkOperations({
                             chunkIndex: chunkNum,
                             totalChunks: chunks.length,
                             operations: chunkAddedOps,

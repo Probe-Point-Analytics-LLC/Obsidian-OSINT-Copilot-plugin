@@ -161,6 +161,11 @@ export class OrchestrationService {
         try {
             let proposedCommands: string[] | undefined;
 
+            const vaultIngestAutoApplied =
+                toolResults["VAULT_GRAPH_INGEST"] &&
+                typeof toolResults["VAULT_GRAPH_INGEST"] === "object" &&
+                (toolResults["VAULT_GRAPH_INGEST"] as { __vaultIngestAutoApplied?: boolean }).__vaultIngestAutoApplied === true;
+
             // Generate graph entities from ALL combined tool results
             if (this.plugin.settings.enableGraphFeatures && Object.keys(toolResults).length > 0) {
                 onProgress("Generating graph entities from all tool results...", 30);
@@ -171,7 +176,7 @@ export class OrchestrationService {
                 }
             }
 
-            if (plan.graphCommands && plan.graphCommands.length > 0) {
+            if (!vaultIngestAutoApplied && plan.graphCommands && plan.graphCommands.length > 0) {
                 onProgress(`Preparing ${plan.graphCommands.length} graph modifications...`, 50);
                 proposedCommands = plan.graphCommands;
             }
@@ -489,7 +494,7 @@ Respond with this exact JSON structure:
         onFileProgress: (
             message: string,
             percent: number,
-            detail?: { vaultIngestAccumulatedCommands: string[] }
+            detail?: { vaultIngestAppliedLine?: string; vaultIngestAccumulatedCommands?: string[] }
         ) => void
     ): Promise<{
         summary: string;
@@ -521,10 +526,38 @@ Respond with this exact JSON structure:
             return Math.min(94, 5 + Math.floor(85 * frac));
         };
 
-        const emit = (message: string, fileIndexZeroBased: number, chunkNum?: number, totalChunks?: number) => {
+        const emit = (
+            message: string,
+            fileIndexZeroBased: number,
+            chunkNum?: number,
+            totalChunks?: number,
+            extra?: { appliedLine?: string }
+        ) => {
             onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
-                vaultIngestAccumulatedCommands: [...graphCommands],
+                ...(extra?.appliedLine ? { vaultIngestAppliedLine: extra.appliedLine } : {}),
             });
+        };
+
+        const applyAndEmitNewCommands = async (
+            newCmds: string[],
+            filePath: string,
+            fileIndexZeroBased: number,
+            chunkIndex: number,
+            totalChunks: number
+        ) => {
+            graphCommands.push(...newCmds);
+            for (const cmd of newCmds) {
+                const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
+                for (const line of lines) {
+                    emit(
+                        `${filePath} (${chunkIndex}/${totalChunks})`,
+                        fileIndexZeroBased,
+                        chunkIndex,
+                        totalChunks,
+                        { appliedLine: line }
+                    );
+                }
+            }
         };
 
         for (let i = 0; i < maxFiles; i++) {
@@ -608,7 +641,7 @@ Respond with this exact JSON structure:
                 ? ` ${truncatedFiles} file(s) were truncated to ${OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.`
                 : "") +
             (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") +
-            ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
+            ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
 
         return {
             summary,
@@ -629,7 +662,7 @@ Respond with this exact JSON structure:
             tool: string,
             message: string,
             percent: number,
-            detail?: { vaultIngestAccumulatedCommands?: string[] }
+            detail?: { vaultIngestAccumulatedCommands?: string[]; vaultIngestAppliedLine?: string }
         ) => void
     ): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
@@ -782,8 +815,10 @@ Respond with this exact JSON structure:
                             });
                             results["VAULT_GRAPH_INGEST"] = {
                                 __vaultIngest: true,
+                                __vaultIngestAutoApplied: true,
                                 summary: out.summary,
-                                graphCommands: out.graphCommands,
+                                graphCommands: [],
+                                appliedOperationsCount: out.graphCommands.length,
                                 filesProcessed: out.filesProcessed,
                                 filesTotal: out.filesTotal,
                                 truncatedFiles: out.truncatedFiles,
@@ -868,7 +903,9 @@ Respond with this exact JSON structure:
                 result.__vaultIngest === true &&
                 Array.isArray(result.graphCommands)
             ) {
-                commands.push(...result.graphCommands);
+                if (!result.__vaultIngestAutoApplied) {
+                    commands.push(...result.graphCommands);
+                }
                 textToProcess += `\n\n--- TOOL: ${tool} (summary) ---\n${result.summary || ""}\n`;
                 continue;
             }
@@ -900,6 +937,85 @@ Respond with this exact JSON structure:
         }
 
         return commands;
+    }
+
+    /**
+     * Apply @@ graph commands without modal (vault ingest). Returns one human-readable line per command.
+     */
+    private async executeGraphCommandsImmediate(
+        commands: string[],
+        options: { showErrorNotices: boolean }
+    ): Promise<string[]> {
+        const lines: string[] = [];
+
+        for (const command of commands) {
+            try {
+                if (command.startsWith("@@create_entity")) {
+                    const jsonStr = command.replace("@@create_entity", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.type && data.properties) {
+                        await this.plugin.entityManager.createEntity(data.type, data.properties);
+                        const name =
+                            data.label ||
+                            (data.properties && (data.properties.name as string)) ||
+                            data.type;
+                        lines.push(`✓ Created ${data.type}: **${name}**`);
+                    }
+                } else if (command.startsWith("@@delete_entity")) {
+                    const jsonStr = command.replace("@@delete_entity", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.id) {
+                        const entity = this.plugin.entityManager.getEntity(data.id);
+                        const name = entity ? entity.label : `ID: ${data.id}`;
+                        await this.plugin.entityManager.deleteEntities([data.id]);
+                        lines.push(`✓ Removed entity: **${name}**`);
+                    }
+                } else if (command.startsWith("@@create_link")) {
+                    const jsonStr = command.replace("@@create_link", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.from && data.to && data.relationship) {
+                        let fromId = data.from;
+                        let toId = data.to;
+
+                        if (!this.plugin.entityManager.getEntity(fromId)) {
+                            const fromEnt = this.plugin.entityManager.findEntityByLabel(data.from);
+                            if (fromEnt) fromId = fromEnt.id;
+                        }
+
+                        if (!this.plugin.entityManager.getEntity(toId)) {
+                            const toEnt = this.plugin.entityManager.findEntityByLabel(data.to);
+                            if (toEnt) toId = toEnt.id;
+                        }
+
+                        await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+                        const fromEnt = this.plugin.entityManager.getEntity(fromId);
+                        const toEnt = this.plugin.entityManager.getEntity(toId);
+                        const fromName = fromEnt ? fromEnt.label : String(data.from);
+                        const toName = toEnt ? toEnt.label : String(data.to);
+                        lines.push(`✓ Link: **${fromName}** → (${data.relationship}) → **${toName}**`);
+                    }
+                } else if (command.startsWith("@@delete_link")) {
+                    const jsonStr = command.replace("@@delete_link", "").trim();
+                    const data = JSON.parse(jsonStr);
+                    if (data.id) {
+                        await this.plugin.entityManager.deleteConnectionWithNote(data.id);
+                        lines.push(`✓ Removed link (id ${data.id})`);
+                    }
+                } else {
+                    console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);
+                    lines.push(`⚠ Skipped unrecognized command`);
+                }
+            } catch (e) {
+                console.error(`[OrchestrationService] Failed to execute graph command '${command}':`, e);
+                const msg = e instanceof Error ? e.message : String(e);
+                lines.push(`⚠ Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "…" : ""}`);
+                if (options.showErrorNotices) {
+                    new Notice(`Error executing command: ${command.substring(0, 30)}...`);
+                }
+            }
+        }
+
+        return lines;
     }
 
     public async executeGraphModifications(commands: string[]): Promise<void> {
@@ -959,60 +1075,8 @@ Respond with this exact JSON structure:
             return;
         }
 
-        let successCount = 0;
-
-        for (const command of cmdsToExecute) {
-            try {
-                if (command.startsWith("@@create_entity")) {
-                    const jsonStr = command.replace("@@create_entity", "").trim();
-                    const data = JSON.parse(jsonStr);
-                    if (data.type && data.properties) {
-                        await this.plugin.entityManager.createEntity(data.type, data.properties);
-                        successCount++;
-                    }
-                } else if (command.startsWith("@@delete_entity")) {
-                    const jsonStr = command.replace("@@delete_entity", "").trim();
-                    const data = JSON.parse(jsonStr);
-                    if (data.id) {
-                        await this.plugin.entityManager.deleteEntities([data.id]);
-                        successCount++;
-                    }
-                } else if (command.startsWith("@@create_link")) {
-                    const jsonStr = command.replace("@@create_link", "").trim();
-                    const data = JSON.parse(jsonStr);
-                    if (data.from && data.to && data.relationship) {
-                        let fromId = data.from;
-                        let toId = data.to;
-
-                        // Try to find the entity by label if it's not a recognized ID
-                        if (!this.plugin.entityManager.getEntity(fromId)) {
-                            const fromEnt = this.plugin.entityManager.findEntityByLabel(data.from);
-                            if (fromEnt) fromId = fromEnt.id;
-                        }
-
-                        if (!this.plugin.entityManager.getEntity(toId)) {
-                            const toEnt = this.plugin.entityManager.findEntityByLabel(data.to);
-                            if (toEnt) toId = toEnt.id;
-                        }
-
-                        await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
-                        successCount++;
-                    }
-                } else if (command.startsWith("@@delete_link")) {
-                    const jsonStr = command.replace("@@delete_link", "").trim();
-                    const data = JSON.parse(jsonStr);
-                    if (data.id) {
-                        await this.plugin.entityManager.deleteConnectionWithNote(data.id);
-                        successCount++;
-                    }
-                } else {
-                    console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);
-                }
-            } catch (e) {
-                console.error(`[OrchestrationService] Failed to execute graph command '${command}':`, e);
-                new Notice(`Error executing command: ${command.substring(0, 30)}...`);
-            }
-        }
+        const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
+        const successCount = lines.filter((l) => l.startsWith("✓")).length;
 
         if (successCount > 0) {
             new Notice(`Successfully executed ${successCount} graph modification(s).`);
