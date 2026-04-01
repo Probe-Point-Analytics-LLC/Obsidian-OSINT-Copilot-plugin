@@ -2244,6 +2244,7 @@ export class ChatView extends ItemView {
   reportGenerationMode: boolean = false;
   osintSearchMode: boolean = false; // Digital Footprint mode
   orchestrationMode: boolean = false; // Orchestration agent mode
+  vaultGraphIngestMode: boolean = false; // Vault-wide graph ingest (markdown, PDF, images, etc.)
   // Mode dropdown element (replaces individual toggle checkboxes)
   modeDropdown!: HTMLSelectElement;
   // Digital Footprint options removed for global search
@@ -2296,9 +2297,16 @@ export class ChatView extends ItemView {
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
       this.orchestrationMode = conversation.orchestrationMode || false; // Load orchestration mode
+      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
 
       // Check if any main mode is explicitly set in the conversation
-      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode || conversation.orchestrationMode;
+      const hasMainMode =
+        conversation.darkWebMode ||
+        conversation.reportGenerationMode ||
+        conversation.osintSearchMode ||
+        conversation.localSearchMode ||
+        conversation.orchestrationMode ||
+        conversation.vaultGraphIngestMode;
 
       if (hasMainMode) {
         // Use the saved modes
@@ -2354,7 +2362,9 @@ export class ChatView extends ItemView {
         this.darkWebMode,
         this.graphGenerationMode,
         this.reportGenerationMode,
-        this.orchestrationMode // Save orchestration mode
+        this.osintSearchMode,
+        this.orchestrationMode,
+        this.vaultGraphIngestMode
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
@@ -2364,6 +2374,7 @@ export class ChatView extends ItemView {
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
     this.currentConversation.osintSearchMode = this.osintSearchMode;
     this.currentConversation.orchestrationMode = this.orchestrationMode; // Save orchestration mode
+    this.currentConversation.vaultGraphIngestMode = this.vaultGraphIngestMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
   }
@@ -2461,6 +2472,7 @@ export class ChatView extends ItemView {
     // Add standard options
     modeOptions.push(
       { value: "orchestration", label: "🧠 Main Copilot", mode: "orchestrationMode" }, // Added Orchestration Agent mode
+      { value: "vaultingest", label: "🗂️ Vault graph ingest", mode: "vaultGraphIngestMode" },
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
@@ -2489,6 +2501,7 @@ export class ChatView extends ItemView {
       else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
       else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
       else if (option.value === "orchestration" && this.orchestrationMode) optEl.selected = true; // Select orchestration mode
+      else if (option.value === "vaultingest" && this.vaultGraphIngestMode) optEl.selected = true;
     }
 
     // Settings shortcut button
@@ -2515,6 +2528,7 @@ export class ChatView extends ItemView {
       this.reportGenerationMode = false;
       this.osintSearchMode = false;
       this.orchestrationMode = false; // Reset orchestration mode
+      this.vaultGraphIngestMode = false;
 
       // Enable selected mode
       // Enable selected mode
@@ -2546,6 +2560,10 @@ export class ChatView extends ItemView {
           case "orchestration": // Handle orchestration mode selection
             this.orchestrationMode = true;
             new Notice("Main Copilot mode enabled");
+            break;
+          case "vaultingest":
+            this.vaultGraphIngestMode = true;
+            new Notice("Vault graph ingest mode — processes markdown, PDF, and images in your vault");
             break;
           case "none":
             // All modes off - Graph only Mode if graph generation is on
@@ -2783,6 +2801,13 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
+    if (this.vaultGraphIngestMode) {
+      return {
+        icon: "🗂️",
+        title: "Vault graph ingest:",
+        text: "Processes notes (markdown, text), PDFs, and images in your vault via the API, then proposes entities for your graph. Attachments add extra context.",
+      };
+    }
     if (this.orchestrationMode) {
       return {
         icon: "🧠",
@@ -3214,7 +3239,7 @@ export class ChatView extends ItemView {
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode && !this.vaultGraphIngestMode;
   }
 
   // Show notice when entering Graph only Mode
@@ -3226,6 +3251,9 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
+    if (this.vaultGraphIngestMode) {
+      return "Optional note (e.g. scope). Send to ingest markdown, PDF, and images from your vault into the graph...";
+    }
     if (this.orchestrationMode) return "Ask anything. The agent will orchestrate tools to find the answer...";
     if (this.isGraphOnlyMode()) {
       return "Enter text to extract entities...";
@@ -3339,6 +3367,8 @@ export class ChatView extends ItemView {
         this.modeDropdown.value = "osint";
       } else if (this.orchestrationMode) {
         this.modeDropdown.value = "orchestration";
+      } else if (this.vaultGraphIngestMode) {
+        this.modeDropdown.value = "vaultingest";
       } else {
         this.modeDropdown.value = "none";
       }
@@ -3387,7 +3417,16 @@ export class ChatView extends ItemView {
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
       // Check if Graph only Mode (graph gen ON, all main modes OFF)
       const convOsintSearchMode = conv.osintSearchMode || false;
-      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
+      const convOrchestration = conv.orchestrationMode || false;
+      const convVaultIngest = conv.vaultGraphIngestMode || false;
+      const isGraphOnly =
+        conv.graphGenerationMode &&
+        !conv.localSearchMode &&
+        !conv.darkWebMode &&
+        !conv.reportGenerationMode &&
+        !convOsintSearchMode &&
+        !convOrchestration &&
+        !convVaultIngest;
       // Show main mode badge or Graph only badge
       if (isGraphOnly) {
         meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphonly", title: "Graph only mode" });
@@ -3468,10 +3507,17 @@ export class ChatView extends ItemView {
       this.graphGenerationMode = conversation.graphGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
+      this.orchestrationMode = conversation.orchestrationMode || false;
+      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
       // Use localSearchMode from conversation, or infer from other modes for backward compatibility
-      this.localSearchMode = conversation.localSearchMode !== undefined
-        ? conversation.localSearchMode
-        : (!this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode);
+      this.localSearchMode =
+        conversation.localSearchMode !== undefined
+          ? conversation.localSearchMode
+          : !this.darkWebMode &&
+            !this.reportGenerationMode &&
+            !this.osintSearchMode &&
+            !this.orchestrationMode &&
+            !this.vaultGraphIngestMode;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
@@ -3493,6 +3539,7 @@ export class ChatView extends ItemView {
     this.reportGenerationMode = false;
     this.osintSearchMode = false;
     this.orchestrationMode = true; // Set Main Copilot as default
+    this.vaultGraphIngestMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
     new Notice("Started new conversation");
@@ -4289,7 +4336,7 @@ export class ChatView extends ItemView {
 
   async handleSend() {
     const value = this.inputEl.value.trim();
-    if (!value && this.attachedFiles.length === 0) return;
+    if (!value && this.attachedFiles.length === 0 && !this.vaultGraphIngestMode) return;
 
     // Check for URL in Graph Generation Mode
     if (this.isGraphOnlyMode() && value.startsWith('http')) {
@@ -4437,7 +4484,10 @@ export class ChatView extends ItemView {
 
     // Route to appropriate handler based on mode
     // Pass processingValue (includes file content) to handlers, not displayValue
-    if (this.orchestrationMode) {
+    if (this.vaultGraphIngestMode) {
+      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
+      await this.handleVaultGraphIngestOnly(value, attachmentsStr);
+    } else if (this.orchestrationMode) {
       // Orchestration agent separates the raw query from the attachments for better prompting
       const attachmentsStr = extractedContents.length > 0 ? extractedContents.join('\n') : "";
       await this.handleOrchestrationAgent(value, attachmentsStr);
@@ -4528,6 +4578,67 @@ export class ChatView extends ItemView {
       if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
 
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    }
+  }
+
+  /**
+   * Direct vault graph ingest: runs VAULT_GRAPH_INGEST without the LLM planner (dropdown mode).
+   */
+  async handleVaultGraphIngestOnly(query: string, attachmentsContext: string = "") {
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: "Running vault graph ingest...", percent: 5 },
+    });
+    await this.renderMessages();
+
+    const updateProgress = (message: string, percent: number) => {
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+
+    try {
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
+      const q = (query || "").trim() || "Ingest vault documents for knowledge graph";
+      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
+        ["VAULT_GRAPH_INGEST"],
+        q,
+        attachmentsContext,
+        this.currentConversation,
+        (_displayName, msg, pct) => {
+          updateProgress(msg, pct);
+        }
+      );
+
+      this.activeAbortControllers.delete(assistantIndex);
+
+      const plan: OrchestrationPlan = {
+        reasoning: "Direct vault graph ingest",
+        toolsToCall: ["VAULT_GRAPH_INGEST"],
+        graphCommands: [],
+        isProposal: false,
+      };
+
+      this.chatHistory[assistantIndex].content =
+        "Vault ingestion finished. Review results below, then click **📊 Generate Analysis & Graph** to proceed.";
+      this.chatHistory[assistantIndex].toolResults = toolResults;
+      this.chatHistory[assistantIndex].savedPlan = plan;
+      this.chatHistory[assistantIndex].savedQuery = q;
+      this.chatHistory[assistantIndex].progress = undefined;
+      this._awaitingToolReview = true;
+      await this.renderMessages();
+    } catch (e) {
+      this.activeAbortControllers.delete(assistantIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted")) return;
+      this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
     }

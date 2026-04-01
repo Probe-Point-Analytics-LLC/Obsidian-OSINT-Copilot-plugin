@@ -1,5 +1,5 @@
 import VaultAIPlugin from "../../main";
-import { App, Notice, requestUrl } from 'obsidian';
+import { App, Notice, requestUrl, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
 import { AIOperation } from '../entities/types';
 import { ConfirmModal } from '../modals/confirm-modal';
@@ -401,6 +401,38 @@ Respond with this exact JSON structure:
 
     private static readonly VAULT_INGEST_MAX_FILES = 200;
     private static readonly VAULT_INGEST_MAX_CHARS_PER_FILE = 60000;
+    /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
+    private static readonly VAULT_INGEST_EXTENSIONS = new Set([
+        'md',
+        'markdown',
+        'txt',
+        'pdf',
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+        'gif',
+        'doc',
+        'docx',
+    ]);
+
+    private mimeTypeForIngestExtension(ext: string): string {
+        const e = ext.toLowerCase();
+        const map: Record<string, string> = {
+            pdf: 'application/pdf',
+            png: 'image/png',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            webp: 'image/webp',
+            gif: 'image/gif',
+            doc: 'application/msword',
+            docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            md: 'text/markdown',
+            markdown: 'text/markdown',
+            txt: 'text/plain',
+        };
+        return map[e] || 'application/octet-stream';
+    }
 
     private shouldSkipVaultPath(path: string): boolean {
         const p = path.replace(/\\/g, "/").toLowerCase();
@@ -445,32 +477,69 @@ Respond with this exact JSON structure:
     }
 
     /**
-     * Walk markdown files (excluding plugin / git paths), run processTextInChunks per file, merge graph commands.
+     * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
+     * extract text (API for binary), run processTextInChunks per file, merge graph commands.
      */
     private async runVaultGraphIngest(
         onFileProgress: (message: string, percent: number) => void
-    ): Promise<{ summary: string; graphCommands: string[]; filesProcessed: number; filesTotal: number; truncatedFiles: number }> {
+    ): Promise<{
+        summary: string;
+        graphCommands: string[];
+        filesProcessed: number;
+        filesTotal: number;
+        truncatedFiles: number;
+        extractFailures: number;
+    }> {
         const graphCommands: string[] = [];
-        const files = this.plugin.app.vault
-            .getMarkdownFiles()
+        const vaultFiles = this.plugin.app.vault.getFiles();
+        const files = vaultFiles
+            .filter((f): f is TFile => f instanceof TFile)
             .filter((f) => !this.shouldSkipVaultPath(f.path))
+            .filter((f) => OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || '').toLowerCase()))
             .sort((a, b) => a.path.localeCompare(b.path));
 
         const maxFiles = Math.min(files.length, OrchestrationService.VAULT_INGEST_MAX_FILES);
         let truncatedFiles = 0;
+        let extractFailures = 0;
 
         for (let i = 0; i < maxFiles; i++) {
             const file = files[i];
             const pct = 5 + Math.floor((85 * (i + 1)) / Math.max(maxFiles, 1));
             onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
 
-            let content = await this.plugin.app.vault.cachedRead(file);
-            if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-                content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-                truncatedFiles++;
+            const ext = (file.extension || '').toLowerCase();
+            let content: string;
+
+            if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
+                content = await this.plugin.app.vault.cachedRead(file);
+                if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+                    content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+                    truncatedFiles++;
+                }
+            } else {
+                try {
+                    const buf = await this.plugin.app.vault.readBinary(file);
+                    const blob = new Blob([buf], { type: this.mimeTypeForIngestExtension(ext) });
+                    const syntheticFile = new File([blob], file.name, {
+                        type: this.mimeTypeForIngestExtension(ext),
+                    });
+                    content = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
+                    if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+                        content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+                        truncatedFiles++;
+                    }
+                } catch (err) {
+                    extractFailures++;
+                    console.error(`[OrchestrationService] extract failed for ${file.path}:`, err);
+                    continue;
+                }
             }
 
-            const block = `Source note: ${file.path}\n\n${content}`;
+            if (!content || !content.trim()) {
+                continue;
+            }
+
+            const block = `Source file: ${file.path}\n\n${content}`;
             const extraction = await this.plugin.graphApiService.processTextInChunks(
                 block,
                 this.plugin.entityManager.getAllEntities(),
@@ -483,10 +552,11 @@ Respond with this exact JSON structure:
         }
 
         const summary =
-            `Processed **${maxFiles}** markdown file(s) out of **${files.length}** in the vault (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}).` +
+            `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}).` +
             (truncatedFiles > 0
                 ? ` ${truncatedFiles} file(s) were truncated to ${OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.`
                 : "") +
+            (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") +
             ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
 
         return {
@@ -495,6 +565,7 @@ Respond with this exact JSON structure:
             filesProcessed: maxFiles,
             filesTotal: files.length,
             truncatedFiles,
+            extractFailures,
         };
     }
 
@@ -660,6 +731,7 @@ Respond with this exact JSON structure:
                                 filesProcessed: out.filesProcessed,
                                 filesTotal: out.filesTotal,
                                 truncatedFiles: out.truncatedFiles,
+                                extractFailures: out.extractFailures,
                             };
                         } catch (e: unknown) {
                             results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${

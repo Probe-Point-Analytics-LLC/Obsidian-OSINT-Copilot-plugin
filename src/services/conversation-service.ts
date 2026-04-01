@@ -29,6 +29,7 @@ export interface ConversationMetadata {
   reportGenerationMode: boolean;
   osintSearchMode?: boolean; // Digital Footprint mode
   orchestrationMode?: boolean; // Orchestration Agent mode
+  vaultGraphIngestMode?: boolean; // Direct vault-wide graph ingest (no full orchestration planner)
   reportConversationId?: string; // conversation_id для report generation API
 }
 
@@ -160,6 +161,7 @@ export class ConversationService {
     const reportGenerationMode = this.extractYamlValue(frontmatter, 'reportGenerationMode') === 'true';
     const osintSearchMode = this.extractYamlValue(frontmatter, 'osintSearchMode') === 'true';
     const orchestrationMode = this.extractYamlValue(frontmatter, 'orchestrationMode') === 'true';
+    const vaultGraphIngestMode = this.extractYamlValue(frontmatter, 'vaultGraphIngestMode') === 'true';
     // localSearchMode defaults to true for backward compatibility (if not specified, assume local search mode)
     // Also check for legacy 'lookupMode' key for backward compatibility with old conversations
     let localSearchModeValue = this.extractYamlValue(frontmatter, 'localSearchMode');
@@ -167,10 +169,31 @@ export class ConversationService {
       // Fallback to legacy 'lookupMode' key
       localSearchModeValue = this.extractYamlValue(frontmatter, 'lookupMode');
     }
-    const localSearchMode = localSearchModeValue === null ? !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode : localSearchModeValue === 'true';
+    const localSearchMode =
+      localSearchModeValue === null
+        ? !darkWebMode &&
+          !reportGenerationMode &&
+          !osintSearchMode &&
+          !orchestrationMode &&
+          !vaultGraphIngestMode
+        : localSearchModeValue === 'true';
     const reportConversationId = this.extractYamlValue(frontmatter, 'reportConversationId');
 
-    return { id, title, createdAt, updatedAt, messageCount, localSearchMode, darkWebMode, graphGenerationMode, reportGenerationMode, osintSearchMode, orchestrationMode, reportConversationId: reportConversationId || undefined };
+    return {
+      id,
+      title,
+      createdAt,
+      updatedAt,
+      messageCount,
+      localSearchMode,
+      darkWebMode,
+      graphGenerationMode,
+      reportGenerationMode,
+      osintSearchMode,
+      orchestrationMode,
+      vaultGraphIngestMode,
+      reportConversationId: reportConversationId || undefined,
+    };
   }
 
   private extractYamlValue(yaml: string, key: string): string | null {
@@ -220,11 +243,24 @@ export class ConversationService {
     return title.length < firstMessage.length ? title + '...' : title;
   }
 
-  async createConversation(firstMessage?: string, darkWebMode: boolean = false, graphGenerationMode: boolean = false, reportGenerationMode: boolean = false, osintSearchMode: boolean = false, orchestrationMode: boolean = false): Promise<Conversation> {
+  async createConversation(
+    firstMessage?: string,
+    darkWebMode: boolean = false,
+    graphGenerationMode: boolean = false,
+    reportGenerationMode: boolean = false,
+    osintSearchMode: boolean = false,
+    orchestrationMode: boolean = false,
+    vaultGraphIngestMode: boolean = false
+  ): Promise<Conversation> {
     const id = this.generateId();
     const now = Date.now();
     // Infer localSearchMode: true if no other main mode is active
-    const localSearchMode = !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode;
+    const localSearchMode =
+      !darkWebMode &&
+      !reportGenerationMode &&
+      !osintSearchMode &&
+      !orchestrationMode &&
+      !vaultGraphIngestMode;
     const conversation: Conversation = {
       id,
       title: this.generateTitle(firstMessage),
@@ -237,7 +273,8 @@ export class ConversationService {
       reportGenerationMode,
       osintSearchMode,
       orchestrationMode,
-      messages: []
+      vaultGraphIngestMode,
+      messages: [],
     };
 
     await this.saveConversation(conversation);
@@ -316,7 +353,8 @@ export class ConversationService {
       `graphGenerationMode: ${conversation.graphGenerationMode || false}`,
       `reportGenerationMode: ${conversation.reportGenerationMode || false}`,
       `osintSearchMode: ${conversation.osintSearchMode || false}`,
-      `orchestrationMode: ${conversation.orchestrationMode || false}`
+      `orchestrationMode: ${conversation.orchestrationMode || false}`,
+      `vaultGraphIngestMode: ${conversation.vaultGraphIngestMode || false}`,
     ];
 
     // Add reportConversationId only if it exists

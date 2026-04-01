@@ -523,8 +523,8 @@ export class GraphApiService {
     }
 
     /**
-     * Extract text from a file via the backend API.
-     * Supports .md, .txt, .pdf, .docx, .doc
+     * Extract text from a file via the backend API (/api/extract-text).
+     * Supports .md, .txt, .pdf, .docx, .doc, and common images (.png, .jpg, .jpeg, .webp, .gif) when the server is configured for OCR/vision.
      * Includes retry logic with exponential backoff for timeouts and rate limits.
      */
     async extractTextFromFile(file: File): Promise<string> {

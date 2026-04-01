@@ -3836,8 +3836,8 @@ var GraphApiService = class {
     }
   }
   /**
-   * Extract text from a file via the backend API.
-   * Supports .md, .txt, .pdf, .docx, .doc
+   * Extract text from a file via the backend API (/api/extract-text).
+   * Supports .md, .txt, .pdf, .docx, .doc, and common images (.png, .jpg, .jpeg, .webp, .gif) when the server is configured for OCR/vision.
    * Includes retry logic with exponential backoff for timeouts and rate limits.
    */
   async extractTextFromFile(file) {
@@ -4509,13 +4509,28 @@ var ConversationService = class {
     const reportGenerationMode = this.extractYamlValue(frontmatter, "reportGenerationMode") === "true";
     const osintSearchMode = this.extractYamlValue(frontmatter, "osintSearchMode") === "true";
     const orchestrationMode = this.extractYamlValue(frontmatter, "orchestrationMode") === "true";
+    const vaultGraphIngestMode = this.extractYamlValue(frontmatter, "vaultGraphIngestMode") === "true";
     let localSearchModeValue = this.extractYamlValue(frontmatter, "localSearchMode");
     if (localSearchModeValue === null) {
       localSearchModeValue = this.extractYamlValue(frontmatter, "lookupMode");
     }
-    const localSearchMode = localSearchModeValue === null ? !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode : localSearchModeValue === "true";
+    const localSearchMode = localSearchModeValue === null ? !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode && !vaultGraphIngestMode : localSearchModeValue === "true";
     const reportConversationId = this.extractYamlValue(frontmatter, "reportConversationId");
-    return { id, title, createdAt, updatedAt, messageCount, localSearchMode, darkWebMode, graphGenerationMode, reportGenerationMode, osintSearchMode, orchestrationMode, reportConversationId: reportConversationId || void 0 };
+    return {
+      id,
+      title,
+      createdAt,
+      updatedAt,
+      messageCount,
+      localSearchMode,
+      darkWebMode,
+      graphGenerationMode,
+      reportGenerationMode,
+      osintSearchMode,
+      orchestrationMode,
+      vaultGraphIngestMode,
+      reportConversationId: reportConversationId || void 0
+    };
   }
   extractYamlValue(yaml, key) {
     const match = yaml.match(new RegExp(`^${key}:\\s*(.*)$`, "m"));
@@ -4555,10 +4570,10 @@ var ConversationService = class {
     const title = firstMessage.substring(0, 50);
     return title.length < firstMessage.length ? title + "..." : title;
   }
-  async createConversation(firstMessage, darkWebMode = false, graphGenerationMode = false, reportGenerationMode = false, osintSearchMode = false, orchestrationMode = false) {
+  async createConversation(firstMessage, darkWebMode = false, graphGenerationMode = false, reportGenerationMode = false, osintSearchMode = false, orchestrationMode = false, vaultGraphIngestMode = false) {
     const id = this.generateId();
     const now = Date.now();
-    const localSearchMode = !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode;
+    const localSearchMode = !darkWebMode && !reportGenerationMode && !osintSearchMode && !orchestrationMode && !vaultGraphIngestMode;
     const conversation = {
       id,
       title: this.generateTitle(firstMessage),
@@ -4571,6 +4586,7 @@ var ConversationService = class {
       reportGenerationMode,
       osintSearchMode,
       orchestrationMode,
+      vaultGraphIngestMode,
       messages: []
     };
     await this.saveConversation(conversation);
@@ -4629,7 +4645,8 @@ var ConversationService = class {
       `graphGenerationMode: ${conversation.graphGenerationMode || false}`,
       `reportGenerationMode: ${conversation.reportGenerationMode || false}`,
       `osintSearchMode: ${conversation.osintSearchMode || false}`,
-      `orchestrationMode: ${conversation.orchestrationMode || false}`
+      `orchestrationMode: ${conversation.orchestrationMode || false}`,
+      `vaultGraphIngestMode: ${conversation.vaultGraphIngestMode || false}`
     ];
     if (conversation.reportConversationId) {
       frontmatterLines.push(`reportConversationId: ${conversation.reportConversationId}`);
@@ -11718,6 +11735,23 @@ Respond with this exact JSON structure:
       };
     }
   }
+  mimeTypeForIngestExtension(ext) {
+    const e = ext.toLowerCase();
+    const map = {
+      pdf: "application/pdf",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      webp: "image/webp",
+      gif: "image/gif",
+      doc: "application/msword",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      md: "text/markdown",
+      markdown: "text/markdown",
+      txt: "text/plain"
+    };
+    return map[e] || "application/octet-stream";
+  }
   shouldSkipVaultPath(path) {
     const p = path.replace(/\\/g, "/").toLowerCase();
     if (p.startsWith(".obsidian/") || p.includes("/.obsidian/"))
@@ -11758,23 +11792,50 @@ Respond with this exact JSON structure:
     return commands;
   }
   /**
-   * Walk markdown files (excluding plugin / git paths), run processTextInChunks per file, merge graph commands.
+   * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
+   * extract text (API for binary), run processTextInChunks per file, merge graph commands.
    */
   async runVaultGraphIngest(onFileProgress) {
     const graphCommands = [];
-    const files = this.plugin.app.vault.getMarkdownFiles().filter((f) => !this.shouldSkipVaultPath(f.path)).sort((a, b) => a.path.localeCompare(b.path));
+    const vaultFiles = this.plugin.app.vault.getFiles();
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian12.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     let truncatedFiles = 0;
+    let extractFailures = 0;
     for (let i = 0; i < maxFiles; i++) {
       const file = files[i];
       const pct = 5 + Math.floor(85 * (i + 1) / Math.max(maxFiles, 1));
       onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
-      let content = await this.plugin.app.vault.cachedRead(file);
-      if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-        content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-        truncatedFiles++;
+      const ext = (file.extension || "").toLowerCase();
+      let content;
+      if (ext === "md" || ext === "markdown" || ext === "txt") {
+        content = await this.plugin.app.vault.cachedRead(file);
+        if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+          content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+          truncatedFiles++;
+        }
+      } else {
+        try {
+          const buf = await this.plugin.app.vault.readBinary(file);
+          const blob = new Blob([buf], { type: this.mimeTypeForIngestExtension(ext) });
+          const syntheticFile = new File([blob], file.name, {
+            type: this.mimeTypeForIngestExtension(ext)
+          });
+          content = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
+          if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+            content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+            truncatedFiles++;
+          }
+        } catch (err) {
+          extractFailures++;
+          console.error(`[OrchestrationService] extract failed for ${file.path}:`, err);
+          continue;
+        }
       }
-      const block = `Source note: ${file.path}
+      if (!content || !content.trim()) {
+        continue;
+      }
+      const block = `Source file: ${file.path}
 
 ${content}`;
       const extraction = await this.plugin.graphApiService.processTextInChunks(
@@ -11786,13 +11847,14 @@ ${content}`;
         graphCommands.push(...this.operationsToGraphCommands(extraction.operations));
       }
     }
-    const summary = `Processed **${maxFiles}** markdown file(s) out of **${files.length}** in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
+    const summary = `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
     return {
       summary,
       graphCommands,
       filesProcessed: maxFiles,
       filesTotal: files.length,
-      truncatedFiles
+      truncatedFiles,
+      extractFailures
     };
   }
   async executeToolsInParallel(tools, query, attachmentsContext, currentConversation, onProgress) {
@@ -11943,7 +12005,8 @@ ${reportData.content}` : reportData.content;
                 graphCommands: out.graphCommands,
                 filesProcessed: out.filesProcessed,
                 filesTotal: out.filesTotal,
-                truncatedFiles: out.truncatedFiles
+                truncatedFiles: out.truncatedFiles,
+                extractFailures: out.extractFailures
               };
             } catch (e) {
               results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -12230,6 +12293,20 @@ Synthesize the tool results, graph state, and the user's request into a conversa
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
 _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE = 6e4;
+/** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
+_OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
+  "md",
+  "markdown",
+  "txt",
+  "pdf",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "doc",
+  "docx"
+]);
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
@@ -13969,6 +14046,8 @@ var ChatView = class extends import_obsidian14.ItemView {
     this.osintSearchMode = false;
     // Digital Footprint mode
     this.orchestrationMode = false;
+    // Orchestration agent mode
+    this.vaultGraphIngestMode = false;
     // Digital Footprint options removed for global search
     // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
     this.graphGenerationMode = true;
@@ -14009,7 +14088,8 @@ var ChatView = class extends import_obsidian14.ItemView {
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
       this.orchestrationMode = conversation.orchestrationMode || false;
-      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode || conversation.orchestrationMode;
+      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
+      const hasMainMode = conversation.darkWebMode || conversation.reportGenerationMode || conversation.osintSearchMode || conversation.localSearchMode || conversation.orchestrationMode || conversation.vaultGraphIngestMode;
       if (hasMainMode) {
         this.localSearchMode = conversation.localSearchMode || false;
         this.graphGenerationMode = conversation.graphGenerationMode || false;
@@ -14058,8 +14138,9 @@ var ChatView = class extends import_obsidian14.ItemView {
         this.darkWebMode,
         this.graphGenerationMode,
         this.reportGenerationMode,
-        this.orchestrationMode
-        // Save orchestration mode
+        this.osintSearchMode,
+        this.orchestrationMode,
+        this.vaultGraphIngestMode
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
@@ -14069,6 +14150,7 @@ var ChatView = class extends import_obsidian14.ItemView {
     this.currentConversation.reportGenerationMode = this.reportGenerationMode;
     this.currentConversation.osintSearchMode = this.osintSearchMode;
     this.currentConversation.orchestrationMode = this.orchestrationMode;
+    this.currentConversation.vaultGraphIngestMode = this.vaultGraphIngestMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
   }
@@ -14138,6 +14220,7 @@ var ChatView = class extends import_obsidian14.ItemView {
     modeOptions.push(
       { value: "orchestration", label: "\u{1F9E0} Main Copilot", mode: "orchestrationMode" },
       // Added Orchestration Agent mode
+      { value: "vaultingest", label: "\u{1F5C2}\uFE0F Vault graph ingest", mode: "vaultGraphIngestMode" },
       { value: "none", label: "\u{1F3F7}\uFE0F Graph Generation", mode: "none" },
       { value: "local", label: "\u{1F50D} Local Search", mode: "localSearchMode" },
       { value: "darkweb", label: "\u{1F575}\uFE0F Dark Web", mode: "darkWebMode" },
@@ -14168,6 +14251,8 @@ var ChatView = class extends import_obsidian14.ItemView {
         optEl.selected = true;
       else if (option.value === "orchestration" && this.orchestrationMode)
         optEl.selected = true;
+      else if (option.value === "vaultingest" && this.vaultGraphIngestMode)
+        optEl.selected = true;
     }
     const settingsBtn = buttonGroup.createEl("button", {
       text: "\u2699\uFE0F",
@@ -14186,6 +14271,7 @@ var ChatView = class extends import_obsidian14.ItemView {
       this.reportGenerationMode = false;
       this.osintSearchMode = false;
       this.orchestrationMode = false;
+      this.vaultGraphIngestMode = false;
       if (selectedValue.startsWith("custom-")) {
         const cpId = selectedValue.replace("custom-", "");
         this.customChatMode = true;
@@ -14214,6 +14300,10 @@ var ChatView = class extends import_obsidian14.ItemView {
           case "orchestration":
             this.orchestrationMode = true;
             new import_obsidian14.Notice("Main Copilot mode enabled");
+            break;
+          case "vaultingest":
+            this.vaultGraphIngestMode = true;
+            new import_obsidian14.Notice("Vault graph ingest mode \u2014 processes markdown, PDF, and images in your vault");
             break;
           case "none":
             if (this.graphGenerationMode) {
@@ -14400,6 +14490,13 @@ var ChatView = class extends import_obsidian14.ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   getModeDisclaimer() {
+    if (this.vaultGraphIngestMode) {
+      return {
+        icon: "\u{1F5C2}\uFE0F",
+        title: "Vault graph ingest:",
+        text: "Processes notes (markdown, text), PDFs, and images in your vault via the API, then proposes entities for your graph. Attachments add extra context."
+      };
+    }
     if (this.orchestrationMode) {
       return {
         icon: "\u{1F9E0}",
@@ -14744,7 +14841,7 @@ var ChatView = class extends import_obsidian14.ItemView {
   }
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode() {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode && !this.vaultGraphIngestMode;
   }
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
@@ -14754,6 +14851,9 @@ var ChatView = class extends import_obsidian14.ItemView {
   }
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder() {
+    if (this.vaultGraphIngestMode) {
+      return "Optional note (e.g. scope). Send to ingest markdown, PDF, and images from your vault into the graph...";
+    }
     if (this.orchestrationMode)
       return "Ask anything. The agent will orchestrate tools to find the answer...";
     if (this.isGraphOnlyMode()) {
@@ -14850,6 +14950,8 @@ var ChatView = class extends import_obsidian14.ItemView {
         this.modeDropdown.value = "osint";
       } else if (this.orchestrationMode) {
         this.modeDropdown.value = "orchestration";
+      } else if (this.vaultGraphIngestMode) {
+        this.modeDropdown.value = "vaultingest";
       } else {
         this.modeDropdown.value = "none";
       }
@@ -14884,7 +14986,9 @@ var ChatView = class extends import_obsidian14.ItemView {
       const date = new Date(conv.updatedAt);
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
       const convOsintSearchMode = conv.osintSearchMode || false;
-      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode;
+      const convOrchestration = conv.orchestrationMode || false;
+      const convVaultIngest = conv.vaultGraphIngestMode || false;
+      const isGraphOnly = conv.graphGenerationMode && !conv.localSearchMode && !conv.darkWebMode && !conv.reportGenerationMode && !convOsintSearchMode && !convOrchestration && !convVaultIngest;
       if (isGraphOnly) {
         meta.createEl("span", { text: "\u{1F3F7}\uFE0F", cls: "vault-ai-conversation-graphonly", title: "Graph only mode" });
       } else if (convOsintSearchMode) {
@@ -14954,7 +15058,9 @@ var ChatView = class extends import_obsidian14.ItemView {
       this.graphGenerationMode = conversation.graphGenerationMode || false;
       this.reportGenerationMode = conversation.reportGenerationMode || false;
       this.osintSearchMode = conversation.osintSearchMode || false;
-      this.localSearchMode = conversation.localSearchMode !== void 0 ? conversation.localSearchMode : !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode;
+      this.orchestrationMode = conversation.orchestrationMode || false;
+      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
+      this.localSearchMode = conversation.localSearchMode !== void 0 ? conversation.localSearchMode : !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode && !this.vaultGraphIngestMode;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
@@ -14973,6 +15079,7 @@ var ChatView = class extends import_obsidian14.ItemView {
     this.reportGenerationMode = false;
     this.osintSearchMode = false;
     this.orchestrationMode = true;
+    this.vaultGraphIngestMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
     new import_obsidian14.Notice("Started new conversation");
@@ -15624,7 +15731,7 @@ var ChatView = class extends import_obsidian14.ItemView {
   }
   async handleSend() {
     const value = this.inputEl.value.trim();
-    if (!value && this.attachedFiles.length === 0)
+    if (!value && this.attachedFiles.length === 0 && !this.vaultGraphIngestMode)
       return;
     if (this.isGraphOnlyMode() && value.startsWith("http")) {
       const isUrlHandled = await this.handleUrlExtraction(value);
@@ -15727,7 +15834,10 @@ ${fileList}` : fileList;
     }
     this.chatHistory.push({ role: "user", content: displayValue });
     await this.saveCurrentConversation();
-    if (this.orchestrationMode) {
+    if (this.vaultGraphIngestMode) {
+      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
+      await this.handleVaultGraphIngestOnly(value, attachmentsStr);
+    } else if (this.orchestrationMode) {
       const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
       await this.handleOrchestrationAgent(value, attachmentsStr);
     } else if (this.isGraphOnlyMode()) {
@@ -15802,6 +15912,60 @@ ${fileList}` : fileList;
       if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
         return;
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
+      this.chatHistory[assistantIndex].progress = void 0;
+      await this.renderMessages();
+    }
+  }
+  /**
+   * Direct vault graph ingest: runs VAULT_GRAPH_INGEST without the LLM planner (dropdown mode).
+   */
+  async handleVaultGraphIngestOnly(query, attachmentsContext = "") {
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: "Running vault graph ingest...", percent: 5 }
+    });
+    await this.renderMessages();
+    const updateProgress = (message, percent) => {
+      if (this.activeAbortControllers.has(assistantIndex)) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+    try {
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+      const q = (query || "").trim() || "Ingest vault documents for knowledge graph";
+      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
+        ["VAULT_GRAPH_INGEST"],
+        q,
+        attachmentsContext,
+        this.currentConversation,
+        (_displayName, msg, pct) => {
+          updateProgress(msg, pct);
+        }
+      );
+      this.activeAbortControllers.delete(assistantIndex);
+      const plan = {
+        reasoning: "Direct vault graph ingest",
+        toolsToCall: ["VAULT_GRAPH_INGEST"],
+        graphCommands: [],
+        isProposal: false
+      };
+      this.chatHistory[assistantIndex].content = "Vault ingestion finished. Review results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.";
+      this.chatHistory[assistantIndex].toolResults = toolResults;
+      this.chatHistory[assistantIndex].savedPlan = plan;
+      this.chatHistory[assistantIndex].savedQuery = q;
+      this.chatHistory[assistantIndex].progress = void 0;
+      this._awaitingToolReview = true;
+      await this.renderMessages();
+    } catch (e) {
+      this.activeAbortControllers.delete(assistantIndex);
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+        return;
+      this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
       await this.renderMessages();
     }
