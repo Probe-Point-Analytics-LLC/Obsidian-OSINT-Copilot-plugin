@@ -4094,11 +4094,11 @@ var GraphApiService = class {
    * Process large text by chunking and merging entities.
    * For texts larger than CHUNK_THRESHOLD, splits into chunks and processes each.
    */
-  async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal) {
+  async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal, useLocal = false) {
     const CHUNK_SIZE = 1e3;
     const CHUNK_THRESHOLD = 1500;
     if (text.length <= CHUNK_THRESHOLD) {
-      return this.processText(text, existingEntities, referenceTime, onRetry, signal);
+      return this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
     }
     console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
     const chunks = this.splitTextIntoChunks(text, CHUNK_SIZE);
@@ -4117,7 +4117,7 @@ var GraphApiService = class {
       }
       console.debug(`[GraphApiService] Processing chunk ${chunkNum}/${chunks.length} (${chunk.length} chars)`);
       try {
-        const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal);
+        const result = await this.processText(chunk, accumulatedEntities, referenceTime, onRetry, signal, useLocal);
         if (!result.success) {
           console.warn(`[GraphApiService] Chunk ${chunkNum} failed:`, result.error);
           continue;
@@ -4194,7 +4194,7 @@ var GraphApiService = class {
    * @param onRetry - Optional callback for retry notifications
    * @returns ProcessTextResponse with extracted entities and relationships
    */
-  async processText(text, existingEntities, referenceTime, onRetry, signal) {
+  async processText(text, existingEntities, referenceTime, onRetry, signal, useLocal = false) {
     console.debug("[GraphApiService] Processing text with AI:", text.substring(0, 100) + "...");
     const { maxRetries, baseTimeoutMs } = this.retryConfig;
     let currentTimeout = baseTimeoutMs;
@@ -4226,7 +4226,8 @@ var GraphApiService = class {
                 label: e.label,
                 properties: e.properties
               })),
-              reference_time: referenceTime
+              reference_time: referenceTime,
+              use_local: useLocal
             })
           },
           currentTimeout,
@@ -11370,7 +11371,35 @@ var CustomTypesService = class {
 
 // src/services/orchestration-service.ts
 var import_obsidian12 = require("obsidian");
-var OrchestrationService = class {
+
+// src/services/intent-router.ts
+function detectOrchestrationIntent(query) {
+  const q = query.trim().toLowerCase();
+  if (!q)
+    return "UNKNOWN";
+  const vaultWideScope = /\b(all|every|entire|whole|full)\s+(the\s+)?(local\s+)?(documents?|notes?|files?|markdowns?)\b/.test(q) || /\b(all|every)\s+notes?\b/.test(q) || /\b(all|every)\s+markdown\s+files?\b/.test(q) || /\b(this|my|the)\s+vault\b/.test(q) && /\b(all|every|entire)\b/.test(q) || /\bacross\s+(the\s+)?(vault|obsidian)\b/.test(q) || /\bvault[- ]wide\b/.test(q) || /\b(all|every)\s+local\s+documents?\b/.test(q);
+  const graphFromVault = /\b(build|create|make|generate|populate|construct)\s+(a\s+)?(knowledge\s+|entity\s+)?graph\b/.test(q) || /\b(populate|fill)\b.{0,40}\b(knowledge\s+|entity\s+)?graph\b/.test(q) || /\b(knowledge\s+)?graph\s+(from|based\s+on|using)\b/.test(q) || /\bentities?\s+(from|in)\s+(my\s+)?(vault|notes)\b/.test(q) || /\bmap\s+((all|my)\s+)?(notes|documents)\b/.test(q) || /\b(extract|ingest)\b.{0,50}\b(entities|graph)\b/.test(q);
+  const explicitVaultGraph = /\bbuild\s+(a\s+)?(knowledge\s+)?graph\b/.test(q) && /\b(vault|local\s+documents?|this\s+vault|all\s+.{0,30}\b(notes|documents))\b/.test(q);
+  const hasVaultGraph = vaultWideScope && graphFromVault || explicitVaultGraph || /\bpopulate\b/.test(q) && /\bgraph\b/.test(q) && /\b(vault|notes)\b/.test(q);
+  const externalInvestigation = /\b(dark\s*web|\.onion|breach|data\s*breach|leak\s*site|sanctions?\b|company\s+registry|whois|linkedin\.com)\b/.test(
+    q
+  ) || /\b(look\s*up|search)\s+(on\s+)?(the\s+)?(internet|web|google)\b/.test(q) || /\b(run|do|perform)\s+osint\b|\bosint\s+(on|for|about)\b/i.test(q) || /\bopen\s*source\s*(intel|intelligence)\b/.test(q) && /\b(not|outside|beyond)\s+(my\s+)?vault\b/.test(q);
+  const vaultQaSignals = /\b(what|which|where|who|how)\b.{0,80}\b(my\s+)?(vault|notes)\b|\b(my\s+)?(vault|notes)\b.{0,40}\b(say|contain|about|mention)\b/.test(
+    q
+  ) || /\bsearch\s+(in\s+)?(my\s+)?(vault|notes)\b/.test(q) || /\baccording\s+to\s+(my\s+)?notes\b/.test(q);
+  if (hasVaultGraph && externalInvestigation)
+    return "MIXED";
+  if (hasVaultGraph)
+    return "VAULT_GRAPH_BUILD";
+  if (externalInvestigation)
+    return "OSINT_TOOL_RUN";
+  if (vaultQaSignals && !hasVaultGraph)
+    return "VAULT_QA";
+  return "UNKNOWN";
+}
+
+// src/services/orchestration-service.ts
+var _OrchestrationService = class _OrchestrationService {
   constructor(plugin) {
     this.plugin = plugin;
   }
@@ -11425,7 +11454,15 @@ ${extractedText}`;
         }
       }
       onProgress("Classifying intent and formulating plan...", 20);
-      const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
+      const routedIntent = detectOrchestrationIntent(query);
+      console.log("[OrchestrationService] Routed intent:", routedIntent);
+      const plan = await this.classifyIntent(
+        query,
+        attachmentsContext,
+        currentGraphState,
+        conversationMemory,
+        routedIntent
+      );
       if (plan.isProposal && plan.toolsToCall.length > 0) {
         onProgress("Investigation plan proposed for review.", 100);
         return {
@@ -11493,18 +11530,94 @@ ${extractedText}`;
       throw error;
     }
   }
-  async classifyIntent(query, attachmentsContext, graphState, conversationMemory) {
+  /** Example default tools shown in the planner JSON template; aligns with routed intent. */
+  defaultToolsForIntent(intent) {
+    switch (intent) {
+      case "VAULT_GRAPH_BUILD":
+        return ["VAULT_GRAPH_INGEST"];
+      case "VAULT_QA":
+        return ["LOCAL_VAULT"];
+      case "MIXED":
+        return ["LOCAL_VAULT", "OSINT_SEARCH"];
+      case "OSINT_TOOL_RUN":
+      default:
+        return ["OSINT_SEARCH"];
+    }
+  }
+  buildRoutedIntentInstructions(intent, hasAttachments) {
+    const att = hasAttachments ? " Attachments are present; EXTRACT_TO_GRAPH may be included if it helps ingest files into the graph." : " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
+    switch (intent) {
+      case "VAULT_GRAPH_BUILD":
+        return `VAULT_GRAPH_BUILD \u2014 User wants to build or enrich the knowledge graph from Obsidian notes (often many or all files).${att} You MUST include "VAULT_GRAPH_INGEST" in toolsToCall (full vault / note ingestion for entity extraction). Do NOT include OSINT_SEARCH, DARK_WEB, or CORPORATE_REPORTS unless the user explicitly asks for external/open-web or dark-web intelligence in the same message.`;
+      case "VAULT_QA":
+        return `VAULT_QA \u2014 User wants answers grounded in their vault.${att} Prioritize "LOCAL_VAULT". Add OSINT or other tools only if they clearly ask for outside sources.`;
+      case "OSINT_TOOL_RUN":
+        return `OSINT_TOOL_RUN \u2014 Primary need is external investigation.${att} Prefer OSINT_SEARCH and/or DARK_WEB/CORPORATE_REPORTS as appropriate. Include LOCAL_VAULT only if they also ask about their notes.`;
+      case "MIXED":
+        return `MIXED \u2014 Both vault-local and external investigation appear relevant.${att} Include LOCAL_VAULT plus at least one external tool when appropriate.`;
+      default:
+        return `UNKNOWN \u2014 No strong heuristic match.${att} Choose tools from the user request; prefer LOCAL_VAULT when the question is only about their notes or building the graph from local documents.`;
+    }
+  }
+  /** When the LLM returns no tools, align defaults with routed intent (avoid forcing OSINT for vault work). */
+  fallbackProposalForEmptyTools(routedIntent, query) {
+    if (routedIntent === "VAULT_GRAPH_BUILD") {
+      return {
+        toolsToCall: ["VAULT_GRAPH_INGEST"],
+        planSummary: `### Investigation Plan
+1. **Vault graph ingest** \u2014 Process your markdown notes and extract entities/relationships for the graph (up to a safe file limit).
+
+*Adjust modules before running.*`,
+        directResponse: `I'll run vault graph ingestion to extract entities from your notes into graph proposals. Add external modules only if you also need OSINT or dark web.`
+      };
+    }
+    if (routedIntent === "VAULT_QA") {
+      return {
+        toolsToCall: ["LOCAL_VAULT"],
+        planSummary: `### Investigation Plan
+1. **Local vault** \u2014 Search your Obsidian notes for: "${query}"
+
+*Adjust modules before running.*`,
+        directResponse: `I'll search your vault for relevant material. You can add other modules only if you also need external intelligence.`
+      };
+    }
+    if (routedIntent === "MIXED") {
+      return {
+        toolsToCall: ["LOCAL_VAULT", "OSINT_SEARCH"],
+        planSummary: `### Investigation Plan
+1. **Local vault** \u2014 Review your notes
+2. **OSINT** \u2014 Check external sources
+
+*Click Run to proceed.*`,
+        directResponse: `I'll combine local vault search with OSINT. Adjust modules if needed.`
+      };
+    }
+    return {
+      toolsToCall: ["OSINT_SEARCH"],
+      planSummary: `### Investigation Plan
+1. **OSINT Search** \u2014 Search public intelligence sources for: "${query}"
+
+*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`,
+      directResponse: `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`
+    };
+  }
+  async classifyIntent(query, attachmentsContext, graphState, conversationMemory, routedIntent) {
     const systemPrompt = this.plugin.settings.orchestrationPrompt || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
     const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
 ${msg.content}`).join("\n\n") : "No previous conversation.";
     const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
-    const hasAttachments = attachmentsContext && attachmentsContext.trim().length > 0;
+    const hasAttachments = !!(attachmentsContext && attachmentsContext.trim().length > 0);
     const extractToGraphTool = hasAttachments ? '\n- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.' : "";
+    const defaultToolsExample = this.defaultToolsForIntent(routedIntent);
+    const routedIntentBlock = this.buildRoutedIntentInstructions(routedIntent, hasAttachments);
     const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
+
+=== ROUTED INTENT (heuristic, trust this for tool choice) ===
+${routedIntentBlock}
 
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools.
+2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools \u2014 EXCEPT when ROUTED INTENT is VAULT_GRAPH_BUILD: then use VAULT_GRAPH_INGEST only (unless they also ask for external sources). For VAULT_QA, prioritize LOCAL_VAULT. Do not add OSINT_SEARCH for vault-only graph builds.
 3. Set "isProposal" to true and list the tools you recommend.
 4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
 5. Your "directResponse" should describe your PLAN, never the answer to the question.
@@ -11514,7 +11627,8 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
 - "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
 - "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
 - "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.${extractToGraphTool}
+- "LOCAL_VAULT" - Quick keyword search across a few matching Obsidian notes (legacy Q&A style).
+- "VAULT_GRAPH_INGEST" - Read many/all markdown notes in the vault (subject to limits), call the graph API to extract entities and relationships, and propose graph commands.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -11536,7 +11650,7 @@ Respond with this exact JSON structure:
   "reasoning": "Your analysis of the query and why you chose these tools",
   "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
   "isProposal": ${isApproval ? "false" : "true"},
-  "toolsToCall": ["OSINT_SEARCH"],
+  "toolsToCall": ${JSON.stringify(defaultToolsExample)},
   "graphCommands": [],
   "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
 }`;
@@ -11572,14 +11686,16 @@ Respond with this exact JSON structure:
           planSummary: rawPlan.planSummary || rawPlan.plan_summary
         };
         if (!isApproval && plan.toolsToCall.length === 0) {
-          console.warn("[OrchestrationService] LLM returned no tools for a non-approval query. Forcing OSINT_SEARCH proposal.");
+          const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
+          console.warn(
+            "[OrchestrationService] LLM returned no tools for a non-approval query. Forcing fallback proposal:",
+            routedIntent,
+            fb.toolsToCall
+          );
           plan.isProposal = true;
-          plan.toolsToCall = ["OSINT_SEARCH"];
-          plan.planSummary = plan.planSummary || `### Investigation Plan
-1. **OSINT Search** \u2014 Search public intelligence sources for: "${query}"
-
-*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`;
-          plan.directResponse = plan.directResponse || `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`;
+          plan.toolsToCall = fb.toolsToCall;
+          plan.planSummary = plan.planSummary || fb.planSummary;
+          plan.directResponse = plan.directResponse || fb.directResponse;
         }
         console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
         return plan;
@@ -11588,18 +11704,96 @@ Respond with this exact JSON structure:
       }
     } catch (error) {
       console.error("[OrchestrationService] Failed to classify intent:", error);
+      const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
       return {
         reasoning: "Fallback due to classification error.",
-        toolsToCall: ["OSINT_SEARCH"],
+        toolsToCall: fb.toolsToCall,
         graphCommands: [],
         isProposal: true,
         planSummary: `### Investigation Plan
-1. **OSINT Search** \u2014 Search for: "${query}"
+1. Fallback \u2014 ${fb.toolsToCall.join(", ")}
 
-*The classifier encountered an issue, but I've defaulted to an OSINT search. Add more tools or click Run.*`,
-        directResponse: `I'll search for intelligence on this topic. You can add DARK_WEB, CORPORATE_REPORTS, or other modules before I begin.`
+*The planner request failed; adjust modules and click Run.*`,
+        directResponse: fb.directResponse
       };
     }
+  }
+  shouldSkipVaultPath(path) {
+    const p = path.replace(/\\/g, "/").toLowerCase();
+    if (p.startsWith(".obsidian/") || p.includes("/.obsidian/"))
+      return true;
+    if (p.startsWith(".git/") || p.includes("/.git/"))
+      return true;
+    if (p.includes("node_modules/"))
+      return true;
+    return false;
+  }
+  /** Convert graph API operations into @@ graph command strings (same shape as feedResultsToGraphExtraction). */
+  operationsToGraphCommands(operations) {
+    const commands = [];
+    for (const op of operations) {
+      if (op.entities) {
+        op.entities.forEach((entity) => {
+          commands.push(
+            `@@create_entity ${JSON.stringify({
+              type: entity.type,
+              label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
+              properties: entity.properties
+            })}`
+          );
+        });
+      }
+      if (op.connections) {
+        op.connections.forEach((conn) => {
+          commands.push(
+            `@@create_link ${JSON.stringify({
+              from: conn.from_label || conn.from.toString(),
+              to: conn.to_label || conn.to.toString(),
+              relationship: conn.relationship
+            })}`
+          );
+        });
+      }
+    }
+    return commands;
+  }
+  /**
+   * Walk markdown files (excluding plugin / git paths), run processTextInChunks per file, merge graph commands.
+   */
+  async runVaultGraphIngest(onFileProgress) {
+    const graphCommands = [];
+    const files = this.plugin.app.vault.getMarkdownFiles().filter((f) => !this.shouldSkipVaultPath(f.path)).sort((a, b) => a.path.localeCompare(b.path));
+    const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
+    let truncatedFiles = 0;
+    for (let i = 0; i < maxFiles; i++) {
+      const file = files[i];
+      const pct = 5 + Math.floor(85 * (i + 1) / Math.max(maxFiles, 1));
+      onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
+      let content = await this.plugin.app.vault.cachedRead(file);
+      if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+        content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+        truncatedFiles++;
+      }
+      const block = `Source note: ${file.path}
+
+${content}`;
+      const extraction = await this.plugin.graphApiService.processTextInChunks(
+        block,
+        this.plugin.entityManager.getAllEntities(),
+        (/* @__PURE__ */ new Date()).toISOString()
+      );
+      if (extraction.success && extraction.operations && extraction.operations.length > 0) {
+        graphCommands.push(...this.operationsToGraphCommands(extraction.operations));
+      }
+    }
+    const summary = `Processed **${maxFiles}** markdown file(s) out of **${files.length}** in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
+    return {
+      summary,
+      graphCommands,
+      filesProcessed: maxFiles,
+      filesTotal: files.length,
+      truncatedFiles
+    };
   }
   async executeToolsInParallel(tools, query, attachmentsContext, currentConversation, onProgress) {
     const results = {};
@@ -11607,7 +11801,8 @@ Respond with this exact JSON structure:
       "DARK_WEB": "DarkWeb Search",
       "OSINT_SEARCH": "Digital Footprint",
       "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search"
+      "LOCAL_VAULT": "Local Search",
+      "VAULT_GRAPH_INGEST": "Vault graph (notes)"
     };
     const promises = tools.map(async (tool) => {
       const displayName = toolToDisplayName[tool] || tool;
@@ -11736,6 +11931,26 @@ ${reportData.content}` : reportData.content;
             onProgress(displayName, "Complete", 100);
             break;
           }
+          case "VAULT_GRAPH_INGEST": {
+            onProgress(displayName, "Starting vault graph ingest...", 5);
+            try {
+              const out = await this.runVaultGraphIngest((msg, pct) => {
+                onProgress(displayName, msg, pct);
+              });
+              results["VAULT_GRAPH_INGEST"] = {
+                __vaultIngest: true,
+                summary: out.summary,
+                graphCommands: out.graphCommands,
+                filesProcessed: out.filesProcessed,
+                filesTotal: out.filesTotal,
+                truncatedFiles: out.truncatedFiles
+              };
+            } catch (e) {
+              results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${e instanceof Error ? e.message : String(e)}`;
+            }
+            onProgress(displayName, "Complete", 100);
+            break;
+          }
           case "LOCAL_VAULT": {
             onProgress(displayName, "Searching Obsidian vault...", 20);
             const searchTerms = query.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
@@ -11794,7 +12009,18 @@ Content Preview: ${content.substring(0, 500)}...`);
   async feedResultsToGraphExtraction(results) {
     const commands = [];
     let textToProcess = "=== AUTOMATED INVESTIGATION RESULTS ===\n";
+    let hasNonVaultTool = false;
     for (const [tool, result] of Object.entries(results)) {
+      if (tool === "VAULT_GRAPH_INGEST" && result && typeof result === "object" && result.__vaultIngest === true && Array.isArray(result.graphCommands)) {
+        commands.push(...result.graphCommands);
+        textToProcess += `
+
+--- TOOL: ${tool} (summary) ---
+${result.summary || ""}
+`;
+        continue;
+      }
+      hasNonVaultTool = true;
       textToProcess += `
 
 --- TOOL: ${tool} ---
@@ -11805,6 +12031,9 @@ Content Preview: ${content.substring(0, 500)}...`);
         textToProcess += JSON.stringify(result, null, 2);
       }
     }
+    if (!hasNonVaultTool) {
+      return commands;
+    }
     try {
       const extraction = await this.plugin.graphApiService.processTextInChunks(
         textToProcess,
@@ -11812,26 +12041,7 @@ Content Preview: ${content.substring(0, 500)}...`);
         (/* @__PURE__ */ new Date()).toISOString()
       );
       if (extraction.success && extraction.operations) {
-        extraction.operations.forEach((op) => {
-          if (op.entities) {
-            op.entities.forEach((entity) => {
-              commands.push(`@@create_entity ${JSON.stringify({
-                type: entity.type,
-                label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
-                properties: entity.properties
-              })}`);
-            });
-          }
-          if (op.connections) {
-            op.connections.forEach((conn) => {
-              commands.push(`@@create_link ${JSON.stringify({
-                from: conn.from_label || conn.from.toString(),
-                to: conn.to_label || conn.to.toString(),
-                relationship: conn.relationship
-              })}`);
-            });
-          }
-        });
+        commands.push(...this.operationsToGraphCommands(extraction.operations));
       }
     } catch (error) {
       console.error("[OrchestrationService] Post-search extraction failed:", error);
@@ -12018,6 +12228,9 @@ Synthesize the tool results, graph state, and the user's request into a conversa
     new import_obsidian12.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
+_OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
+_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE = 6e4;
+var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
 var import_obsidian13 = require("obsidian");
@@ -12155,6 +12368,7 @@ var UpdaterService = class {
 var CHAT_MODEL = "gpt-4o-mini";
 var ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 var DARKWEB_MODEL = "gpt-5-mini";
+var LOCAL_VAULT_MODEL = "qwen3:14b";
 var DEFAULT_SETTINGS = {
   systemPrompt: "You are a vault assistant. Answer questions clearly and concisely based on the provided notes. Cite note paths in-line where useful.",
   maxNotes: 15,
@@ -12826,7 +13040,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
   // ============================================================================
   // REMOTE MODEL INTEGRATION
   // ============================================================================
-  async callRemoteModel(messages, stream = false, model, signal) {
+  async callRemoteModel(messages, stream = false, model, signal, useLocal = false) {
     if (!this.settings.reportApiKey) {
       throw new Error(
         "License key is required. Please configure it in settings."
@@ -12834,12 +13048,13 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
     }
     const endpoint = `${REPORT_API_BASE_URL}/api/chat/completion`;
     try {
-      const modelToUse = model || CHAT_MODEL;
+      const modelToUse = useLocal ? LOCAL_VAULT_MODEL : model || CHAT_MODEL;
       const requestBody = {
         model: modelToUse,
         messages,
-        stream
+        stream,
         // Pass stream flag to endpoint
+        use_local: useLocal
       };
       const requestPromise = (0, import_obsidian14.requestUrl)({
         url: endpoint,
@@ -12921,13 +13136,13 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
    * Note: Obsidian's requestUrl doesn't support streaming, so we use non-streaming
    * and deliver the full response at once via onDelta callback.
    */
-  async executeStreamingFetch(endpoint, messages, onDelta, signal) {
-    const full = await this.callRemoteModel(messages, false, void 0, signal);
+  async executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal = false) {
+    const full = await this.callRemoteModel(messages, false, void 0, signal, useLocal);
     if (onDelta)
       onDelta(full);
     return full;
   }
-  async callRemoteModelStream(messages, onDelta, onRetry, signal) {
+  async callRemoteModelStream(messages, onDelta, onRetry, signal, useLocal = false) {
     if (!this.settings.reportApiKey) {
       throw new Error("License key is required. Please configure it in settings.");
     }
@@ -12943,7 +13158,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
         if (signal?.aborted) {
           throw new Error("Request was cancelled.");
         }
-        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal);
+        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (!this.isTransientNetworkError(lastError)) {
@@ -13021,7 +13236,7 @@ ${excerpt}
    * @param preloadedNotes Optional pre-loaded notes to use instead of retrieving
    * @param onRetry Optional callback for retry notifications
    */
-  async askVaultStream(query, onDelta, preloadedNotes, onRetry, additionalContext, signal) {
+  async askVaultStream(query, onDelta, preloadedNotes, onRetry, additionalContext, signal, useLocal = false) {
     if (!this.isAuthenticated()) {
       throw new Error("License key required for AI features. Please configure your license key in settings.");
     }
@@ -13067,7 +13282,7 @@ ${additionalContext}
       { role: "system", content: this.settings.systemPrompt },
       { role: "user", content: contextText }
     ];
-    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry, signal);
+    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry, signal, useLocal);
     return { fullAnswer, notes: contextNotes };
   }
   // ============================================================================
@@ -13382,14 +13597,15 @@ ${additionalContext}
    * This is the primary method used for entity extraction - it returns both
    * the entity name and its classified type in a single LLM call.
    */
-  async extractEntitiesFromQuery(query) {
+  async extractEntitiesFromQuery(query, useLocal = false) {
     const system = `Extract the main entities mentioned in the user's query and classify each as one of: person | company | asset | event | location | unknown. Respond ONLY in JSON with a list of objects: [{"name":"<entity name>","type":"person|company|asset|event|location|unknown"}]. If no specific entities are found, return an empty list []. Use English only.`;
     const messages = [
       { role: "system", content: system },
       { role: "user", content: query }
     ];
     try {
-      const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL);
+      const model = useLocal ? LOCAL_VAULT_MODEL : ENTITY_EXTRACTION_MODEL;
+      const text = await this.callRemoteModel(messages, false, model, void 0, useLocal);
       const match = text.trim();
       let list = [];
       try {
@@ -15802,7 +16018,8 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       { id: "OSINT_SEARCH", icon: "\u{1F310}", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
       { id: "DARK_WEB", icon: "\u{1F578}\uFE0F", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
       { id: "CORPORATE_REPORTS", icon: "\u{1F3E2}", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
-      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" }
+      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
+      { id: "VAULT_GRAPH_INGEST", icon: "\u{1F5C2}\uFE0F", label: "Vault graph ingest", desc: "Process many markdown notes and extract entities for the graph" }
     ];
     const hasAttachments = !!(item.savedQuery && /https?:\/\/|\.(pdf|docx?|txt|md)$/i.test(item.savedQuery));
     if (hasAttachments) {
@@ -15906,7 +16123,8 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       "DARK_WEB": "DarkWeb Search",
       "OSINT_SEARCH": "Digital Footprint",
       "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search"
+      "LOCAL_VAULT": "Local Search",
+      "VAULT_GRAPH_INGEST": "Vault graph (notes)"
     };
     selectedTools.forEach((tool) => {
       const displayName = toolToDisplayName[tool] || tool;
@@ -16202,7 +16420,7 @@ Please review and apply the changes below:`;
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
       updateProgress("Extracting entities from query...", 15);
-      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query);
+      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query, true);
       let entityMsg = "No specific entities identified. Searching vault...";
       if (extractedEntities.length > 0) {
         const names = extractedEntities.filter((e) => e.name).map((e) => `${e.type}: ${e.name}`).join(", ");
@@ -16302,7 +16520,9 @@ Drafting the answer...
         notes,
         onRetry,
         additionalContext,
-        controller.signal
+        controller.signal,
+        true
+        // useLocal: always use Ollama for local vault synthesis
       );
       this.activeAbortControllers.delete(assistantIndex);
       let finalContent = result.fullAnswer;
@@ -16329,13 +16549,10 @@ Drafting the answer...
       this.chatHistory[assistantIndex].usedEntities = usedEntities;
       await this.saveCurrentConversation();
       await this.renderMessages();
-      if (this.graphGenerationMode) {
-        try {
-          await this.processGraphGeneration(assistantIndex, result.fullAnswer, query, finalContent);
-        } catch (graphError) {
-          console.error("[OSINT Copilot] Graph generation from chat failed:", graphError);
-          new import_obsidian14.Notice("Graph generation failed, but the chat response was received successfully.");
-        }
+      try {
+        await this.processGraphFromNotes(assistantIndex, notes, extractedEntities, query);
+      } catch (graphError) {
+        console.error("[OSINT Copilot] Graph generation from vault notes failed:", graphError);
       }
     } catch (error) {
       console.error("Chat error:", error);
@@ -16347,6 +16564,130 @@ Drafting the answer...
       await this.renderMessages();
       this.inputEl.value = query;
     }
+  }
+  /**
+   * Generate/update the knowledge graph from retrieved vault notes in local search mode.
+   * Uses Ollama (qwen3:14b) on the production server — no OpenAI cost.
+   * If the query contained specific entities, focuses extraction on them.
+   * Otherwise extracts all entities from the notes as-is.
+   */
+  async processGraphFromNotes(assistantIndex, notes, extractedEntities, query) {
+    if (notes.length === 0)
+      return;
+    const updateProgress = (message, percent) => {
+      if (this.chatHistory[assistantIndex]) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+    updateProgress("Extracting entities from vault notes...", 70);
+    const MAX_CHARS = 6e3;
+    let notesText = "";
+    for (const note of notes) {
+      const noteBlock = `--- ${note.path} ---
+${note.content}
+
+`;
+      if (notesText.length + noteBlock.length > MAX_CHARS)
+        break;
+      notesText += noteBlock;
+    }
+    const namedEntities = extractedEntities.filter((e) => e.name);
+    let extractionText = notesText;
+    if (namedEntities.length > 0) {
+      const entityList = namedEntities.map((e) => `${e.name} (${e.type})`).join(", ");
+      extractionText = `Focus on entities related to: ${entityList}.
+
+${notesText}`;
+    }
+    const existingEntities = this.plugin.entityManager.getAllEntities();
+    const onRetry = (attempt, maxAttempts, reason, nextDelayMs) => {
+      const delaySec = Math.round(nextDelayMs / 1e3);
+      updateProgress(`\u26A0\uFE0F Retrying graph extraction... (${attempt + 1}/${maxAttempts}, ${delaySec}s)`, 72);
+    };
+    const controller = new AbortController();
+    this.activeAbortControllers.set(assistantIndex, controller);
+    const result = await this.plugin.graphApiService.processTextInChunks(
+      extractionText,
+      existingEntities,
+      void 0,
+      void 0,
+      onRetry,
+      controller.signal,
+      true
+      // useLocal: use Ollama
+    );
+    this.activeAbortControllers.delete(assistantIndex);
+    if (!result.success || !result.operations || result.operations.length === 0) {
+      if (this.chatHistory[assistantIndex]) {
+        this.chatHistory[assistantIndex].progress = void 0;
+      }
+      return;
+    }
+    updateProgress("Saving graph nodes...", 88);
+    let entitiesCreated = 0;
+    let connectionsCreated = 0;
+    const globalEntitiesMap = /* @__PURE__ */ new Map();
+    const entityLabelMap = /* @__PURE__ */ new Map();
+    let globalIndexOffset = 0;
+    for (const operation of result.operations) {
+      const operationEntities = [];
+      if (operation.action === "create" && operation.entities) {
+        for (let i = 0; i < operation.entities.length; i++) {
+          const entityData = operation.entities[i];
+          try {
+            const entityType = entityData.type;
+            if (!Object.values(EntityType).includes(entityType)) {
+              operationEntities.push(null);
+              continue;
+            }
+            const finalLabel = getEntityLabel(entityType, entityData.properties);
+            const nameValidation = validateEntityName(finalLabel, entityType);
+            if (!nameValidation.isValid) {
+              operationEntities.push(null);
+              continue;
+            }
+            const entity = await this.plugin.entityManager.createEntity(entityType, entityData.properties);
+            operationEntities.push(entity);
+            const globalIdx = globalIndexOffset + i;
+            globalEntitiesMap.set(globalIdx, entity);
+            entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+            entitiesCreated++;
+          } catch {
+            operationEntities.push(null);
+          }
+        }
+        globalIndexOffset += operation.entities.length;
+      }
+      if (operation.connections) {
+        for (const conn of operation.connections) {
+          try {
+            let fromEntity = operationEntities[conn.from] ?? globalEntitiesMap.get(conn.from);
+            let toEntity = operationEntities[conn.to] ?? globalEntitiesMap.get(conn.to);
+            if (!fromEntity && conn.from_label)
+              fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.from_label);
+            if (!toEntity && conn.to_label)
+              toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.to_label);
+            if (fromEntity && toEntity) {
+              await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
+              connectionsCreated++;
+            }
+          } catch {
+          }
+        }
+      }
+    }
+    if (this.chatHistory[assistantIndex]) {
+      this.chatHistory[assistantIndex].progress = void 0;
+      if (entitiesCreated > 0) {
+        const currentContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = currentContent + `
+
+\u{1F3F7}\uFE0F **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
+        await this.plugin.refreshOrOpenGraphView();
+      }
+    }
+    await this.renderMessages();
   }
   /**
    * Process graph generation from AI response text.
