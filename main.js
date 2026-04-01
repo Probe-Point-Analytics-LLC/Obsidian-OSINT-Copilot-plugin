@@ -15436,6 +15436,19 @@ var ChatView = class extends import_obsidian14.ItemView {
           border-radius: 8px;
           border: 1px solid var(--background-modifier-border);
         `;
+        if (this.activeAbortControllers.has(i)) {
+          const cancelAllRow = multiProgressContainer.createDiv("vault-ai-multi-cancel-all-row");
+          cancelAllRow.style.cssText = "display: flex; justify-content: flex-end; margin-bottom: 4px;";
+          const cancelAllBtn = cancelAllRow.createEl("button", {
+            text: "Cancel all",
+            cls: "vault-ai-cancel-all-btn"
+          });
+          cancelAllBtn.style.cssText = "font-size: 11px; padding: 4px 10px; cursor: pointer; color: var(--text-muted); background: transparent; border: 1px solid var(--background-modifier-border); border-radius: 4px;";
+          cancelAllBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            void this.handleCancel(i);
+          });
+        }
         for (const [tool, progress] of Object.entries(item.multiProgress)) {
           const toolRow = multiProgressContainer.createDiv("vault-ai-tool-progress-row");
           toolRow.setAttribute("data-tool", tool);
@@ -15972,6 +15985,20 @@ var ChatView = class extends import_obsidian14.ItemView {
       } else {
         messageDiv.appendChild(multiContainer);
       }
+    }
+    if (this.activeAbortControllers.has(messageIndex) && !multiContainer.querySelector(".vault-ai-multi-cancel-all-row")) {
+      const cancelAllRow = multiContainer.createDiv("vault-ai-multi-cancel-all-row");
+      cancelAllRow.style.cssText = "display: flex; justify-content: flex-end; margin-bottom: 4px;";
+      multiContainer.prepend(cancelAllRow);
+      const cancelAllBtn = cancelAllRow.createEl("button", {
+        text: "Cancel all",
+        cls: "vault-ai-cancel-all-btn"
+      });
+      cancelAllBtn.style.cssText = "font-size: 11px; padding: 4px 10px; cursor: pointer; color: var(--text-muted); background: transparent; border: 1px solid var(--background-modifier-border); border-radius: 4px;";
+      cancelAllBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void this.handleCancel(messageIndex);
+      });
     }
     let toolRow = multiContainer.querySelector(`.vault-ai-tool-progress-row[data-tool="${toolName}"]`);
     if (!toolRow) {
