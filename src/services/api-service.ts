@@ -598,10 +598,18 @@ export class GraphApiService {
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             const json = await response.json() as any;
                             if (json.success) {
+                                const t = typeof json.text === "string" ? json.text.trim() : "";
+                                if (t.startsWith("Error:")) {
+                                    // Avoid "Error: Error: ..." when API body already starts with "Error:"
+                                    const inner = t.replace(/^Error:\s*/i, "").trim();
+                                    throw new Error(inner);
+                                }
                                 resolve(json.text);
                                 return;
                             } else {
-                                throw new Error(json.error || 'Failed to extract text');
+                                const raw = json.error || 'Failed to extract text';
+                                const inner = typeof raw === "string" ? raw.replace(/^Error:\s*/i, "").trim() : String(raw);
+                                throw new Error(inner);
                             }
                         } catch (error) {
                             lastError = error;

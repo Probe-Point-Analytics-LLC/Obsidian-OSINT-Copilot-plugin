@@ -3891,10 +3891,17 @@ var GraphApiService = class {
               }
               const json = await response.json();
               if (json.success) {
+                const t = typeof json.text === "string" ? json.text.trim() : "";
+                if (t.startsWith("Error:")) {
+                  const inner = t.replace(/^Error:\s*/i, "").trim();
+                  throw new Error(inner);
+                }
                 resolve(json.text);
                 return;
               } else {
-                throw new Error(json.error || "Failed to extract text");
+                const raw = json.error || "Failed to extract text";
+                const inner = typeof raw === "string" ? raw.replace(/^Error:\s*/i, "").trim() : String(raw);
+                throw new Error(inner);
               }
             } catch (error) {
               lastError = error;
@@ -11423,8 +11430,9 @@ var _OrchestrationService = class _OrchestrationService {
   async verifyProviderAndCredits() {
     if (this.plugin.settings.orchestrationProvider === "osint-copilot") {
       try {
+        const base = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
         const response = await (0, import_obsidian12.requestUrl)({
-          url: "https://api.osint-copilot.com/api/key/info",
+          url: `${base}/api/key/info`,
           method: "GET",
           headers: {
             "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
@@ -12770,12 +12778,16 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
   isAuthenticated() {
     return !!this.settings.reportApiKey;
   }
+  /** Report API base URL (same as Graph API URL in settings). */
+  reportApiBaseUrl() {
+    return (this.settings.graphApiUrl || REPORT_API_BASE_URL).replace(/\/+$/, "");
+  }
   async verifyPermissions() {
     if (!this.settings.reportApiKey)
       return;
     try {
       const response = await (0, import_obsidian14.requestUrl)({
-        url: `${REPORT_API_BASE_URL}/api/key/info`,
+        url: `${this.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
           "Authorization": `Bearer ${this.settings.reportApiKey}`,
@@ -18284,7 +18296,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
     }
     try {
       const response = await (0, import_obsidian14.requestUrl)({
-        url: "https://api.osint-copilot.com/api/key/info",
+        url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
           "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,

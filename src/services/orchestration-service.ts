@@ -34,8 +34,9 @@ export class OrchestrationService {
     private async verifyProviderAndCredits(): Promise<void> {
         if (this.plugin.settings.orchestrationProvider === 'osint-copilot') {
             try {
+                const base = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
                 const response = await requestUrl({
-                    url: "https://api.osint-copilot.com/api/key/info",
+                    url: `${base}/api/key/info`,
                     method: "GET",
                     headers: {
                         "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,

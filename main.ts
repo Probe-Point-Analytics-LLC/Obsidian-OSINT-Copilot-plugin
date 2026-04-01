@@ -532,12 +532,17 @@ export default class VaultAIPlugin extends Plugin {
     return !!this.settings.reportApiKey;
   }
 
+  /** Report API base URL (same as Graph API URL in settings). */
+  reportApiBaseUrl(): string {
+    return (this.settings.graphApiUrl || REPORT_API_BASE_URL).replace(/\/+$/, "");
+  }
+
   async verifyPermissions() {
     if (!this.settings.reportApiKey) return;
 
     try {
       const response = await requestUrl({
-        url: `${REPORT_API_BASE_URL}/api/key/info`,
+        url: `${this.reportApiBaseUrl()}/api/key/info`,
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.settings.reportApiKey}`,
@@ -7487,7 +7492,7 @@ class VaultAISettingTab extends PluginSettingTab {
 
     try {
       const response: RequestUrlResponse = await requestUrl({
-        url: "https://api.osint-copilot.com/api/key/info",
+        url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
           "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
