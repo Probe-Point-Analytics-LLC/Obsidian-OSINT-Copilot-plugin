@@ -12761,7 +12761,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
   }
   async onload() {
     await this.loadSettings();
-    if (!this.settings.reportApiKey) {
+    if (!(this.settings.reportApiKey || "").trim()) {
       new import_obsidian14.Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
     } else {
       this.verifyPermissions();
@@ -13018,26 +13018,35 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
     });
   }
   isAuthenticated() {
-    return !!this.settings.reportApiKey;
+    return !!(this.settings.reportApiKey || "").trim();
   }
   /** Report API base URL (same as Graph API URL in settings). */
   reportApiBaseUrl() {
     return (this.settings.graphApiUrl || REPORT_API_BASE_URL).replace(/\/+$/, "");
   }
   async verifyPermissions() {
-    if (!this.settings.reportApiKey)
+    const key = (this.settings.reportApiKey || "").trim();
+    if (!key)
       return;
     try {
       const response = await (0, import_obsidian14.requestUrl)({
         url: `${this.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
-          "Authorization": `Bearer ${this.settings.reportApiKey}`,
+          "Authorization": `Bearer ${key}`,
           "Content-Type": "application/json"
-        }
+        },
+        throw: false
       });
       if (response.status === 200) {
-        const data = response.json;
+        let data = response.json;
+        if (data == null) {
+          try {
+            data = JSON.parse(response.text || "{}");
+          } catch {
+            return;
+          }
+        }
         if (data.permissions) {
           this.settings.permissions = data.permissions;
           await this.saveData(this.settings);
@@ -18339,11 +18348,15 @@ Please try again or contact support if the issue persists.`,
 var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
+    /** Bumped on each `display()` so async license-info fetches ignore stale DOM. */
+    this.licenseInfoLayoutGeneration = 0;
     this.plugin = plugin;
   }
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    this.licenseInfoLayoutGeneration++;
+    const licenseInfoGen = this.licenseInfoLayoutGeneration;
     new import_obsidian14.Setting(containerEl).setName("Plugin updates").setHeading();
     new import_obsidian14.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
@@ -18581,14 +18594,15 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       "font-weight": "500"
     });
     new import_obsidian14.Setting(containerEl).setName("License key").setDesc("License key for all operations (chat, reports, and investigations)").addText((text) => {
-      text.setPlaceholder("Enter your license key").setValue(this.plugin.settings.reportApiKey).onChange(async (value) => {
-        this.plugin.settings.reportApiKey = value;
+      text.setPlaceholder("Enter your license key").setValue((this.plugin.settings.reportApiKey || "").trim()).onChange(async (value) => {
+        this.plugin.settings.reportApiKey = value.trim();
         await this.plugin.saveSettings();
         await this.refreshApiInfo();
       });
       text.inputEl.type = "password";
     });
-    if (this.plugin.settings.reportApiKey) {
+    const trimmedLicenseKey = (this.plugin.settings.reportApiKey || "").trim();
+    if (trimmedLicenseKey) {
       const apiInfoContainer = containerEl.createDiv("api-info-container");
       apiInfoContainer.setCssProps({
         margin: "10px 0",
@@ -18601,6 +18615,9 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         cls: "setting-item-description"
       });
       void this.fetchApiKeyInfo().then((info) => {
+        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
+          return;
+        }
         loadingEl.remove();
         if (info) {
           const infoGrid = apiInfoContainer.createDiv();
@@ -18704,6 +18721,9 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
           errP.setCssProps({ color: "var(--text-error)" });
         }
       }).catch(() => {
+        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
+          return;
+        }
         loadingEl.remove();
         const errP2 = apiInfoContainer.createEl("p", {
           text: "\u26A0\uFE0F failed to connect to API. Please check your internet connection.",
@@ -18783,7 +18803,8 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
     }
   }
   async fetchApiKeyInfo() {
-    if (!this.plugin.settings.reportApiKey) {
+    const rawKey = (this.plugin.settings.reportApiKey || "").trim();
+    if (!rawKey) {
       return null;
     }
     try {
@@ -18791,15 +18812,29 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
-          "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
+          "Authorization": `Bearer ${rawKey}`,
           "Content-Type": "application/json"
         },
         throw: false
       });
       if (response.status < 200 || response.status >= 300) {
+        console.warn(
+          "[OSINT Copilot] License info request failed:",
+          response.status,
+          (response.text || "").slice(0, 300)
+        );
         return null;
       }
-      return response.json;
+      let data = response.json;
+      if (data == null) {
+        try {
+          data = JSON.parse(response.text || "{}");
+        } catch {
+          console.warn("[OSINT Copilot] License info: could not parse JSON body");
+          return null;
+        }
+      }
+      return data;
     } catch (error) {
       console.error("Failed to fetch license key info:", error);
       return null;

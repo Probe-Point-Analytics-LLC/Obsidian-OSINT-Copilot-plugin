@@ -223,7 +223,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // Check license key on load
     // Check license key on load
-    if (!this.settings.reportApiKey) {
+    if (!(this.settings.reportApiKey || "").trim()) {
       new Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
     } else {
       // Verify permissions on load
@@ -534,7 +534,7 @@ export default class VaultAIPlugin extends Plugin {
 
   isAuthenticated(): boolean {
     // AI features require a valid license key
-    return !!this.settings.reportApiKey;
+    return !!(this.settings.reportApiKey || "").trim();
   }
 
   /** Report API base URL (same as Graph API URL in settings). */
@@ -543,20 +543,29 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   async verifyPermissions() {
-    if (!this.settings.reportApiKey) return;
+    const key = (this.settings.reportApiKey || "").trim();
+    if (!key) return;
 
     try {
       const response = await requestUrl({
         url: `${this.reportApiBaseUrl()}/api/key/info`,
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${this.settings.reportApiKey}`,
+          'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json'
-        }
+        },
+        throw: false,
       });
 
       if (response.status === 200) {
-        const data = response.json as ApiKeyInfo;
+        let data = response.json as ApiKeyInfo | null | undefined;
+        if (data == null) {
+          try {
+            data = JSON.parse(response.text || "{}") as ApiKeyInfo;
+          } catch {
+            return;
+          }
+        }
         if (data.permissions) {
           this.settings.permissions = data.permissions;
           await this.saveData(this.settings);
@@ -7139,6 +7148,8 @@ export class ChatView extends ItemView {
 
 class VaultAISettingTab extends PluginSettingTab {
   plugin: VaultAIPlugin;
+  /** Bumped on each `display()` so async license-info fetches ignore stale DOM. */
+  private licenseInfoLayoutGeneration = 0;
 
   constructor(app: App, plugin: VaultAIPlugin) {
     super(app, plugin);
@@ -7148,6 +7159,8 @@ class VaultAISettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    this.licenseInfoLayoutGeneration++;
+    const licenseInfoGen = this.licenseInfoLayoutGeneration;
 
     // Plugin Updates Section
     new Setting(containerEl).setName("Plugin updates").setHeading();
@@ -7480,9 +7493,9 @@ class VaultAISettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder("Enter your license key")
-          .setValue(this.plugin.settings.reportApiKey)
+          .setValue((this.plugin.settings.reportApiKey || "").trim())
           .onChange(async (value) => {
-            this.plugin.settings.reportApiKey = value;
+            this.plugin.settings.reportApiKey = value.trim();
             await this.plugin.saveSettings();
             // Refresh license key info when key changes
             await this.refreshApiInfo();
@@ -7491,7 +7504,8 @@ class VaultAISettingTab extends PluginSettingTab {
       });
 
     // License Key Info Display (if key is configured)
-    if (this.plugin.settings.reportApiKey) {
+    const trimmedLicenseKey = (this.plugin.settings.reportApiKey || "").trim();
+    if (trimmedLicenseKey) {
       const apiInfoContainer = containerEl.createDiv("api-info-container");
       apiInfoContainer.setCssProps({
         margin: "10px 0",
@@ -7505,8 +7519,11 @@ class VaultAISettingTab extends PluginSettingTab {
         cls: "setting-item-description",
       });
 
-      // Fetch license key info
+      // Fetch license key info (ignore results if settings UI was re-rendered)
       void this.fetchApiKeyInfo().then((info) => {
+        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
+          return;
+        }
         loadingEl.remove();
 
         if (info) {
@@ -7626,6 +7643,9 @@ class VaultAISettingTab extends PluginSettingTab {
           errP.setCssProps({ color: "var(--text-error)" });
         }
       }).catch(() => {
+        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
+          return;
+        }
         loadingEl.remove();
         const errP2 = apiInfoContainer.createEl("p", {
           text: "⚠️ failed to connect to API. Please check your internet connection.",
@@ -7777,7 +7797,8 @@ class VaultAISettingTab extends PluginSettingTab {
   }
 
   async fetchApiKeyInfo(): Promise<ApiKeyInfo | null> {
-    if (!this.plugin.settings.reportApiKey) {
+    const rawKey = (this.plugin.settings.reportApiKey || "").trim();
+    if (!rawKey) {
       return null;
     }
 
@@ -7786,17 +7807,32 @@ class VaultAISettingTab extends PluginSettingTab {
         url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
-          "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
+          "Authorization": `Bearer ${rawKey}`,
           "Content-Type": "application/json",
         },
         throw: false,
       });
 
       if (response.status < 200 || response.status >= 300) {
+        console.warn(
+          "[OSINT Copilot] License info request failed:",
+          response.status,
+          (response.text || "").slice(0, 300)
+        );
         return null;
       }
 
-      return response.json as ApiKeyInfo;
+      let data: unknown = response.json;
+      if (data == null) {
+        try {
+          data = JSON.parse(response.text || "{}");
+        } catch {
+          console.warn("[OSINT Copilot] License info: could not parse JSON body");
+          return null;
+        }
+      }
+
+      return data as ApiKeyInfo;
     } catch (error) {
       console.error("Failed to fetch license key info:", error);
       return null;
