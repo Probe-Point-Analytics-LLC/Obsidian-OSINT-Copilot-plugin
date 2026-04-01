@@ -23,6 +23,34 @@ export interface OrchestrationResult {
     phase?: "PLAN_PROPOSED" | "TOOLS_COMPLETE" | "SYNTHESIS_COMPLETE";
 }
 
+/** Display names for orchestration tool ids (UI + progress rows). */
+export const ORCHESTRATION_TOOL_DISPLAY_NAMES: Record<string, string> = {
+    DARK_WEB: "DarkWeb Search",
+    OSINT_SEARCH: "Digital Footprint",
+    CORPORATE_REPORTS: "Companies & People",
+    LOCAL_VAULT: "Local Search",
+    VAULT_GRAPH_INGEST: "Vault graph (notes)",
+    EXTRACT_TO_GRAPH: "Extract to graph",
+};
+
+/** Optional metadata for orchestration progress callbacks (multi-tool UI). */
+export interface OrchestrationProgressMeta {
+    orchestrationTool?: string;
+}
+
+export interface ExecuteToolsParallelOptions {
+    /** Per-tool cancellation (tool id → signal). */
+    abortSignals?: Record<string, AbortSignal>;
+    /** Cancels all tools (e.g. main chat Cancel). */
+    globalAbort?: AbortSignal;
+}
+
+export interface ProcessRequestOptions {
+    abortSignal?: AbortSignal;
+    /** Called when multiple tools run; return per-tool signals for cooperative cancel. */
+    onToolsStarting?: (tools: string[]) => Record<string, AbortSignal> | void;
+}
+
 export class OrchestrationService {
     private plugin: VaultAIPlugin;
 
@@ -61,17 +89,39 @@ export class OrchestrationService {
         }
     }
 
+    private mergeAbortSignals(global?: AbortSignal, perTool?: AbortSignal): AbortSignal | undefined {
+        if (!global && !perTool) return undefined;
+        if (!global) return perTool;
+        if (!perTool) return global;
+        const c = new AbortController();
+        const onAbort = () => {
+            if (!c.signal.aborted) c.abort();
+        };
+        global.addEventListener("abort", onAbort);
+        perTool.addEventListener("abort", onAbort);
+        if (global.aborted || perTool.aborted) onAbort();
+        return c.signal;
+    }
+
     public async processRequest(
         query: string,
         attachmentsContext: string,
         currentGraphState: any,
         conversationMemory: { role: string, content: string }[],
         currentConversation: any,
-        onProgress: (msg: string, percent: number) => void
+        onProgress: (msg: string, percent: number, meta?: OrchestrationProgressMeta) => void,
+        options?: ProcessRequestOptions
     ): Promise<OrchestrationResult> {
+        const checkAborted = () => {
+            if (options?.abortSignal?.aborted) {
+                throw new DOMException("Aborted", "AbortError");
+            }
+        };
+
         try {
             onProgress("Verifying provider and credits...", 10);
             await this.verifyProviderAndCredits();
+            checkAborted();
 
             // Implicit URL Extraction (Phase 3)
             const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -79,6 +129,7 @@ export class OrchestrationService {
             if (urls && urls.length > 0) {
                 onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
                 for (const url of urls) {
+                    checkAborted();
                     try {
                         const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
                         attachmentsContext += `\n\n=== Content from ${url} ===\n${extractedText}`;
@@ -90,6 +141,7 @@ export class OrchestrationService {
             }
 
             onProgress("Classifying intent and formulating plan...", 20);
+            checkAborted();
             const routedIntent = detectOrchestrationIntent(query);
             console.log("[OrchestrationService] Routed intent:", routedIntent);
             const plan = await this.classifyIntent(
@@ -99,6 +151,7 @@ export class OrchestrationService {
                 conversationMemory,
                 routedIntent
             );
+            checkAborted();
 
             // HITL: If the plan is a proposal, return immediately for user review
             if (plan.isProposal && plan.toolsToCall.length > 0) {
@@ -113,20 +166,37 @@ export class OrchestrationService {
             // If no tools needed, generate direct response
             if (plan.toolsToCall.length === 0) {
                 onProgress("Generating response...", 90);
+                checkAborted();
                 const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
                 onProgress("Complete", 100);
                 return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
             }
 
-            // Execute tools in parallel
-            onProgress(`Executing tools: ${plan.toolsToCall.join(', ')}...`, 40);
+            let toolAbortSignals: Record<string, AbortSignal> | undefined;
+            if (plan.toolsToCall.length > 1 && options?.onToolsStarting) {
+                const sigs = options.onToolsStarting(plan.toolsToCall);
+                toolAbortSignals = sigs || undefined;
+            }
+
+            onProgress(
+                plan.toolsToCall.length > 1
+                    ? `Running ${plan.toolsToCall.length} tools in parallel...`
+                    : `Executing tools: ${plan.toolsToCall.join(", ")}...`,
+                40
+            );
+            checkAborted();
+
             const toolResults = await this.executeToolsInParallel(
                 plan.toolsToCall,
                 query,
                 attachmentsContext,
                 currentConversation,
-                (tool, msg, percent, _detail) => {
-                    onProgress(`[${tool}] ${msg}`, percent);
+                (toolDisplay, msg, percent, _detail) => {
+                    onProgress(msg, percent, { orchestrationTool: toolDisplay });
+                },
+                {
+                    abortSignals: toolAbortSignals,
+                    globalAbort: options?.abortSignal,
                 }
             );
 
@@ -495,7 +565,8 @@ Respond with this exact JSON structure:
             message: string,
             percent: number,
             detail?: { vaultIngestAppliedLine?: string; vaultIngestAccumulatedCommands?: string[] }
-        ) => void
+        ) => void,
+        abortSignal?: AbortSignal
     ): Promise<{
         summary: string;
         graphCommands: string[];
@@ -561,6 +632,9 @@ Respond with this exact JSON structure:
         };
 
         for (let i = 0; i < maxFiles; i++) {
+            if (abortSignal?.aborted) {
+                break;
+            }
             const file = files[i];
             emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
 
@@ -597,30 +671,38 @@ Respond with this exact JSON structure:
             }
 
             const block = `Source file: ${file.path}\n\n${content}`;
-            const extraction = await this.plugin.graphApiService.processTextInChunks(
-                block,
-                this.plugin.entityManager.getAllEntities(),
-                new Date().toISOString(),
-                (chunkNum, totalChunks, msg) => {
-                    emit(`${file.path} — ${msg}`, i, chunkNum, totalChunks);
-                },
-                undefined,
-                undefined,
-                false,
-                {
-                    chunkSize: OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
-                    chunkThreshold: OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
-                    onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
-                        graphCommands.push(...this.operationsToGraphCommands(operations));
-                        emit(
-                            `Graph extraction: ${file.path} — chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
-                            i,
-                            chunkIndex,
-                            totalChunks
-                        );
+            let extraction: Awaited<ReturnType<GraphApiService["processTextInChunks"]>>;
+            try {
+                extraction = await this.plugin.graphApiService.processTextInChunks(
+                    block,
+                    this.plugin.entityManager.getAllEntities(),
+                    new Date().toISOString(),
+                    (chunkNum, totalChunks, msg) => {
+                        emit(`${file.path} — ${msg}`, i, chunkNum, totalChunks);
                     },
+                    undefined,
+                    abortSignal,
+                    false,
+                    {
+                        chunkSize: OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
+                        chunkThreshold: OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
+                        onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
+                            graphCommands.push(...this.operationsToGraphCommands(operations));
+                            emit(
+                                `Graph extraction: ${file.path} — chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
+                                i,
+                                chunkIndex,
+                                totalChunks
+                            );
+                        },
+                    }
+                );
+            } catch (e) {
+                if (e instanceof DOMException && e.name === "AbortError") {
+                    break;
                 }
-            );
+                throw e;
+            }
 
             if (extraction.success) {
                 emit(
@@ -636,6 +718,7 @@ Respond with this exact JSON structure:
         }
 
         const summary =
+            (abortSignal?.aborted ? "**Cancelled by user.** " : "") +
             `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}).` +
             (truncatedFiles > 0
                 ? ` ${truncatedFiles} file(s) were truncated to ${OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.`
@@ -663,23 +746,27 @@ Respond with this exact JSON structure:
             message: string,
             percent: number,
             detail?: { vaultIngestAccumulatedCommands?: string[]; vaultIngestAppliedLine?: string }
-        ) => void
+        ) => void,
+        options?: ExecuteToolsParallelOptions
     ): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
 
-        const toolToDisplayName: Record<string, string> = {
-            "DARK_WEB": "DarkWeb Search",
-            "OSINT_SEARCH": "Digital Footprint",
-            "CORPORATE_REPORTS": "Companies & People",
-            "LOCAL_VAULT": "Local Search",
-            "VAULT_GRAPH_INGEST": "Vault graph (notes)",
-        };
+        const toolToDisplayName = ORCHESTRATION_TOOL_DISPLAY_NAMES;
+
+        const isCancelled = (toolId: string) =>
+            options?.globalAbort?.aborted === true ||
+            options?.abortSignals?.[toolId]?.aborted === true;
 
         const promises = tools.map(async (tool) => {
             const displayName = toolToDisplayName[tool] || tool;
             try {
                 switch (tool) {
                     case "DARK_WEB": {
+                        if (isCancelled("DARK_WEB")) {
+                            results["DARK_WEB"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         const darkWebModel = "gpt-5-mini"; // Align with main.ts DARKWEB_MODEL
                         onProgress(displayName, "Initializing job...", 10);
                         const darkWebRes = await requestUrl({
@@ -708,6 +795,11 @@ Respond with this exact JSON structure:
                         const startTime = Date.now();
                         let completed = false;
                         while (Date.now() - startTime < maxPollMs) {
+                            if (isCancelled("DARK_WEB")) {
+                                results["DARK_WEB"] = "Cancelled by user.";
+                                onProgress(displayName, "Cancelled", 100);
+                                break;
+                            }
                             await new Promise(resolve => setTimeout(resolve, 5000));
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
                             onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
@@ -729,7 +821,7 @@ Respond with this exact JSON structure:
                             }
                         }
 
-                        if (completed) {
+                        if (completed && !isCancelled("DARK_WEB")) {
                             onProgress(displayName, "Downloading results...", 90);
                             const downloadRes = await requestUrl({
                                 url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
@@ -752,12 +844,25 @@ Respond with this exact JSON structure:
                             } else {
                                 results["DARK_WEB"] = "Download failed.";
                             }
+                        } else if (!results["DARK_WEB"] && isCancelled("DARK_WEB")) {
+                            results["DARK_WEB"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
                         }
-                        onProgress(displayName, "Complete", 100);
+                        const dw = results["DARK_WEB"];
+                        if (typeof dw === "string" && dw.includes("Cancelled")) {
+                            // already at 100%
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 
                     case "OSINT_SEARCH": {
+                        if (isCancelled("OSINT_SEARCH")) {
+                            results["OSINT_SEARCH"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         onProgress(displayName, "Searching digital footprints...", 30);
                         try {
                             const osintRes = await this.plugin.graphApiService.aiSearch({
@@ -769,17 +874,28 @@ Respond with this exact JSON structure:
                         } catch (e: any) {
                             results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
                         }
-                        onProgress(displayName, "Complete", 100);
+                        if (isCancelled("OSINT_SEARCH")) {
+                            results["OSINT_SEARCH"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 
                     case "CORPORATE_REPORTS": {
+                        if (isCancelled("CORPORATE_REPORTS")) {
+                            results["CORPORATE_REPORTS"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         onProgress(displayName, "Generating corporate intelligence report...", 10);
                         try {
                             const reportData = await this.plugin.generateReport(
                                 query,
                                 currentConversation || null,
                                 (status, progress) => {
+                                    if (isCancelled("CORPORATE_REPORTS")) return;
                                     if (progress) {
                                         onProgress(displayName, progress.message, progress.percent);
                                     } else {
@@ -803,16 +919,31 @@ Respond with this exact JSON structure:
                         } catch (e: any) {
                             results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
                         }
-                        onProgress(displayName, "Complete", 100);
+                        if (isCancelled("CORPORATE_REPORTS")) {
+                            results["CORPORATE_REPORTS"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 
                     case "VAULT_GRAPH_INGEST": {
+                        if (isCancelled("VAULT_GRAPH_INGEST")) {
+                            results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         onProgress(displayName, "Starting vault graph ingest...", 5);
                         try {
+                            const vaultSig = this.mergeAbortSignals(
+                                options?.globalAbort,
+                                options?.abortSignals?.["VAULT_GRAPH_INGEST"]
+                            );
                             const out = await this.runVaultGraphIngest((msg, pct, detail) => {
+                                if (isCancelled("VAULT_GRAPH_INGEST")) return;
                                 onProgress(displayName, msg, pct, detail);
-                            });
+                            }, vaultSig);
                             results["VAULT_GRAPH_INGEST"] = {
                                 __vaultIngest: true,
                                 __vaultIngestAutoApplied: true,
@@ -829,28 +960,52 @@ Respond with this exact JSON structure:
                                 e instanceof Error ? e.message : String(e)
                             }`;
                         }
-                        onProgress(displayName, "Complete", 100);
+                        if (isCancelled("VAULT_GRAPH_INGEST")) {
+                            results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 
                     case "LOCAL_VAULT": {
+                        if (isCancelled("LOCAL_VAULT")) {
+                            results["LOCAL_VAULT"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         onProgress(displayName, "Searching Obsidian vault...", 20);
                         const searchTerms = query.split(/\s+/).filter(w => w.length > 3).slice(0, 5);
                         const files = this.plugin.app.vault.getMarkdownFiles();
                         const matching: string[] = [];
                         for (const file of files) {
+                            if (isCancelled("LOCAL_VAULT")) break;
                             if (matching.length >= 10) break;
                             const content = await this.plugin.app.vault.cachedRead(file);
                             if (searchTerms.some(t => content.toLowerCase().includes(t.toLowerCase()))) {
                                 matching.push(`File: ${file.path}\nContent Preview: ${content.substring(0, 500)}...`);
                             }
                         }
-                        results["LOCAL_VAULT"] = matching.length > 0 ? matching.join("\n\n---\n\n") : "No relevant local notes found.";
-                        onProgress(displayName, "Complete", 100);
+                        results["LOCAL_VAULT"] = isCancelled("LOCAL_VAULT")
+                            ? "Cancelled by user."
+                            : matching.length > 0
+                              ? matching.join("\n\n---\n\n")
+                              : "No relevant local notes found.";
+                        if (isCancelled("LOCAL_VAULT")) {
+                            onProgress(displayName, "Cancelled", 100);
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 
                     case "EXTRACT_TO_GRAPH": {
+                        if (isCancelled("EXTRACT_TO_GRAPH")) {
+                            results["EXTRACT_TO_GRAPH"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
                         onProgress(displayName, "Extracting entities to graph...", 40);
                         if (!attachmentsContext || attachmentsContext.trim() === '') {
                             results["EXTRACT_TO_GRAPH"] = "No attachments provided.";

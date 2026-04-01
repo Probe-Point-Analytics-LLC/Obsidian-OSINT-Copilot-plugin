@@ -11456,6 +11456,14 @@ function detectOrchestrationIntent(query) {
 }
 
 // src/services/orchestration-service.ts
+var ORCHESTRATION_TOOL_DISPLAY_NAMES = {
+  DARK_WEB: "DarkWeb Search",
+  OSINT_SEARCH: "Digital Footprint",
+  CORPORATE_REPORTS: "Companies & People",
+  LOCAL_VAULT: "Local Search",
+  VAULT_GRAPH_INGEST: "Vault graph (notes)",
+  EXTRACT_TO_GRAPH: "Extract to graph"
+};
 var _OrchestrationService = class _OrchestrationService {
   constructor(plugin) {
     this.plugin = plugin;
@@ -11487,15 +11495,40 @@ var _OrchestrationService = class _OrchestrationService {
       }
     }
   }
-  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, currentConversation, onProgress) {
+  mergeAbortSignals(global, perTool) {
+    if (!global && !perTool)
+      return void 0;
+    if (!global)
+      return perTool;
+    if (!perTool)
+      return global;
+    const c = new AbortController();
+    const onAbort = () => {
+      if (!c.signal.aborted)
+        c.abort();
+    };
+    global.addEventListener("abort", onAbort);
+    perTool.addEventListener("abort", onAbort);
+    if (global.aborted || perTool.aborted)
+      onAbort();
+    return c.signal;
+  }
+  async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, currentConversation, onProgress, options) {
+    const checkAborted = () => {
+      if (options?.abortSignal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+    };
     try {
       onProgress("Verifying provider and credits...", 10);
       await this.verifyProviderAndCredits();
+      checkAborted();
       const urlRegex = /(https?:\/\/[^\s]+)/g;
       const urls = query.match(urlRegex);
       if (urls && urls.length > 0) {
         onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
         for (const url of urls) {
+          checkAborted();
           try {
             const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
             attachmentsContext += `
@@ -11512,6 +11545,7 @@ ${extractedText}`;
         }
       }
       onProgress("Classifying intent and formulating plan...", 20);
+      checkAborted();
       const routedIntent = detectOrchestrationIntent(query);
       console.log("[OrchestrationService] Routed intent:", routedIntent);
       const plan = await this.classifyIntent(
@@ -11521,6 +11555,7 @@ ${extractedText}`;
         conversationMemory,
         routedIntent
       );
+      checkAborted();
       if (plan.isProposal && plan.toolsToCall.length > 0) {
         onProgress("Investigation plan proposed for review.", 100);
         return {
@@ -11531,18 +11566,32 @@ ${extractedText}`;
       }
       if (plan.toolsToCall.length === 0) {
         onProgress("Generating response...", 90);
+        checkAborted();
         const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
         onProgress("Complete", 100);
         return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
       }
-      onProgress(`Executing tools: ${plan.toolsToCall.join(", ")}...`, 40);
+      let toolAbortSignals;
+      if (plan.toolsToCall.length > 1 && options?.onToolsStarting) {
+        const sigs = options.onToolsStarting(plan.toolsToCall);
+        toolAbortSignals = sigs || void 0;
+      }
+      onProgress(
+        plan.toolsToCall.length > 1 ? `Running ${plan.toolsToCall.length} tools in parallel...` : `Executing tools: ${plan.toolsToCall.join(", ")}...`,
+        40
+      );
+      checkAborted();
       const toolResults = await this.executeToolsInParallel(
         plan.toolsToCall,
         query,
         attachmentsContext,
         currentConversation,
-        (tool, msg, percent, _detail) => {
-          onProgress(`[${tool}] ${msg}`, percent);
+        (toolDisplay, msg, percent, _detail) => {
+          onProgress(msg, percent, { orchestrationTool: toolDisplay });
+        },
+        {
+          abortSignals: toolAbortSignals,
+          globalAbort: options?.abortSignal
         }
       );
       onProgress("Tools complete. Awaiting review...", 60);
@@ -11838,7 +11887,7 @@ Respond with this exact JSON structure:
    * extract text (API for binary), run processTextInChunks per file with smaller chunks,
    * accumulate @@ commands (and report progress with the growing list for UI).
    */
-  async runVaultGraphIngest(onFileProgress) {
+  async runVaultGraphIngest(onFileProgress, abortSignal) {
     const graphCommands = [];
     const vaultFiles = this.plugin.app.vault.getFiles();
     const files = vaultFiles.filter((f) => f instanceof import_obsidian12.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
@@ -11874,6 +11923,9 @@ Respond with this exact JSON structure:
       }
     };
     for (let i = 0; i < maxFiles; i++) {
+      if (abortSignal?.aborted) {
+        break;
+      }
       const file = files[i];
       emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
       const ext = (file.extension || "").toLowerCase();
@@ -11908,30 +11960,38 @@ Respond with this exact JSON structure:
       const block = `Source file: ${file.path}
 
 ${content}`;
-      const extraction = await this.plugin.graphApiService.processTextInChunks(
-        block,
-        this.plugin.entityManager.getAllEntities(),
-        (/* @__PURE__ */ new Date()).toISOString(),
-        (chunkNum, totalChunks, msg) => {
-          emit(`${file.path} \u2014 ${msg}`, i, chunkNum, totalChunks);
-        },
-        void 0,
-        void 0,
-        false,
-        {
-          chunkSize: _OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
-          chunkThreshold: _OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
-          onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
-            graphCommands.push(...this.operationsToGraphCommands(operations));
-            emit(
-              `Graph extraction: ${file.path} \u2014 chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
-              i,
-              chunkIndex,
-              totalChunks
-            );
+      let extraction;
+      try {
+        extraction = await this.plugin.graphApiService.processTextInChunks(
+          block,
+          this.plugin.entityManager.getAllEntities(),
+          (/* @__PURE__ */ new Date()).toISOString(),
+          (chunkNum, totalChunks, msg) => {
+            emit(`${file.path} \u2014 ${msg}`, i, chunkNum, totalChunks);
+          },
+          void 0,
+          abortSignal,
+          false,
+          {
+            chunkSize: _OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
+            chunkThreshold: _OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
+            onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
+              graphCommands.push(...this.operationsToGraphCommands(operations));
+              emit(
+                `Graph extraction: ${file.path} \u2014 chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
+                i,
+                chunkIndex,
+                totalChunks
+              );
+            }
           }
+        );
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          break;
         }
-      );
+        throw e;
+      }
       if (extraction.success) {
         emit(
           `Graph extraction: ${file.path} \u2014 done (${graphCommands.length} command(s) so far)`,
@@ -11944,7 +12004,7 @@ ${content}`;
         );
       }
     }
-    const summary = `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
+    const summary = (abortSignal?.aborted ? "**Cancelled by user.** " : "") + `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
     return {
       summary,
       graphCommands,
@@ -11954,20 +12014,20 @@ ${content}`;
       extractFailures
     };
   }
-  async executeToolsInParallel(tools, query, attachmentsContext, currentConversation, onProgress) {
+  async executeToolsInParallel(tools, query, attachmentsContext, currentConversation, onProgress, options) {
     const results = {};
-    const toolToDisplayName = {
-      "DARK_WEB": "DarkWeb Search",
-      "OSINT_SEARCH": "Digital Footprint",
-      "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search",
-      "VAULT_GRAPH_INGEST": "Vault graph (notes)"
-    };
+    const toolToDisplayName = ORCHESTRATION_TOOL_DISPLAY_NAMES;
+    const isCancelled = (toolId) => options?.globalAbort?.aborted === true || options?.abortSignals?.[toolId]?.aborted === true;
     const promises = tools.map(async (tool) => {
       const displayName = toolToDisplayName[tool] || tool;
       try {
         switch (tool) {
           case "DARK_WEB": {
+            if (isCancelled("DARK_WEB")) {
+              results["DARK_WEB"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             const darkWebModel = "gpt-5-mini";
             onProgress(displayName, "Initializing job...", 10);
             const darkWebRes = await (0, import_obsidian12.requestUrl)({
@@ -11995,6 +12055,11 @@ ${content}`;
             const startTime = Date.now();
             let completed = false;
             while (Date.now() - startTime < maxPollMs) {
+              if (isCancelled("DARK_WEB")) {
+                results["DARK_WEB"] = "Cancelled by user.";
+                onProgress(displayName, "Cancelled", 100);
+                break;
+              }
               await new Promise((resolve) => setTimeout(resolve, 5e3));
               const elapsed = Math.round((Date.now() - startTime) / 1e3);
               onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
@@ -12014,7 +12079,7 @@ ${content}`;
                 }
               }
             }
-            if (completed) {
+            if (completed && !isCancelled("DARK_WEB")) {
               onProgress(displayName, "Downloading results...", 90);
               const downloadRes = await (0, import_obsidian12.requestUrl)({
                 url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
@@ -12038,11 +12103,23 @@ ${summary}` : summary;
               } else {
                 results["DARK_WEB"] = "Download failed.";
               }
+            } else if (!results["DARK_WEB"] && isCancelled("DARK_WEB")) {
+              results["DARK_WEB"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
             }
-            onProgress(displayName, "Complete", 100);
+            const dw = results["DARK_WEB"];
+            if (typeof dw === "string" && dw.includes("Cancelled")) {
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           case "OSINT_SEARCH": {
+            if (isCancelled("OSINT_SEARCH")) {
+              results["OSINT_SEARCH"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             onProgress(displayName, "Searching digital footprints...", 30);
             try {
               const osintRes = await this.plugin.graphApiService.aiSearch({
@@ -12054,16 +12131,28 @@ ${summary}` : summary;
             } catch (e) {
               results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
             }
-            onProgress(displayName, "Complete", 100);
+            if (isCancelled("OSINT_SEARCH")) {
+              results["OSINT_SEARCH"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           case "CORPORATE_REPORTS": {
+            if (isCancelled("CORPORATE_REPORTS")) {
+              results["CORPORATE_REPORTS"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             onProgress(displayName, "Generating corporate intelligence report...", 10);
             try {
               const reportData = await this.plugin.generateReport(
                 query,
                 currentConversation || null,
                 (status, progress) => {
+                  if (isCancelled("CORPORATE_REPORTS"))
+                    return;
                   if (progress) {
                     onProgress(displayName, progress.message, progress.percent);
                   } else {
@@ -12087,15 +12176,31 @@ ${reportData.content}` : reportData.content;
             } catch (e) {
               results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
             }
-            onProgress(displayName, "Complete", 100);
+            if (isCancelled("CORPORATE_REPORTS")) {
+              results["CORPORATE_REPORTS"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           case "VAULT_GRAPH_INGEST": {
+            if (isCancelled("VAULT_GRAPH_INGEST")) {
+              results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             onProgress(displayName, "Starting vault graph ingest...", 5);
             try {
+              const vaultSig = this.mergeAbortSignals(
+                options?.globalAbort,
+                options?.abortSignals?.["VAULT_GRAPH_INGEST"]
+              );
               const out = await this.runVaultGraphIngest((msg, pct, detail) => {
+                if (isCancelled("VAULT_GRAPH_INGEST"))
+                  return;
                 onProgress(displayName, msg, pct, detail);
-              });
+              }, vaultSig);
               results["VAULT_GRAPH_INGEST"] = {
                 __vaultIngest: true,
                 __vaultIngestAutoApplied: true,
@@ -12110,15 +12215,27 @@ ${reportData.content}` : reportData.content;
             } catch (e) {
               results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${e instanceof Error ? e.message : String(e)}`;
             }
-            onProgress(displayName, "Complete", 100);
+            if (isCancelled("VAULT_GRAPH_INGEST")) {
+              results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           case "LOCAL_VAULT": {
+            if (isCancelled("LOCAL_VAULT")) {
+              results["LOCAL_VAULT"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             onProgress(displayName, "Searching Obsidian vault...", 20);
             const searchTerms = query.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
             const files = this.plugin.app.vault.getMarkdownFiles();
             const matching = [];
             for (const file of files) {
+              if (isCancelled("LOCAL_VAULT"))
+                break;
               if (matching.length >= 10)
                 break;
               const content = await this.plugin.app.vault.cachedRead(file);
@@ -12127,11 +12244,20 @@ ${reportData.content}` : reportData.content;
 Content Preview: ${content.substring(0, 500)}...`);
               }
             }
-            results["LOCAL_VAULT"] = matching.length > 0 ? matching.join("\n\n---\n\n") : "No relevant local notes found.";
-            onProgress(displayName, "Complete", 100);
+            results["LOCAL_VAULT"] = isCancelled("LOCAL_VAULT") ? "Cancelled by user." : matching.length > 0 ? matching.join("\n\n---\n\n") : "No relevant local notes found.";
+            if (isCancelled("LOCAL_VAULT")) {
+              onProgress(displayName, "Cancelled", 100);
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           case "EXTRACT_TO_GRAPH": {
+            if (isCancelled("EXTRACT_TO_GRAPH")) {
+              results["EXTRACT_TO_GRAPH"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
             onProgress(displayName, "Extracting entities to graph...", 40);
             if (!attachmentsContext || attachmentsContext.trim() === "") {
               results["EXTRACT_TO_GRAPH"] = "No attachments provided.";
@@ -15312,12 +15438,31 @@ var ChatView = class extends import_obsidian14.ItemView {
         `;
         for (const [tool, progress] of Object.entries(item.multiProgress)) {
           const toolRow = multiProgressContainer.createDiv("vault-ai-tool-progress-row");
-          toolRow.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
-          const labelRow = toolRow.createDiv();
-          labelRow.style.cssText = "display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: bold;";
-          labelRow.createEl("span", { text: tool });
-          labelRow.createEl("span", { text: `${progress.percent}%`, cls: "vault-ai-progress-percent" });
-          const progressTrack = toolRow.createDiv("vault-ai-progress-track");
+          toolRow.setAttribute("data-tool", tool);
+          toolRow.style.cssText = "margin-bottom: 12px; padding: 8px; background: var(--background-secondary-alt); border-radius: 6px; border: 1px solid var(--background-modifier-border); display: flex; flex-direction: column; gap: 4px;";
+          const header = toolRow.createDiv("vault-ai-tool-header");
+          header.style.cssText = "display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-bottom: 6px;";
+          const label = header.createDiv("vault-ai-tool-label");
+          label.textContent = tool;
+          label.style.cssText = "font-size: 12px; font-weight: 600; color: var(--text-normal); flex: 1; min-width: 0;";
+          const headerRight = header.createDiv("vault-ai-tool-header-right");
+          headerRight.style.cssText = "display: flex; align-items: center; gap: 8px; flex-shrink: 0;";
+          const pctEl = headerRight.createDiv("vault-ai-tool-percent");
+          pctEl.textContent = `${progress.percent}%`;
+          pctEl.style.cssText = "font-size: 11px; color: var(--interactive-accent);";
+          const toolId = item.orchestrationDisplayToToolId?.[tool];
+          const ctrl = toolId ? item.orchestrationAbortByToolId?.[toolId] : void 0;
+          if (ctrl && !ctrl.signal.aborted) {
+            const cancelWrap = headerRight.createDiv("vault-ai-tool-cancel-wrap");
+            const cancelBtn = cancelWrap.createEl("button", { text: "Cancel", cls: "vault-ai-tool-cancel-btn" });
+            cancelBtn.style.cssText = "font-size: 11px; padding: 2px 8px; cursor: pointer; color: var(--text-muted); background: transparent; border: 1px solid var(--background-modifier-border); border-radius: 4px;";
+            cancelBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (toolId)
+                void this.handleOrchestrationToolCancel(i, toolId);
+            });
+          }
+          const progressTrack = toolRow.createDiv("vault-ai-tool-bar-container");
           progressTrack.style.cssText = `
             height: 6px;
             background: var(--background-modifier-border);
@@ -15325,18 +15470,16 @@ var ChatView = class extends import_obsidian14.ItemView {
             overflow: hidden;
             position: relative;
           `;
-          const progressFill = progressTrack.createDiv("vault-ai-progress-fill");
+          const progressFill = progressTrack.createDiv("vault-ai-tool-bar-fill");
           progressFill.style.cssText = `
             height: 100%;
             width: ${progress.percent}%;
             background: var(--interactive-accent);
             transition: width 0.3s ease-in-out;
           `;
-          const statusText = toolRow.createEl("div", {
-            cls: "vault-ai-progress-status",
-            text: progress.message
-          });
-          statusText.style.cssText = "font-size: 10px; color: var(--text-muted);";
+          const statusText = toolRow.createDiv("vault-ai-tool-status");
+          statusText.textContent = progress.message;
+          statusText.style.cssText = "font-size: 11px; color: var(--text-muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
         }
       }
       if (item.role === "assistant" && item.intermediateResults && item.intermediateResults.length > 0) {
@@ -15841,6 +15984,8 @@ var ChatView = class extends import_obsidian14.ItemView {
       toolRow.style.border = "1px solid var(--background-modifier-border)";
       const header = toolRow.createDiv("vault-ai-tool-header");
       header.style.display = "flex";
+      header.style.alignItems = "center";
+      header.style.gap = "10px";
       header.style.justifyContent = "space-between";
       header.style.marginBottom = "6px";
       const label = header.createDiv("vault-ai-tool-label");
@@ -15848,7 +15993,14 @@ var ChatView = class extends import_obsidian14.ItemView {
       label.style.fontSize = "12px";
       label.style.fontWeight = "600";
       label.style.color = "var(--text-normal)";
-      const percentText2 = header.createDiv("vault-ai-tool-percent");
+      label.style.flex = "1";
+      label.style.minWidth = "0";
+      const headerRight = header.createDiv("vault-ai-tool-header-right");
+      headerRight.style.display = "flex";
+      headerRight.style.alignItems = "center";
+      headerRight.style.gap = "8px";
+      headerRight.style.flexShrink = "0";
+      const percentText2 = headerRight.createDiv("vault-ai-tool-percent");
       percentText2.style.fontSize = "11px";
       percentText2.style.color = "var(--interactive-accent)";
       const barContainer = toolRow.createDiv("vault-ai-tool-bar-container");
@@ -15882,6 +16034,85 @@ var ChatView = class extends import_obsidian14.ItemView {
     if (progress.percent === 100 && bar) {
       bar.style.background = "var(--text-success)";
     }
+    if (messageIndex < this.chatHistory.length) {
+      const item = this.chatHistory[messageIndex];
+      const toolId = item.orchestrationDisplayToToolId?.[toolName];
+      const ctrl = toolId ? item.orchestrationAbortByToolId?.[toolId] : void 0;
+      let cancelRow = toolRow.querySelector(".vault-ai-tool-cancel-wrap");
+      if (ctrl && !ctrl.signal.aborted) {
+        if (!cancelRow) {
+          const headerRight = toolRow.querySelector(".vault-ai-tool-header-right");
+          if (headerRight) {
+            cancelRow = headerRight.createDiv("vault-ai-tool-cancel-wrap");
+            cancelRow.style.flexShrink = "0";
+            const cancelBtn = cancelRow.createEl("button", {
+              text: "Cancel",
+              cls: "vault-ai-tool-cancel-btn"
+            });
+            cancelBtn.style.fontSize = "11px";
+            cancelBtn.style.padding = "2px 8px";
+            cancelBtn.style.cursor = "pointer";
+            cancelBtn.style.color = "var(--text-muted)";
+            cancelBtn.style.background = "transparent";
+            cancelBtn.style.border = "1px solid var(--background-modifier-border)";
+            cancelBtn.style.borderRadius = "4px";
+            cancelBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (toolId)
+                void this.handleOrchestrationToolCancel(messageIndex, toolId);
+            });
+          }
+        }
+      } else if (cancelRow) {
+        cancelRow.remove();
+      }
+    }
+  }
+  /**
+   * Creates per-tool AbortControllers and multi-progress rows for parallel orchestration.
+   * Returns signals passed to {@link OrchestrationService.executeToolsInParallel}.
+   */
+  setupOrchestrationParallelToolsUI(assistantIndex, tools) {
+    const item = this.chatHistory[assistantIndex];
+    item.progress = void 0;
+    item.multiProgress = {};
+    item.orchestrationAbortByToolId = {};
+    item.orchestrationDisplayToToolId = {};
+    const signals = {};
+    for (const t of tools) {
+      const d = ORCHESTRATION_TOOL_DISPLAY_NAMES[t] || t;
+      item.orchestrationDisplayToToolId[d] = t;
+      const c = new AbortController();
+      item.orchestrationAbortByToolId[t] = c;
+      signals[t] = c.signal;
+      item.multiProgress[d] = { message: "Initializing\u2026", percent: 5 };
+    }
+    void this.renderMessages();
+    return signals;
+  }
+  /** Cancels one parallel orchestration tool without stopping the others. */
+  async handleOrchestrationToolCancel(messageIndex, toolId) {
+    const item = this.chatHistory[messageIndex];
+    const ctrl = item.orchestrationAbortByToolId?.[toolId];
+    if (!ctrl || ctrl.signal.aborted)
+      return;
+    new ConfirmModal(
+      this.app,
+      "Cancel this task",
+      "Stop only this investigation module? Other modules will keep running.",
+      () => {
+        ctrl.abort();
+        const display = Object.entries(item.orchestrationDisplayToToolId || {}).find(([, id]) => id === toolId)?.[0] || toolId;
+        if (item.multiProgress?.[display]) {
+          item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
+        }
+        this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
+        new import_obsidian14.Notice("Task cancelled");
+      },
+      () => {
+      },
+      true
+    ).open();
   }
   async handleCancel(index) {
     const controller = this.activeAbortControllers.get(index);
@@ -15895,9 +16126,16 @@ var ChatView = class extends import_obsidian14.ItemView {
         controller.abort();
         this.activeAbortControllers.delete(index);
         if (this.chatHistory[index]) {
-          const currentContent = this.chatHistory[index].content || "";
-          this.chatHistory[index].content = currentContent + "\n\n\u274C **Cancelled by user**";
-          this.chatHistory[index].progress = void 0;
+          const hist = this.chatHistory[index];
+          if (hist.orchestrationAbortByToolId) {
+            Object.values(hist.orchestrationAbortByToolId).forEach((c) => c.abort());
+            hist.orchestrationAbortByToolId = void 0;
+            hist.orchestrationDisplayToToolId = void 0;
+          }
+          const currentContent = hist.content || "";
+          hist.content = currentContent + "\n\n\u274C **Cancelled by user**";
+          hist.progress = void 0;
+          hist.multiProgress = void 0;
           this.renderMessages();
         }
         new import_obsidian14.Notice("Operation cancelled");
@@ -16042,11 +16280,20 @@ ${fileList}` : fileList;
       progress: { message: "Orchestrating tools...", percent: 10 }
     });
     await this.renderMessages();
-    const updateProgress = (message, percent) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
+    const updateProgress = (message, percent, meta) => {
+      if (!this.activeAbortControllers.has(assistantIndex))
+        return;
+      const item = this.chatHistory[assistantIndex];
+      if (meta?.orchestrationTool && item.multiProgress && item.multiProgress[meta.orchestrationTool] !== void 0) {
+        item.multiProgress[meta.orchestrationTool] = { message, percent };
+        this.updateMultiProgressBar(assistantIndex, meta.orchestrationTool, { message, percent });
+        return;
       }
+      if (item.multiProgress && Object.keys(item.multiProgress).length > 0 && !meta?.orchestrationTool) {
+        return;
+      }
+      item.progress = { message, percent };
+      this.updateProgressBar(assistantIndex, { message, percent });
     };
     try {
       const controller = new AbortController();
@@ -16066,15 +16313,26 @@ ${fileList}` : fileList;
         conversationMemory,
         // Send the memory history
         this.currentConversation,
-        updateProgress
+        updateProgress,
+        {
+          abortSignal: controller.signal,
+          onToolsStarting: (tools) => {
+            if (tools.length <= 1)
+              return;
+            return this.setupOrchestrationParallelToolsUI(assistantIndex, tools);
+          }
+        }
       );
       this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].orchestrationAbortByToolId = void 0;
+      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = void 0;
       if (result.phase === "TOOLS_COMPLETE" && result.toolResults) {
         this.chatHistory[assistantIndex].content = result.finalResponse || "Tools complete. Review results below.";
         this.chatHistory[assistantIndex].toolResults = result.toolResults;
         this.chatHistory[assistantIndex].savedPlan = result.plan;
         this.chatHistory[assistantIndex].savedQuery = query;
         this.chatHistory[assistantIndex].progress = void 0;
+        this.chatHistory[assistantIndex].multiProgress = void 0;
         this._awaitingToolReview = true;
         await this.renderMessages();
         return;
@@ -16084,14 +16342,19 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
       this.chatHistory[assistantIndex].savedQuery = query;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].multiProgress = void 0;
       await this.renderMessages();
     } catch (e) {
       this.activeAbortControllers.delete(assistantIndex);
+      const item = this.chatHistory[assistantIndex];
+      item.orchestrationAbortByToolId = void 0;
+      item.orchestrationDisplayToToolId = void 0;
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
         return;
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].multiProgress = void 0;
       await this.renderMessages();
     }
   }
@@ -16126,7 +16389,8 @@ ${fileList}` : fileList;
             }
             this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
           }
-        }
+        },
+        { globalAbort: controller.signal }
       );
       this.activeAbortControllers.delete(assistantIndex);
       const plan = {
@@ -16487,20 +16751,18 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       content: "",
       multiProgress: {}
     });
-    const toolToDisplayName = {
-      "DARK_WEB": "DarkWeb Search",
-      "OSINT_SEARCH": "Digital Footprint",
-      "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search",
-      "VAULT_GRAPH_INGEST": "Vault graph (notes)"
-    };
-    selectedTools.forEach((tool) => {
-      const displayName = toolToDisplayName[tool] || tool;
-      this.chatHistory[assistantIndex].multiProgress[displayName] = {
-        message: "Initializing...",
-        percent: 5
-      };
-    });
+    let parallelAbortSignals;
+    if (selectedTools.length > 1) {
+      parallelAbortSignals = this.setupOrchestrationParallelToolsUI(assistantIndex, selectedTools);
+    } else {
+      selectedTools.forEach((tool) => {
+        const displayName = ORCHESTRATION_TOOL_DISPLAY_NAMES[tool] || tool;
+        this.chatHistory[assistantIndex].multiProgress[displayName] = {
+          message: "Initializing\u2026",
+          percent: 5
+        };
+      });
+    }
     await this.renderMessages();
     const updateProgress = (tool, message, percent) => {
       if (this.activeAbortControllers.has(assistantIndex)) {
@@ -16521,9 +16783,15 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
         queryForTools,
         "",
         this.currentConversation,
-        updateProgress
+        updateProgress,
+        {
+          abortSignals: parallelAbortSignals,
+          globalAbort: controller.signal
+        }
       );
       this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].orchestrationAbortByToolId = void 0;
+      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = void 0;
       console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
       for (const [key, val] of Object.entries(toolResults)) {
         const preview = typeof val === "string" ? val.substring(0, 200) : JSON.stringify(val).substring(0, 200);
@@ -16534,17 +16802,22 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       this.chatHistory[assistantIndex].savedPlan = plan;
       this.chatHistory[assistantIndex].savedQuery = queryForTools;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].multiProgress = void 0;
       this._awaitingToolReview = true;
       console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
       await this.renderMessages();
       await this.saveCurrentConversation();
     } catch (e) {
       this.activeAbortControllers.delete(assistantIndex);
+      const hist = this.chatHistory[assistantIndex];
+      hist.orchestrationAbortByToolId = void 0;
+      hist.orchestrationDisplayToToolId = void 0;
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
         return;
       this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].multiProgress = void 0;
       await this.renderMessages();
     }
   }

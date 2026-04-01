@@ -47,7 +47,12 @@ import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
 import { CustomTypesService } from './src/services/custom-types-service';
-import { OrchestrationService, OrchestrationPlan } from './src/services/orchestration-service';
+import {
+  OrchestrationService,
+  OrchestrationPlan,
+  ORCHESTRATION_TOOL_DISPLAY_NAMES,
+  type OrchestrationProgressMeta,
+} from './src/services/orchestration-service';
 import { UpdaterService } from './src/services/updater-service';
 
 // ============================================================================
@@ -2221,6 +2226,10 @@ export interface ChatHistoryItem {
   status?: string; // For DarkWeb investigation status
   progress?: { message: string, percent: number }; // For legacy/single process progress
   multiProgress?: Record<string, { message: string, percent: number }>; // For concurrent orchestration tools
+  /** Per-tool abort for parallel Main Copilot runs (tool id → controller). */
+  orchestrationAbortByToolId?: Record<string, AbortController>;
+  /** Maps progress row label → tool id (e.g. "DarkWeb Search" → "DARK_WEB"). */
+  orchestrationDisplayToToolId?: Record<string, string>;
   query?: string; // For DarkWeb investigation query
   intermediateResults?: string[]; // For report generation
   createdEntities?: CreatedEntityInfo[]; // For entity generation
@@ -3672,14 +3681,40 @@ export class ChatView extends ItemView {
 
         for (const [tool, progress] of Object.entries(item.multiProgress)) {
           const toolRow = multiProgressContainer.createDiv("vault-ai-tool-progress-row");
-          toolRow.style.cssText = "display: flex; flex-direction: column; gap: 4px;";
+          toolRow.setAttribute("data-tool", tool);
+          toolRow.style.cssText =
+            "margin-bottom: 12px; padding: 8px; background: var(--background-secondary-alt); border-radius: 6px; border: 1px solid var(--background-modifier-border); display: flex; flex-direction: column; gap: 4px;";
 
-          const labelRow = toolRow.createDiv();
-          labelRow.style.cssText = "display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: bold;";
-          labelRow.createEl("span", { text: tool });
-          labelRow.createEl("span", { text: `${progress.percent}%`, cls: "vault-ai-progress-percent" });
+          const header = toolRow.createDiv("vault-ai-tool-header");
+          header.style.cssText =
+            "display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-bottom: 6px;";
 
-          const progressTrack = toolRow.createDiv("vault-ai-progress-track");
+          const label = header.createDiv("vault-ai-tool-label");
+          label.textContent = tool;
+          label.style.cssText =
+            "font-size: 12px; font-weight: 600; color: var(--text-normal); flex: 1; min-width: 0;";
+
+          const headerRight = header.createDiv("vault-ai-tool-header-right");
+          headerRight.style.cssText = "display: flex; align-items: center; gap: 8px; flex-shrink: 0;";
+
+          const pctEl = headerRight.createDiv("vault-ai-tool-percent");
+          pctEl.textContent = `${progress.percent}%`;
+          pctEl.style.cssText = "font-size: 11px; color: var(--interactive-accent);";
+
+          const toolId = item.orchestrationDisplayToToolId?.[tool];
+          const ctrl = toolId ? item.orchestrationAbortByToolId?.[toolId] : undefined;
+          if (ctrl && !ctrl.signal.aborted) {
+            const cancelWrap = headerRight.createDiv("vault-ai-tool-cancel-wrap");
+            const cancelBtn = cancelWrap.createEl("button", { text: "Cancel", cls: "vault-ai-tool-cancel-btn" });
+            cancelBtn.style.cssText =
+              "font-size: 11px; padding: 2px 8px; cursor: pointer; color: var(--text-muted); background: transparent; border: 1px solid var(--background-modifier-border); border-radius: 4px;";
+            cancelBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (toolId) void this.handleOrchestrationToolCancel(i, toolId);
+            });
+          }
+
+          const progressTrack = toolRow.createDiv("vault-ai-tool-bar-container");
           progressTrack.style.cssText = `
             height: 6px;
             background: var(--background-modifier-border);
@@ -3688,7 +3723,7 @@ export class ChatView extends ItemView {
             position: relative;
           `;
 
-          const progressFill = progressTrack.createDiv("vault-ai-progress-fill");
+          const progressFill = progressTrack.createDiv("vault-ai-tool-bar-fill");
           progressFill.style.cssText = `
             height: 100%;
             width: ${progress.percent}%;
@@ -3696,11 +3731,10 @@ export class ChatView extends ItemView {
             transition: width 0.3s ease-in-out;
           `;
 
-          const statusText = toolRow.createEl("div", {
-            cls: "vault-ai-progress-status",
-            text: progress.message
-          });
-          statusText.style.cssText = "font-size: 10px; color: var(--text-muted);";
+          const statusText = toolRow.createDiv("vault-ai-tool-status");
+          statusText.textContent = progress.message;
+          statusText.style.cssText =
+            "font-size: 11px; color: var(--text-muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
         }
       }
 
@@ -4315,6 +4349,8 @@ export class ChatView extends ItemView {
 
       const header = toolRow.createDiv('vault-ai-tool-header');
       header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.gap = '10px';
       header.style.justifyContent = 'space-between';
       header.style.marginBottom = '6px';
 
@@ -4323,8 +4359,16 @@ export class ChatView extends ItemView {
       label.style.fontSize = '12px';
       label.style.fontWeight = '600';
       label.style.color = 'var(--text-normal)';
+      label.style.flex = '1';
+      label.style.minWidth = '0';
 
-      const percentText = header.createDiv('vault-ai-tool-percent');
+      const headerRight = header.createDiv('vault-ai-tool-header-right');
+      headerRight.style.display = 'flex';
+      headerRight.style.alignItems = 'center';
+      headerRight.style.gap = '8px';
+      headerRight.style.flexShrink = '0';
+
+      const percentText = headerRight.createDiv('vault-ai-tool-percent');
       percentText.style.fontSize = '11px';
       percentText.style.color = 'var(--interactive-accent)';
 
@@ -4362,6 +4406,92 @@ export class ChatView extends ItemView {
     if (progress.percent === 100 && bar) {
       bar.style.background = 'var(--text-success)';
     }
+
+    // Per-tool cancel (parallel Main Copilot)
+    if (messageIndex < this.chatHistory.length) {
+      const item = this.chatHistory[messageIndex];
+      const toolId = item.orchestrationDisplayToToolId?.[toolName];
+      const ctrl = toolId ? item.orchestrationAbortByToolId?.[toolId] : undefined;
+      let cancelRow = toolRow.querySelector(".vault-ai-tool-cancel-wrap") as HTMLElement | null;
+      if (ctrl && !ctrl.signal.aborted) {
+        if (!cancelRow) {
+          const headerRight = toolRow.querySelector(".vault-ai-tool-header-right") as HTMLElement;
+          if (headerRight) {
+            cancelRow = headerRight.createDiv("vault-ai-tool-cancel-wrap");
+            cancelRow.style.flexShrink = "0";
+            const cancelBtn = cancelRow.createEl("button", {
+              text: "Cancel",
+              cls: "vault-ai-tool-cancel-btn",
+            });
+            cancelBtn.style.fontSize = "11px";
+            cancelBtn.style.padding = "2px 8px";
+            cancelBtn.style.cursor = "pointer";
+            cancelBtn.style.color = "var(--text-muted)";
+            cancelBtn.style.background = "transparent";
+            cancelBtn.style.border = "1px solid var(--background-modifier-border)";
+            cancelBtn.style.borderRadius = "4px";
+            cancelBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (toolId) void this.handleOrchestrationToolCancel(messageIndex, toolId);
+            });
+          }
+        }
+      } else if (cancelRow) {
+        cancelRow.remove();
+      }
+    }
+  }
+
+  /**
+   * Creates per-tool AbortControllers and multi-progress rows for parallel orchestration.
+   * Returns signals passed to {@link OrchestrationService.executeToolsInParallel}.
+   */
+  private setupOrchestrationParallelToolsUI(
+    assistantIndex: number,
+    tools: string[]
+  ): Record<string, AbortSignal> {
+    const item = this.chatHistory[assistantIndex];
+    item.progress = undefined;
+    item.multiProgress = {};
+    item.orchestrationAbortByToolId = {};
+    item.orchestrationDisplayToToolId = {};
+    const signals: Record<string, AbortSignal> = {};
+    for (const t of tools) {
+      const d = ORCHESTRATION_TOOL_DISPLAY_NAMES[t] || t;
+      item.orchestrationDisplayToToolId![d] = t;
+      const c = new AbortController();
+      item.orchestrationAbortByToolId![t] = c;
+      signals[t] = c.signal;
+      item.multiProgress![d] = { message: "Initializing…", percent: 5 };
+    }
+    void this.renderMessages();
+    return signals;
+  }
+
+  /** Cancels one parallel orchestration tool without stopping the others. */
+  async handleOrchestrationToolCancel(messageIndex: number, toolId: string) {
+    const item = this.chatHistory[messageIndex];
+    const ctrl = item.orchestrationAbortByToolId?.[toolId];
+    if (!ctrl || ctrl.signal.aborted) return;
+
+    new ConfirmModal(
+      this.app,
+      "Cancel this task",
+      "Stop only this investigation module? Other modules will keep running.",
+      () => {
+        ctrl.abort();
+        const display =
+          Object.entries(item.orchestrationDisplayToToolId || {}).find(([, id]) => id === toolId)?.[0] ||
+          toolId;
+        if (item.multiProgress?.[display]) {
+          item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
+        }
+        this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
+        new Notice("Task cancelled");
+      },
+      () => {},
+      true
+    ).open();
   }
 
 
@@ -4380,9 +4510,16 @@ export class ChatView extends ItemView {
 
         // Update UI to show cancelled state
         if (this.chatHistory[index]) {
-          const currentContent = this.chatHistory[index].content || "";
-          this.chatHistory[index].content = currentContent + "\n\n❌ **Cancelled by user**";
-          this.chatHistory[index].progress = undefined;
+          const hist = this.chatHistory[index];
+          if (hist.orchestrationAbortByToolId) {
+            Object.values(hist.orchestrationAbortByToolId).forEach((c) => c.abort());
+            hist.orchestrationAbortByToolId = undefined;
+            hist.orchestrationDisplayToToolId = undefined;
+          }
+          const currentContent = hist.content || "";
+          hist.content = currentContent + "\n\n❌ **Cancelled by user**";
+          hist.progress = undefined;
+          hist.multiProgress = undefined;
           this.renderMessages();
         }
 
@@ -4582,11 +4719,23 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
-    const updateProgress = (message: string, percent: number) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
+    const updateProgress = (message: string, percent: number, meta?: OrchestrationProgressMeta) => {
+      if (!this.activeAbortControllers.has(assistantIndex)) return;
+      const item = this.chatHistory[assistantIndex];
+      if (
+        meta?.orchestrationTool &&
+        item.multiProgress &&
+        item.multiProgress[meta.orchestrationTool] !== undefined
+      ) {
+        item.multiProgress[meta.orchestrationTool] = { message, percent };
+        this.updateMultiProgressBar(assistantIndex, meta.orchestrationTool, { message, percent });
+        return;
       }
+      if (item.multiProgress && Object.keys(item.multiProgress).length > 0 && !meta?.orchestrationTool) {
+        return;
+      }
+      item.progress = { message, percent };
+      this.updateProgressBar(assistantIndex, { message, percent });
     };
 
     try {
@@ -4609,10 +4758,19 @@ export class ChatView extends ItemView {
         currentGraphState, // Also pass the graph state
         conversationMemory, // Send the memory history
         this.currentConversation,
-        updateProgress
+        updateProgress,
+        {
+          abortSignal: controller.signal,
+          onToolsStarting: (tools) => {
+            if (tools.length <= 1) return;
+            return this.setupOrchestrationParallelToolsUI(assistantIndex, tools);
+          },
+        }
       );
 
       this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].orchestrationAbortByToolId = undefined;
+      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = undefined;
 
       // Handle TOOLS_COMPLETE phase: show tool results for review
       if (result.phase === "TOOLS_COMPLETE" && result.toolResults) {
@@ -4621,6 +4779,7 @@ export class ChatView extends ItemView {
         this.chatHistory[assistantIndex].savedPlan = result.plan;
         this.chatHistory[assistantIndex].savedQuery = query;
         this.chatHistory[assistantIndex].progress = undefined;
+        this.chatHistory[assistantIndex].multiProgress = undefined;
         this._awaitingToolReview = true;
         await this.renderMessages();
         return;
@@ -4631,15 +4790,20 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
       this.chatHistory[assistantIndex].savedQuery = query; // Save query for tool execution
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].multiProgress = undefined;
       await this.renderMessages();
 
     } catch (e) {
       this.activeAbortControllers.delete(assistantIndex);
+      const item = this.chatHistory[assistantIndex];
+      item.orchestrationAbortByToolId = undefined;
+      item.orchestrationDisplayToToolId = undefined;
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
 
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].multiProgress = undefined;
       await this.renderMessages();
     }
   }
@@ -4677,7 +4841,8 @@ export class ChatView extends ItemView {
             }
             this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
           }
-        }
+        },
+        { globalAbort: controller.signal }
       );
 
       this.activeAbortControllers.delete(assistantIndex);
@@ -5108,22 +5273,18 @@ export class ChatView extends ItemView {
       multiProgress: {}
     });
 
-    // Initialize multiProgress for each selected tool with user-friendly names
-    const toolToDisplayName: Record<string, string> = {
-      "DARK_WEB": "DarkWeb Search",
-      "OSINT_SEARCH": "Digital Footprint",
-      "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search",
-      "VAULT_GRAPH_INGEST": "Vault graph (notes)",
-    };
-
-    selectedTools.forEach(tool => {
-      const displayName = toolToDisplayName[tool] || tool;
-      this.chatHistory[assistantIndex].multiProgress![displayName] = {
-        message: "Initializing...",
-        percent: 5
-      };
-    });
+    let parallelAbortSignals: Record<string, AbortSignal> | undefined;
+    if (selectedTools.length > 1) {
+      parallelAbortSignals = this.setupOrchestrationParallelToolsUI(assistantIndex, selectedTools);
+    } else {
+      selectedTools.forEach((tool) => {
+        const displayName = ORCHESTRATION_TOOL_DISPLAY_NAMES[tool] || tool;
+        this.chatHistory[assistantIndex].multiProgress![displayName] = {
+          message: "Initializing…",
+          percent: 5,
+        };
+      });
+    }
 
     await this.renderMessages();
 
@@ -5150,10 +5311,16 @@ export class ChatView extends ItemView {
         queryForTools,
         "",
         this.currentConversation,
-        updateProgress
+        updateProgress,
+        {
+          abortSignals: parallelAbortSignals,
+          globalAbort: controller.signal,
+        }
       );
 
       this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].orchestrationAbortByToolId = undefined;
+      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = undefined;
 
       console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
       for (const [key, val] of Object.entries(toolResults)) {
@@ -5167,6 +5334,7 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].savedPlan = plan;
       this.chatHistory[assistantIndex].savedQuery = queryForTools;
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].multiProgress = undefined;
       this._awaitingToolReview = true; // Enable the guard: user must click Generate to proceed
       console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
       await this.renderMessages();
@@ -5174,11 +5342,15 @@ export class ChatView extends ItemView {
 
     } catch (e) {
       this.activeAbortControllers.delete(assistantIndex);
+      const hist = this.chatHistory[assistantIndex];
+      hist.orchestrationAbortByToolId = undefined;
+      hist.orchestrationDisplayToToolId = undefined;
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
 
       this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].multiProgress = undefined;
       await this.renderMessages();
     }
   }
