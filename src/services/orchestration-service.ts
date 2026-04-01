@@ -1,8 +1,9 @@
 import VaultAIPlugin from "../../main";
 import { App, Notice, requestUrl } from 'obsidian';
 import { GraphApiService } from './api-service';
-import { EntityType } from '../entities/types';
+import { AIOperation } from '../entities/types';
 import { ConfirmModal } from '../modals/confirm-modal';
+import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
 
 export interface OrchestrationPlan {
     reasoning: string;
@@ -88,7 +89,15 @@ export class OrchestrationService {
             }
 
             onProgress("Classifying intent and formulating plan...", 20);
-            const plan = await this.classifyIntent(query, attachmentsContext, currentGraphState, conversationMemory);
+            const routedIntent = detectOrchestrationIntent(query);
+            console.log("[OrchestrationService] Routed intent:", routedIntent);
+            const plan = await this.classifyIntent(
+                query,
+                attachmentsContext,
+                currentGraphState,
+                conversationMemory,
+                routedIntent
+            );
 
             // HITL: If the plan is a proposal, return immediately for user review
             if (plan.isProposal && plan.toolsToCall.length > 0) {
@@ -179,29 +188,109 @@ export class OrchestrationService {
         }
     }
 
-    private async classifyIntent(query: string, attachmentsContext: string, graphState: any, conversationMemory: { role: string, content: string }[]): Promise<OrchestrationPlan> {
+    /** Example default tools shown in the planner JSON template; aligns with routed intent. */
+    private defaultToolsForIntent(intent: OrchestrationIntent): string[] {
+        switch (intent) {
+            case "VAULT_GRAPH_BUILD":
+                return ["VAULT_GRAPH_INGEST"];
+            case "VAULT_QA":
+                return ["LOCAL_VAULT"];
+            case "MIXED":
+                return ["LOCAL_VAULT", "OSINT_SEARCH"];
+            case "OSINT_TOOL_RUN":
+            default:
+                return ["OSINT_SEARCH"];
+        }
+    }
+
+    private buildRoutedIntentInstructions(intent: OrchestrationIntent, hasAttachments: boolean): string {
+        const att = hasAttachments
+            ? " Attachments are present; EXTRACT_TO_GRAPH may be included if it helps ingest files into the graph."
+            : " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
+        switch (intent) {
+            case "VAULT_GRAPH_BUILD":
+                return `VAULT_GRAPH_BUILD — User wants to build or enrich the knowledge graph from Obsidian notes (often many or all files).${att} You MUST include "VAULT_GRAPH_INGEST" in toolsToCall (full vault / note ingestion for entity extraction). Do NOT include OSINT_SEARCH, DARK_WEB, or CORPORATE_REPORTS unless the user explicitly asks for external/open-web or dark-web intelligence in the same message.`;
+            case "VAULT_QA":
+                return `VAULT_QA — User wants answers grounded in their vault.${att} Prioritize "LOCAL_VAULT". Add OSINT or other tools only if they clearly ask for outside sources.`;
+            case "OSINT_TOOL_RUN":
+                return `OSINT_TOOL_RUN — Primary need is external investigation.${att} Prefer OSINT_SEARCH and/or DARK_WEB/CORPORATE_REPORTS as appropriate. Include LOCAL_VAULT only if they also ask about their notes.`;
+            case "MIXED":
+                return `MIXED — Both vault-local and external investigation appear relevant.${att} Include LOCAL_VAULT plus at least one external tool when appropriate.`;
+            default:
+                return `UNKNOWN — No strong heuristic match.${att} Choose tools from the user request; prefer LOCAL_VAULT when the question is only about their notes or building the graph from local documents.`;
+        }
+    }
+
+    /** When the LLM returns no tools, align defaults with routed intent (avoid forcing OSINT for vault work). */
+    private fallbackProposalForEmptyTools(routedIntent: OrchestrationIntent, query: string): {
+        toolsToCall: string[];
+        planSummary: string;
+        directResponse: string;
+    } {
+        if (routedIntent === "VAULT_GRAPH_BUILD") {
+            return {
+                toolsToCall: ["VAULT_GRAPH_INGEST"],
+                planSummary: `### Investigation Plan\n1. **Vault graph ingest** — Process your markdown notes and extract entities/relationships for the graph (up to a safe file limit).\n\n*Adjust modules before running.*`,
+                directResponse: `I'll run vault graph ingestion to extract entities from your notes into graph proposals. Add external modules only if you also need OSINT or dark web.`,
+            };
+        }
+        if (routedIntent === "VAULT_QA") {
+            return {
+                toolsToCall: ["LOCAL_VAULT"],
+                planSummary: `### Investigation Plan\n1. **Local vault** — Search your Obsidian notes for: "${query}"\n\n*Adjust modules before running.*`,
+                directResponse: `I'll search your vault for relevant material. You can add other modules only if you also need external intelligence.`,
+            };
+        }
+        if (routedIntent === "MIXED") {
+            return {
+                toolsToCall: ["LOCAL_VAULT", "OSINT_SEARCH"],
+                planSummary: `### Investigation Plan\n1. **Local vault** — Review your notes\n2. **OSINT** — Check external sources\n\n*Click Run to proceed.*`,
+                directResponse: `I'll combine local vault search with OSINT. Adjust modules if needed.`,
+            };
+        }
+        return {
+            toolsToCall: ["OSINT_SEARCH"],
+            planSummary: `### Investigation Plan\n1. **OSINT Search** — Search public intelligence sources for: "${query}"\n\n*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`,
+            directResponse: `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`,
+        };
+    }
+
+    private async classifyIntent(
+        query: string,
+        attachmentsContext: string,
+        graphState: any,
+        conversationMemory: { role: string; content: string }[],
+        routedIntent: OrchestrationIntent
+    ): Promise<OrchestrationPlan> {
         const systemPrompt = this.plugin.settings.orchestrationPrompt
             || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
 
         // Format memory for context
-        const memoryContext = conversationMemory && conversationMemory.length > 0
-            ? conversationMemory.map(msg => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
-            : "No previous conversation.";
+        const memoryContext =
+            conversationMemory && conversationMemory.length > 0
+                ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
+                : "No previous conversation.";
 
         // Check if the user is approving a previously proposed plan
         const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
 
         // Only include EXTRACT_TO_GRAPH when attachments are present
-        const hasAttachments = attachmentsContext && attachmentsContext.trim().length > 0;
+        const hasAttachments = !!(attachmentsContext && attachmentsContext.trim().length > 0);
         const extractToGraphTool = hasAttachments
             ? '\n- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.'
-            : '';
+            : "";
+
+        const defaultToolsExample = this.defaultToolsForIntent(routedIntent);
+        const routedIntentBlock = this.buildRoutedIntentInstructions(routedIntent, hasAttachments);
 
         const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
 
+=== ROUTED INTENT (heuristic, trust this for tool choice) ===
+${routedIntentBlock}
+
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools.
+2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools — EXCEPT when ROUTED INTENT is VAULT_GRAPH_BUILD: then use VAULT_GRAPH_INGEST only (unless they also ask for external sources). For VAULT_QA, prioritize LOCAL_VAULT. Do not add OSINT_SEARCH for vault-only graph builds.
 3. Set "isProposal" to true and list the tools you recommend.
 4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
 5. Your "directResponse" should describe your PLAN, never the answer to the question.
@@ -211,14 +300,15 @@ export class OrchestrationService {
 - "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
 - "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
 - "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Search the user's local Obsidian notes for existing intelligence.${extractToGraphTool}
+- "LOCAL_VAULT" - Quick keyword search across a few matching Obsidian notes (legacy Q&A style).
+- "VAULT_GRAPH_INGEST" - Read many/all markdown notes in the vault (subject to limits), call the graph API to extract entities and relationships, and propose graph commands.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
 
 === CURRENT GRAPH STATE (existing entities) ===
 Entities: ${Array.isArray(graphState?.entities) ? graphState.entities.length : 0} nodes
-${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e: any) => `- ${e.type}: ${e.label}`).join('\n') : 'Empty graph'}
+${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e: any) => `- ${e.type}: ${e.label}`).join("\n") : "Empty graph"}
 
 === CONVERSATION HISTORY ===
 ${memoryContext}
@@ -232,8 +322,8 @@ Respond with this exact JSON structure:
 {
   "reasoning": "Your analysis of the query and why you chose these tools",
   "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
-  "isProposal": ${isApproval ? 'false' : 'true'},
-  "toolsToCall": ["OSINT_SEARCH"],
+  "isProposal": ${isApproval ? "false" : "true"},
+  "toolsToCall": ${JSON.stringify(defaultToolsExample)},
   "graphCommands": [],
   "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
 }`;
@@ -276,14 +366,18 @@ Respond with this exact JSON structure:
                     planSummary: rawPlan.planSummary || rawPlan.plan_summary
                 };
 
-                // GUARD: If this is NOT an approval and the LLM still returned no tools,
-                // force a proposal with OSINT_SEARCH as default
+                // GUARD: If this is NOT an approval and the LLM still returned no tools, use intent-aligned defaults
                 if (!isApproval && plan.toolsToCall.length === 0) {
-                    console.warn("[OrchestrationService] LLM returned no tools for a non-approval query. Forcing OSINT_SEARCH proposal.");
+                    const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
+                    console.warn(
+                        "[OrchestrationService] LLM returned no tools for a non-approval query. Forcing fallback proposal:",
+                        routedIntent,
+                        fb.toolsToCall
+                    );
                     plan.isProposal = true;
-                    plan.toolsToCall = ["OSINT_SEARCH"];
-                    plan.planSummary = plan.planSummary || `### Investigation Plan\n1. **OSINT Search** — Search public intelligence sources for: "${query}"\n\n*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`;
-                    plan.directResponse = plan.directResponse || `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`;
+                    plan.toolsToCall = fb.toolsToCall;
+                    plan.planSummary = plan.planSummary || fb.planSummary;
+                    plan.directResponse = plan.directResponse || fb.directResponse;
                 }
 
                 console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
@@ -293,16 +387,115 @@ Respond with this exact JSON structure:
             }
         } catch (error) {
             console.error("[OrchestrationService] Failed to classify intent:", error);
-            // Fallback plan - still propose tools instead of giving up
+            const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
             return {
                 reasoning: "Fallback due to classification error.",
-                toolsToCall: ["OSINT_SEARCH"],
+                toolsToCall: fb.toolsToCall,
                 graphCommands: [],
                 isProposal: true,
-                planSummary: `### Investigation Plan\n1. **OSINT Search** — Search for: "${query}"\n\n*The classifier encountered an issue, but I've defaulted to an OSINT search. Add more tools or click Run.*`,
-                directResponse: `I'll search for intelligence on this topic. You can add DARK_WEB, CORPORATE_REPORTS, or other modules before I begin.`
+                planSummary: `### Investigation Plan\n1. Fallback — ${fb.toolsToCall.join(", ")}\n\n*The planner request failed; adjust modules and click Run.*`,
+                directResponse: fb.directResponse,
             };
         }
+    }
+
+    private static readonly VAULT_INGEST_MAX_FILES = 200;
+    private static readonly VAULT_INGEST_MAX_CHARS_PER_FILE = 60000;
+
+    private shouldSkipVaultPath(path: string): boolean {
+        const p = path.replace(/\\/g, "/").toLowerCase();
+        if (p.startsWith(".obsidian/") || p.includes("/.obsidian/")) return true;
+        if (p.startsWith(".git/") || p.includes("/.git/")) return true;
+        if (p.includes("node_modules/")) return true;
+        return false;
+    }
+
+    /** Convert graph API operations into @@ graph command strings (same shape as feedResultsToGraphExtraction). */
+    private operationsToGraphCommands(operations: AIOperation[]): string[] {
+        const commands: string[] = [];
+        for (const op of operations) {
+            if (op.entities) {
+                op.entities.forEach((entity) => {
+                    commands.push(
+                        `@@create_entity ${JSON.stringify({
+                            type: entity.type,
+                            label:
+                                entity.properties.name ||
+                                entity.properties.title ||
+                                entity.properties.label ||
+                                entity.type,
+                            properties: entity.properties,
+                        })}`
+                    );
+                });
+            }
+            if (op.connections) {
+                op.connections.forEach((conn) => {
+                    commands.push(
+                        `@@create_link ${JSON.stringify({
+                            from: conn.from_label || conn.from.toString(),
+                            to: conn.to_label || conn.to.toString(),
+                            relationship: conn.relationship,
+                        })}`
+                    );
+                });
+            }
+        }
+        return commands;
+    }
+
+    /**
+     * Walk markdown files (excluding plugin / git paths), run processTextInChunks per file, merge graph commands.
+     */
+    private async runVaultGraphIngest(
+        onFileProgress: (message: string, percent: number) => void
+    ): Promise<{ summary: string; graphCommands: string[]; filesProcessed: number; filesTotal: number; truncatedFiles: number }> {
+        const graphCommands: string[] = [];
+        const files = this.plugin.app.vault
+            .getMarkdownFiles()
+            .filter((f) => !this.shouldSkipVaultPath(f.path))
+            .sort((a, b) => a.path.localeCompare(b.path));
+
+        const maxFiles = Math.min(files.length, OrchestrationService.VAULT_INGEST_MAX_FILES);
+        let truncatedFiles = 0;
+
+        for (let i = 0; i < maxFiles; i++) {
+            const file = files[i];
+            const pct = 5 + Math.floor((85 * (i + 1)) / Math.max(maxFiles, 1));
+            onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
+
+            let content = await this.plugin.app.vault.cachedRead(file);
+            if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
+                content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
+                truncatedFiles++;
+            }
+
+            const block = `Source note: ${file.path}\n\n${content}`;
+            const extraction = await this.plugin.graphApiService.processTextInChunks(
+                block,
+                this.plugin.entityManager.getAllEntities(),
+                new Date().toISOString()
+            );
+
+            if (extraction.success && extraction.operations && extraction.operations.length > 0) {
+                graphCommands.push(...this.operationsToGraphCommands(extraction.operations));
+            }
+        }
+
+        const summary =
+            `Processed **${maxFiles}** markdown file(s) out of **${files.length}** in the vault (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}).` +
+            (truncatedFiles > 0
+                ? ` ${truncatedFiles} file(s) were truncated to ${OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.`
+                : "") +
+            ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
+
+        return {
+            summary,
+            graphCommands,
+            filesProcessed: maxFiles,
+            filesTotal: files.length,
+            truncatedFiles,
+        };
     }
 
     public async executeToolsInParallel(
@@ -318,7 +511,8 @@ Respond with this exact JSON structure:
             "DARK_WEB": "DarkWeb Search",
             "OSINT_SEARCH": "Digital Footprint",
             "CORPORATE_REPORTS": "Companies & People",
-            "LOCAL_VAULT": "Local Search"
+            "LOCAL_VAULT": "Local Search",
+            "VAULT_GRAPH_INGEST": "Vault graph (notes)",
         };
 
         const promises = tools.map(async (tool) => {
@@ -453,6 +647,29 @@ Respond with this exact JSON structure:
                         break;
                     }
 
+                    case "VAULT_GRAPH_INGEST": {
+                        onProgress(displayName, "Starting vault graph ingest...", 5);
+                        try {
+                            const out = await this.runVaultGraphIngest((msg, pct) => {
+                                onProgress(displayName, msg, pct);
+                            });
+                            results["VAULT_GRAPH_INGEST"] = {
+                                __vaultIngest: true,
+                                summary: out.summary,
+                                graphCommands: out.graphCommands,
+                                filesProcessed: out.filesProcessed,
+                                filesTotal: out.filesTotal,
+                                truncatedFiles: out.truncatedFiles,
+                            };
+                        } catch (e: unknown) {
+                            results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${
+                                e instanceof Error ? e.message : String(e)
+                            }`;
+                        }
+                        onProgress(displayName, "Complete", 100);
+                        break;
+                    }
+
                     case "LOCAL_VAULT": {
                         onProgress(displayName, "Searching Obsidian vault...", 20);
                         const searchTerms = query.split(/\s+/).filter(w => w.length > 3).slice(0, 5);
@@ -512,19 +729,34 @@ Respond with this exact JSON structure:
 
     private async feedResultsToGraphExtraction(results: Record<string, any>): Promise<string[]> {
         const commands: string[] = [];
-
-        // 1. Group results by tool
         let textToProcess = "=== AUTOMATED INVESTIGATION RESULTS ===\n";
+        let hasNonVaultTool = false;
+
         for (const [tool, result] of Object.entries(results)) {
+            if (
+                tool === "VAULT_GRAPH_INGEST" &&
+                result &&
+                typeof result === "object" &&
+                result.__vaultIngest === true &&
+                Array.isArray(result.graphCommands)
+            ) {
+                commands.push(...result.graphCommands);
+                textToProcess += `\n\n--- TOOL: ${tool} (summary) ---\n${result.summary || ""}\n`;
+                continue;
+            }
+            hasNonVaultTool = true;
             textToProcess += `\n\n--- TOOL: ${tool} ---\n`;
-            if (typeof result === 'string') {
+            if (typeof result === "string") {
                 textToProcess += result;
             } else {
                 textToProcess += JSON.stringify(result, null, 2);
             }
         }
 
-        // 2. Call GraphApiService for extraction
+        if (!hasNonVaultTool) {
+            return commands;
+        }
+
         try {
             const extraction = await this.plugin.graphApiService.processTextInChunks(
                 textToProcess,
@@ -533,28 +765,7 @@ Respond with this exact JSON structure:
             );
 
             if (extraction.success && extraction.operations) {
-                // Convert extracted operations (entities/connections) into graph commands
-                extraction.operations.forEach(op => {
-                    if (op.entities) {
-                        op.entities.forEach(entity => {
-                            commands.push(`@@create_entity ${JSON.stringify({
-                                type: entity.type,
-                                label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
-                                properties: entity.properties
-                            })}`);
-                        });
-                    }
-
-                    if (op.connections) {
-                        op.connections.forEach(conn => {
-                            commands.push(`@@create_link ${JSON.stringify({
-                                from: conn.from_label || conn.from.toString(),
-                                to: conn.to_label || conn.to.toString(),
-                                relationship: conn.relationship
-                            })}`);
-                        });
-                    }
-                });
+                commands.push(...this.operationsToGraphCommands(extraction.operations));
             }
         } catch (error) {
             console.error("[OrchestrationService] Post-search extraction failed:", error);

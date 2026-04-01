@@ -106,6 +106,8 @@ const CHAT_MODEL = "gpt-4o-mini";
 const ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 // DarkWeb dark web API uses gpt-5-mini for best results with dark web content
 const DARKWEB_MODEL = "gpt-5-mini";
+// Local vault search uses Ollama on the production server (CPU inference, no OpenAI cost)
+const LOCAL_VAULT_MODEL = "qwen3:14b";
 
 
 export interface IndexedNote {
@@ -960,7 +962,7 @@ export default class VaultAIPlugin extends Plugin {
   // REMOTE MODEL INTEGRATION
   // ============================================================================
 
-  async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string, signal?: AbortSignal): Promise<string> {
+  async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string, signal?: AbortSignal, useLocal: boolean = false): Promise<string> {
     if (!this.settings.reportApiKey) {
       throw new Error(
         "License key is required. Please configure it in settings."
@@ -971,13 +973,14 @@ export default class VaultAIPlugin extends Plugin {
     const endpoint = `${REPORT_API_BASE_URL}/api/chat/completion`;
 
     try {
-      // Use provided model or default to CHAT_MODEL
-      const modelToUse = model || CHAT_MODEL;
+      // Local vault search uses Ollama; all other calls use the configured model
+      const modelToUse = useLocal ? LOCAL_VAULT_MODEL : (model || CHAT_MODEL);
 
       const requestBody: Record<string, unknown> = {
         model: modelToUse,
         messages,
         stream: stream,  // Pass stream flag to endpoint
+        use_local: useLocal,
       };
 
 
@@ -1066,11 +1069,12 @@ export default class VaultAIPlugin extends Plugin {
     endpoint: string,
     messages: ChatMessage[],
     onDelta?: (text: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    useLocal: boolean = false
   ): Promise<string> {
     // Obsidian's requestUrl doesn't support streaming responses,
     // so we fall back to non-streaming and deliver the full response at once
-    const full = await this.callRemoteModel(messages, false, undefined, signal);
+    const full = await this.callRemoteModel(messages, false, undefined, signal, useLocal);
     if (onDelta) onDelta(full);
     return full;
   }
@@ -1079,7 +1083,8 @@ export default class VaultAIPlugin extends Plugin {
     messages: ChatMessage[],
     onDelta?: (text: string) => void,
     onRetry?: (attempt: number, maxAttempts: number) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    useLocal: boolean = false
   ): Promise<string> {
     if (!this.settings.reportApiKey) {
       throw new Error("License key is required. Please configure it in settings.");
@@ -1100,7 +1105,7 @@ export default class VaultAIPlugin extends Plugin {
         if (signal?.aborted) {
           throw new Error("Request was cancelled.");
         }
-        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal);
+        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
@@ -1197,7 +1202,8 @@ export default class VaultAIPlugin extends Plugin {
     preloadedNotes?: IndexedNote[],
     onRetry?: (attempt: number, maxAttempts: number) => void,
     additionalContext?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    useLocal: boolean = false
   ): Promise<{ fullAnswer: string; notes: IndexedNote[] }> {
     if (!this.isAuthenticated()) {
       throw new Error("License key required for AI features. Please configure your license key in settings.");
@@ -1242,7 +1248,7 @@ export default class VaultAIPlugin extends Plugin {
       { role: "user", content: contextText },
     ];
 
-    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry, signal);
+    const fullAnswer = await this.callRemoteModelStream(messages, onDelta, onRetry, signal, useLocal);
 
     return { fullAnswer, notes: contextNotes };
   }
@@ -1684,7 +1690,7 @@ export default class VaultAIPlugin extends Plugin {
    * This is the primary method used for entity extraction - it returns both
    * the entity name and its classified type in a single LLM call.
    */
-  async extractEntitiesFromQuery(query: string): Promise<Array<{
+  async extractEntitiesFromQuery(query: string, useLocal: boolean = false): Promise<Array<{
     name: string | null;
     type: "person" | "company" | "asset" | "event" | "location" | "unknown";
   }>> {
@@ -1697,7 +1703,8 @@ export default class VaultAIPlugin extends Plugin {
     ];
 
     try {
-      const text = await this.callRemoteModel(messages, false, ENTITY_EXTRACTION_MODEL);
+      const model = useLocal ? LOCAL_VAULT_MODEL : ENTITY_EXTRACTION_MODEL;
+      const text = await this.callRemoteModel(messages, false, model, undefined, useLocal);
 
       // Try strict JSON parse
       const match = text.trim();
@@ -4780,6 +4787,7 @@ export class ChatView extends ItemView {
       { id: "DARK_WEB", icon: "🕸️", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
       { id: "CORPORATE_REPORTS", icon: "🏢", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
       { id: "LOCAL_VAULT", icon: "📁", label: "Local Vault", desc: "Search your existing Obsidian notes" },
+      { id: "VAULT_GRAPH_INGEST", icon: "🗂️", label: "Vault graph ingest", desc: "Process many markdown notes and extract entities for the graph" },
     ];
 
     // Only show EXTRACT_TO_GRAPH if attachments/links are present
@@ -4903,7 +4911,8 @@ export class ChatView extends ItemView {
       "DARK_WEB": "DarkWeb Search",
       "OSINT_SEARCH": "Digital Footprint",
       "CORPORATE_REPORTS": "Companies & People",
-      "LOCAL_VAULT": "Local Search"
+      "LOCAL_VAULT": "Local Search",
+      "VAULT_GRAPH_INGEST": "Vault graph (notes)",
     };
 
     selectedTools.forEach(tool => {
@@ -5259,8 +5268,8 @@ export class ChatView extends ItemView {
 
       updateProgress("Extracting entities from query...", 15);
 
-      // 1) Extract entities (multi-entity support)
-      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query);
+      // 1) Extract entities — always use local Ollama model in local search mode
+      const extractedEntities = await this.plugin.extractEntitiesFromQuery(query, true);
 
       let entityMsg = "No specific entities identified. Searching vault...";
       if (extractedEntities.length > 0) {
@@ -5397,7 +5406,8 @@ export class ChatView extends ItemView {
         notes,
         onRetry,
         additionalContext,
-        controller.signal
+        controller.signal,
+        true  // useLocal: always use Ollama for local vault synthesis
       );
 
       // Clear controller on completion
@@ -5437,14 +5447,11 @@ export class ChatView extends ItemView {
       await this.saveCurrentConversation();
       await this.renderMessages();
 
-      // Graph Generation Mode: Extract and create entities from the AI response
-      if (this.graphGenerationMode) {
-        try {
-          await this.processGraphGeneration(assistantIndex, result.fullAnswer, query, finalContent);
-        } catch (graphError) {
-          console.error("[OSINT Copilot] Graph generation from chat failed:", graphError);
-          new Notice("Graph generation failed, but the chat response was received successfully.");
-        }
+      // Always generate graph from retrieved vault notes in local search mode (uses Ollama)
+      try {
+        await this.processGraphFromNotes(assistantIndex, notes, extractedEntities, query);
+      } catch (graphError) {
+        console.error("[OSINT Copilot] Graph generation from vault notes failed:", graphError);
       }
     } catch (error) {
       console.error("Chat error:", error);
@@ -5456,6 +5463,142 @@ export class ChatView extends ItemView {
       // Restore the query to the input field so user can retry
       this.inputEl.value = query;
     }
+  }
+
+  /**
+   * Generate/update the knowledge graph from retrieved vault notes in local search mode.
+   * Uses Ollama (qwen3:14b) on the production server — no OpenAI cost.
+   * If the query contained specific entities, focuses extraction on them.
+   * Otherwise extracts all entities from the notes as-is.
+   */
+  async processGraphFromNotes(
+    assistantIndex: number,
+    notes: IndexedNote[],
+    extractedEntities: Array<{ name: string | null; type: string }>,
+    query: string
+  ) {
+    if (notes.length === 0) return;
+
+    const updateProgress = (message: string, percent: number) => {
+      if (this.chatHistory[assistantIndex]) {
+        this.chatHistory[assistantIndex].progress = { message, percent };
+        this.updateProgressBar(assistantIndex, { message, percent });
+      }
+    };
+
+    updateProgress("Extracting entities from vault notes...", 70);
+
+    // Build extraction text from retrieved notes (cap at 6000 chars total)
+    const MAX_CHARS = 6000;
+    let notesText = "";
+    for (const note of notes) {
+      const noteBlock = `--- ${note.path} ---\n${note.content}\n\n`;
+      if (notesText.length + noteBlock.length > MAX_CHARS) break;
+      notesText += noteBlock;
+    }
+
+    // If query had specific entities, add a focus instruction
+    const namedEntities = extractedEntities.filter(e => e.name);
+    let extractionText = notesText;
+    if (namedEntities.length > 0) {
+      const entityList = namedEntities.map(e => `${e.name} (${e.type})`).join(", ");
+      extractionText = `Focus on entities related to: ${entityList}.\n\n${notesText}`;
+    }
+
+    const existingEntities = this.plugin.entityManager.getAllEntities();
+
+    const onRetry = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => {
+      const delaySec = Math.round(nextDelayMs / 1000);
+      updateProgress(`⚠️ Retrying graph extraction... (${attempt + 1}/${maxAttempts}, ${delaySec}s)`, 72);
+    };
+
+    const controller = new AbortController();
+    this.activeAbortControllers.set(assistantIndex, controller);
+
+    const result: ProcessTextResponse = await this.plugin.graphApiService.processTextInChunks(
+      extractionText,
+      existingEntities,
+      undefined,
+      undefined,
+      onRetry,
+      controller.signal,
+      true  // useLocal: use Ollama
+    );
+
+    this.activeAbortControllers.delete(assistantIndex);
+
+    if (!result.success || !result.operations || result.operations.length === 0) {
+      if (this.chatHistory[assistantIndex]) {
+        this.chatHistory[assistantIndex].progress = undefined;
+      }
+      return;
+    }
+
+    updateProgress("Saving graph nodes...", 88);
+
+    let entitiesCreated = 0;
+    let connectionsCreated = 0;
+    const globalEntitiesMap = new Map<number, Entity>();
+    const entityLabelMap = new Map<string, Entity>();
+    let globalIndexOffset = 0;
+
+    for (const operation of result.operations) {
+      const operationEntities: Array<Entity | null> = [];
+
+      if (operation.action === "create" && operation.entities) {
+        for (let i = 0; i < operation.entities.length; i++) {
+          const entityData = operation.entities[i];
+          try {
+            const entityType = entityData.type as EntityType;
+            if (!Object.values(EntityType).includes(entityType)) {
+              operationEntities.push(null);
+              continue;
+            }
+            const finalLabel = getEntityLabel(entityType, entityData.properties);
+            const nameValidation = validateEntityName(finalLabel, entityType);
+            if (!nameValidation.isValid) {
+              operationEntities.push(null);
+              continue;
+            }
+            const entity = await this.plugin.entityManager.createEntity(entityType, entityData.properties);
+            operationEntities.push(entity);
+            const globalIdx = globalIndexOffset + i;
+            globalEntitiesMap.set(globalIdx, entity);
+            entityLabelMap.set(`${entity.type}:${entity.label.toLowerCase()}`, entity);
+            entitiesCreated++;
+          } catch {
+            operationEntities.push(null);
+          }
+        }
+        globalIndexOffset += operation.entities.length;
+      }
+
+      if (operation.connections) {
+        for (const conn of operation.connections) {
+          try {
+            let fromEntity = (operationEntities[conn.from]) ?? globalEntitiesMap.get(conn.from);
+            let toEntity = (operationEntities[conn.to]) ?? globalEntitiesMap.get(conn.to);
+            if (!fromEntity && conn.from_label) fromEntity = entityLabelMap.get(`${conn.from_type}:${conn.from_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.from_label);
+            if (!toEntity && conn.to_label) toEntity = entityLabelMap.get(`${conn.to_type}:${conn.to_label.toLowerCase()}`) || this.plugin.entityManager.findEntityByLabel(conn.to_label);
+            if (fromEntity && toEntity) {
+              await this.plugin.entityManager.createConnection(fromEntity.id, toEntity.id, conn.relationship);
+              connectionsCreated++;
+            }
+          } catch { /* skip failed connections */ }
+        }
+      }
+    }
+
+    if (this.chatHistory[assistantIndex]) {
+      this.chatHistory[assistantIndex].progress = undefined;
+      if (entitiesCreated > 0) {
+        const currentContent = this.chatHistory[assistantIndex].content || "";
+        this.chatHistory[assistantIndex].content = currentContent +
+          `\n\n🏷️ **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
+        await this.plugin.refreshOrOpenGraphView();
+      }
+    }
+    await this.renderMessages();
   }
 
   /**
