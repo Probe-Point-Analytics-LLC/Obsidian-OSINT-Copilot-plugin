@@ -18348,15 +18348,23 @@ Please try again or contact support if the issue persists.`,
 var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
-    /** Bumped on each `display()` so async license-info fetches ignore stale DOM. */
-    this.licenseInfoLayoutGeneration = 0;
+    /**
+     * Obsidian (and our onChange handlers) can call `display()` while a previous run is still
+     * building. Coalesce into one follow-up redraw so we never attach async callbacks to DOM that
+     * gets replaced mid-flight.
+     */
+    this._settingsDisplayDepth = 0;
+    this._settingsDisplayQueued = false;
     this.plugin = plugin;
   }
   display() {
+    if (this._settingsDisplayDepth > 0) {
+      this._settingsDisplayQueued = true;
+      return;
+    }
+    this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    this.licenseInfoLayoutGeneration++;
-    const licenseInfoGen = this.licenseInfoLayoutGeneration;
     new import_obsidian14.Setting(containerEl).setName("Plugin updates").setHeading();
     new import_obsidian14.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
@@ -18614,123 +18622,136 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         text: "Loading license key information...",
         cls: "setting-item-description"
       });
-      void this.fetchApiKeyInfo().then((info) => {
-        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
-          return;
-        }
-        loadingEl.remove();
-        if (info) {
-          const infoGrid = apiInfoContainer.createDiv();
-          infoGrid.setCssProps({
-            display: "grid",
-            "grid-template-columns": "1fr 1fr",
-            gap: "10px",
-            "font-size": "0.9em"
-          });
-          const quota = info.remaining_credits ?? info.remaining_quota ?? 0;
-          const isActive = info.active ?? false;
-          const isTrial = info.is_trial ?? false;
-          const planDiv = infoGrid.createDiv();
-          planDiv.createEl("strong", { text: "Plan: " });
-          planDiv.createSpan({ text: info.plan || "No Plan" });
-          const quotaDiv = infoGrid.createDiv();
-          quotaDiv.createEl("strong", { text: "Remaining credits: " });
-          const quotaSpan = quotaDiv.createSpan({ text: `${quota} credits` });
-          if (quota <= 0) {
-            quotaSpan.setCssProps({ color: "var(--text-error)", "font-weight": "bold" });
-          } else if (quota <= 5) {
-            quotaSpan.setCssProps({ color: "var(--text-warning)" });
+      const LICENSE_INFO_TIMEOUT_MS = 25e3;
+      void (async () => {
+        try {
+          const info = await Promise.race([
+            this.fetchApiKeyInfo(),
+            new Promise((_, reject) => {
+              window.setTimeout(
+                () => reject(new Error("OSINT_LICENSE_INFO_TIMEOUT")),
+                LICENSE_INFO_TIMEOUT_MS
+              );
+            })
+          ]);
+          if (!loadingEl.isConnected) {
+            return;
           }
-          const statusDiv = infoGrid.createDiv();
-          statusDiv.createEl("strong", { text: "Status: " });
-          const statusSpan = statusDiv.createSpan({
-            text: isActive ? "Active" : "Inactive"
-          });
-          statusSpan.setCssProps({ color: isActive ? "var(--text-success)" : "var(--text-error)" });
-          const expiryDiv = infoGrid.createDiv();
-          expiryDiv.createEl("strong", { text: "Expires: " });
-          if (info.expires_at) {
-            const expiryDate = new Date(info.expires_at);
-            expiryDiv.createSpan({ text: expiryDate.toLocaleDateString() });
+          loadingEl.remove();
+          if (info) {
+            const infoGrid = apiInfoContainer.createDiv();
+            infoGrid.setCssProps({
+              display: "grid",
+              "grid-template-columns": "1fr 1fr",
+              gap: "10px",
+              "font-size": "0.9em"
+            });
+            const quota = info.remaining_credits ?? info.remaining_quota ?? 0;
+            const isActive = info.active ?? false;
+            const isTrial = info.is_trial ?? false;
+            const planDiv = infoGrid.createDiv();
+            planDiv.createEl("strong", { text: "Plan: " });
+            planDiv.createSpan({ text: info.plan || "No Plan" });
+            const quotaDiv = infoGrid.createDiv();
+            quotaDiv.createEl("strong", { text: "Remaining credits: " });
+            const quotaSpan = quotaDiv.createSpan({ text: `${quota} credits` });
+            if (quota <= 0) {
+              quotaSpan.setCssProps({ color: "var(--text-error)", "font-weight": "bold" });
+            } else if (quota <= 5) {
+              quotaSpan.setCssProps({ color: "var(--text-warning)" });
+            }
+            const statusDiv = infoGrid.createDiv();
+            statusDiv.createEl("strong", { text: "Status: " });
+            const statusSpan = statusDiv.createSpan({
+              text: isActive ? "Active" : "Inactive"
+            });
+            statusSpan.setCssProps({ color: isActive ? "var(--text-success)" : "var(--text-error)" });
+            const expiryDiv = infoGrid.createDiv();
+            expiryDiv.createEl("strong", { text: "Expires: " });
+            if (info.expires_at) {
+              const expiryDate = new Date(info.expires_at);
+              expiryDiv.createSpan({ text: expiryDate.toLocaleDateString() });
+            } else {
+              expiryDiv.createSpan({ text: "N/A" });
+            }
+            if (isTrial) {
+              const trialBadge = apiInfoContainer.createEl("p", {
+                text: "\u{1F381} trial account",
+                cls: "setting-item-description"
+              });
+              trialBadge.setCssProps({
+                "margin-top": "10px",
+                color: "var(--text-warning)",
+                "font-weight": "500"
+              });
+            }
+            if (quota <= 0) {
+              const quotaWarning = apiInfoContainer.createDiv();
+              quotaWarning.setCssProps({
+                "margin-top": "15px",
+                padding: "12px",
+                background: "var(--background-modifier-error)",
+                "border-radius": "5px",
+                "border-left": "4px solid var(--text-error)"
+              });
+              const text1 = quotaWarning.createEl("p", {
+                text: "\u26A0\uFE0F credits exhausted"
+              });
+              text1.setCssProps({
+                margin: "0 0 8px 0",
+                "font-weight": "bold",
+                color: "var(--text-error)"
+              });
+              const text2 = quotaWarning.createEl("p", {
+                text: "You have no remaining credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews."
+              });
+              text2.setCssProps({ margin: "0 0 10px 0", "font-size": "0.9em" });
+              const upgradeLink = quotaWarning.createEl("a", {
+                text: "Upgrade your plan \u2192",
+                href: "https://osint-copilot.com/dashboard/"
+              });
+              upgradeLink.setCssProps({
+                color: "var(--interactive-accent)",
+                "font-weight": "500",
+                "text-decoration": "none"
+              });
+            } else if (quota <= 5) {
+              const lowQuotaWarning = apiInfoContainer.createDiv();
+              lowQuotaWarning.setCssProps({
+                "margin-top": "15px",
+                padding: "10px",
+                background: "var(--background-modifier-warning)",
+                "border-radius": "5px"
+              });
+              const p = lowQuotaWarning.createEl("p", {
+                text: `\u26A0\uFE0F Low credits: Only ${quota} credits remaining.`
+              });
+              p.setCssProps({
+                margin: "0",
+                "font-size": "0.9em",
+                color: "var(--text-warning)"
+              });
+            }
           } else {
-            expiryDiv.createSpan({ text: "N/A" });
-          }
-          if (isTrial) {
-            const trialBadge = apiInfoContainer.createEl("p", {
-              text: "\u{1F381} trial account",
+            const errP = apiInfoContainer.createEl("p", {
+              text: "\u26A0\uFE0F could not load license key information. Please check your license key.",
               cls: "setting-item-description"
             });
-            trialBadge.setCssProps({
-              "margin-top": "10px",
-              color: "var(--text-warning)",
-              "font-weight": "500"
-            });
+            errP.setCssProps({ color: "var(--text-error)" });
           }
-          if (quota <= 0) {
-            const quotaWarning = apiInfoContainer.createDiv();
-            quotaWarning.setCssProps({
-              "margin-top": "15px",
-              padding: "12px",
-              background: "var(--background-modifier-error)",
-              "border-radius": "5px",
-              "border-left": "4px solid var(--text-error)"
-            });
-            const text1 = quotaWarning.createEl("p", {
-              text: "\u26A0\uFE0F credits exhausted"
-            });
-            text1.setCssProps({
-              margin: "0 0 8px 0",
-              "font-weight": "bold",
-              color: "var(--text-error)"
-            });
-            const text2 = quotaWarning.createEl("p", {
-              text: "You have no remaining credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews."
-            });
-            text2.setCssProps({ margin: "0 0 10px 0", "font-size": "0.9em" });
-            const upgradeLink = quotaWarning.createEl("a", {
-              text: "Upgrade your plan \u2192",
-              href: "https://osint-copilot.com/dashboard/"
-            });
-            upgradeLink.setCssProps({
-              color: "var(--interactive-accent)",
-              "font-weight": "500",
-              "text-decoration": "none"
-            });
-          } else if (quota <= 5) {
-            const lowQuotaWarning = apiInfoContainer.createDiv();
-            lowQuotaWarning.setCssProps({
-              "margin-top": "15px",
-              padding: "10px",
-              background: "var(--background-modifier-warning)",
-              "border-radius": "5px"
-            });
-            const p = lowQuotaWarning.createEl("p", {
-              text: `\u26A0\uFE0F Low credits: Only ${quota} credits remaining.`
-            });
-            p.setCssProps({
-              margin: "0",
-              "font-size": "0.9em",
-              color: "var(--text-warning)"
-            });
+        } catch (e) {
+          if (!loadingEl.isConnected) {
+            return;
           }
-        } else {
-          const errP = apiInfoContainer.createEl("p", {
-            text: "\u26A0\uFE0F could not load license key information. Please check your license key.",
+          loadingEl.remove();
+          const isTimeout = e instanceof Error && e.message === "OSINT_LICENSE_INFO_TIMEOUT";
+          const errP2 = apiInfoContainer.createEl("p", {
+            text: isTimeout ? "\u26A0\uFE0F Request timed out. Check your network connection or try again." : "\u26A0\uFE0F failed to connect to API. Please check your internet connection.",
             cls: "setting-item-description"
           });
-          errP.setCssProps({ color: "var(--text-error)" });
+          errP2.setCssProps({ color: "var(--text-error)" });
         }
-      }).catch(() => {
-        if (licenseInfoGen !== this.licenseInfoLayoutGeneration) {
-          return;
-        }
-        loadingEl.remove();
-        const errP2 = apiInfoContainer.createEl("p", {
-          text: "\u26A0\uFE0F failed to connect to API. Please check your internet connection.",
-          cls: "setting-item-description"
-        });
-        errP2.setCssProps({ color: "var(--text-error)" });
-      });
+      })();
     }
     new import_obsidian14.Setting(containerEl).setName("Companies&people output directory").setDesc("Directory where generated reports will be saved").addText(
       (text) => text.setPlaceholder("Reports").setValue(this.plugin.settings.reportOutputDir).onChange(async (value) => {
@@ -18800,6 +18821,11 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+    }
+    this._settingsDisplayDepth--;
+    if (this._settingsDisplayQueued) {
+      this._settingsDisplayQueued = false;
+      queueMicrotask(() => this.display());
     }
   }
   async fetchApiKeyInfo() {
