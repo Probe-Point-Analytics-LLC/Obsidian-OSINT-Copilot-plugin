@@ -3731,6 +3731,9 @@ var GraphApiService = class {
     if (statusCode === 504) {
       return true;
     }
+    if (statusCode === 524) {
+      return true;
+    }
     return false;
   }
   /**
@@ -3745,6 +3748,9 @@ var GraphApiService = class {
     }
     if (statusCode === 429) {
       return "rate-limited";
+    }
+    if (statusCode === 524) {
+      return "cloudflare-timeout";
     }
     if (statusCode && statusCode >= 500) {
       return `server-error-${statusCode}`;
@@ -3763,6 +3769,9 @@ var GraphApiService = class {
     }
     if (error instanceof TypeError) {
       return "Network error occurred. Please check your connection and try again.";
+    }
+    if (statusCode === 524) {
+      return "Cloudflare/proxy timeout (524): the origin API did not respond in time. Long or complex extraction often needs smaller text chunks per request.";
     }
     if (statusCode && statusCode >= 500) {
       if (statusCode === 503) {
@@ -4102,8 +4111,8 @@ var GraphApiService = class {
    * For texts larger than CHUNK_THRESHOLD, splits into chunks and processes each.
    */
   async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal, useLocal = false, vaultChunkOptions) {
-    const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 1e3;
-    const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1500;
+    const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 700;
+    const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1200;
     if (text.length <= CHUNK_THRESHOLD) {
       const result = await this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
       if (vaultChunkOptions?.onChunkOperations && result.success && result.operations?.length) {
@@ -4283,7 +4292,10 @@ var GraphApiService = class {
           }
           lastError = new Error(`HTTP ${response.status}: ${errorText}`);
           if (attempt < maxRetries) {
-            const delayMs = this.calculateBackoffDelay(attempt);
+            let delayMs = this.calculateBackoffDelay(attempt);
+            if (response.status === 524) {
+              delayMs = Math.min(delayMs * 2 + 3e3, 2e4);
+            }
             const reason = this.getErrorReason(lastError, response.status);
             console.debug(`[GraphApiService] Retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
             if (onRetry) {
@@ -4325,6 +4337,8 @@ var GraphApiService = class {
       helpMessage = "\u{1F4A1} The server is busy processing requests. Please wait a moment and try again.";
     } else if (this.isNetworkError(lastError)) {
       helpMessage = "\u{1F4A1} Network connection failed. Please check your internet connection and try again.";
+    } else if (lastStatusCode === 524) {
+      helpMessage = "\u{1F4A1} Error 524 means the CDN stopped waiting for the API (often ~100s). Vault ingest and large notes use smaller chunks automatically; if this persists, ask your admin to raise origin/proxy timeouts.";
     } else if (lastStatusCode && lastStatusCode >= 500) {
       helpMessage = "\u{1F4A1} The server is experiencing issues. Please try again later.";
     }
@@ -12400,9 +12414,9 @@ Synthesize the tool results, graph state, and the user's request into a conversa
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
 _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE = 6e4;
-/** Smaller chunks than default processTextInChunks so each /process-text call sees less text at once. */
-_OrchestrationService.VAULT_INGEST_CHUNK_SIZE = 800;
-_OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD = 1e3;
+/** Smaller chunks so each /process-text finishes before CDN/proxy timeouts (e.g. Cloudflare ~100s). */
+_OrchestrationService.VAULT_INGEST_CHUNK_SIZE = 400;
+_OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD = 650;
 /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
 _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
   "md",

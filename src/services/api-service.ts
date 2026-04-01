@@ -400,6 +400,11 @@ export class GraphApiService {
             return true;
         }
 
+        // Cloudflare "origin timeout" — edge gave up waiting for the API; retry may help if transient
+        if (statusCode === 524) {
+            return true;
+        }
+
         return false;
     }
 
@@ -415,6 +420,9 @@ export class GraphApiService {
         }
         if (statusCode === 429) {
             return 'rate-limited';
+        }
+        if (statusCode === 524) {
+            return 'cloudflare-timeout';
         }
         if (statusCode && statusCode >= 500) {
             return `server-error-${statusCode}`;
@@ -439,6 +447,13 @@ export class GraphApiService {
         // Generic TypeError (often network-related)
         if (error instanceof TypeError) {
             return 'Network error occurred. Please check your connection and try again.';
+        }
+
+        if (statusCode === 524) {
+            return (
+                'Cloudflare/proxy timeout (524): the origin API did not respond in time. ' +
+                'Long or complex extraction often needs smaller text chunks per request.'
+            );
         }
 
         // Server errors
@@ -908,8 +923,8 @@ export class GraphApiService {
         useLocal: boolean = false,
         vaultChunkOptions?: VaultProcessTextChunkOptions
     ): Promise<ProcessTextResponse> {
-        const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 1000; // Default: small chunks to avoid proxy timeout
-        const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1500; // Only chunk if text is larger than this
+        const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 700; // Default: keep requests under CDN/proxy time limits
+        const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1200; // Chunk before a single call gets too heavy
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
@@ -1139,7 +1154,11 @@ export class GraphApiService {
                     lastError = new Error(`HTTP ${response.status}: ${errorText}`);
 
                     if (attempt < maxRetries) {
-                        const delayMs = this.calculateBackoffDelay(attempt);
+                        let delayMs = this.calculateBackoffDelay(attempt);
+                        // 524 = Cloudflare origin timeout; same payload may need a breather before retry
+                        if (response.status === 524) {
+                            delayMs = Math.min(delayMs * 2 + 3000, 20000);
+                        }
                         const reason = this.getErrorReason(lastError, response.status);
                         console.debug(`[GraphApiService] Retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
 
@@ -1199,6 +1218,10 @@ export class GraphApiService {
             helpMessage = '💡 The server is busy processing requests. Please wait a moment and try again.';
         } else if (this.isNetworkError(lastError)) {
             helpMessage = '💡 Network connection failed. Please check your internet connection and try again.';
+        } else if (lastStatusCode === 524) {
+            helpMessage =
+                '💡 Error 524 means the CDN stopped waiting for the API (often ~100s). ' +
+                'Vault ingest and large notes use smaller chunks automatically; if this persists, ask your admin to raise origin/proxy timeouts.';
         } else if (lastStatusCode && lastStatusCode >= 500) {
             helpMessage = '💡 The server is experiencing issues. Please try again later.';
         }

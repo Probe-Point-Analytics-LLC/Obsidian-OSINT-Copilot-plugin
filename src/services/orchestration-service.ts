@@ -407,9 +407,9 @@ Respond with this exact JSON structure:
 
     private static readonly VAULT_INGEST_MAX_FILES = 200;
     private static readonly VAULT_INGEST_MAX_CHARS_PER_FILE = 60000;
-    /** Smaller chunks than default processTextInChunks so each /process-text call sees less text at once. */
-    private static readonly VAULT_INGEST_CHUNK_SIZE = 800;
-    private static readonly VAULT_INGEST_CHUNK_THRESHOLD = 1000;
+    /** Smaller chunks so each /process-text finishes before CDN/proxy timeouts (e.g. Cloudflare ~100s). */
+    private static readonly VAULT_INGEST_CHUNK_SIZE = 400;
+    private static readonly VAULT_INGEST_CHUNK_THRESHOLD = 650;
     /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
     private static readonly VAULT_INGEST_EXTENSIONS = new Set([
         'md',
