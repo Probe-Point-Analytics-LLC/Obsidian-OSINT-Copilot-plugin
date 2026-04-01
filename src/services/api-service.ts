@@ -13,7 +13,18 @@
  */
 
 import { requestUrl, RequestUrlResponse } from 'obsidian';
-import { Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
+import { AIOperation, Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
+
+/** Optional tuning for vault ingest: smaller chunks + per-chunk callback for live UI. */
+export interface VaultProcessTextChunkOptions {
+    chunkSize?: number;
+    chunkThreshold?: number;
+    onChunkOperations?: (info: {
+        chunkIndex: number;
+        totalChunks: number;
+        operations: AIOperation[];
+    }) => void;
+}
 
 export interface ApiHealthResponse {
     status: string;
@@ -894,14 +905,23 @@ export class GraphApiService {
         onChunkProgress?: (chunkIndex: number, totalChunks: number, message: string) => void,
         onRetry?: RetryCallback,
         signal?: AbortSignal,
-        useLocal: boolean = false
+        useLocal: boolean = false,
+        vaultChunkOptions?: VaultProcessTextChunkOptions
     ): Promise<ProcessTextResponse> {
-        const CHUNK_SIZE = 1000;  // Characters per chunk (small chunks to avoid proxy timeout)
-        const CHUNK_THRESHOLD = 1500;  // Only chunk if text is larger than this
+        const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 1000; // Default: small chunks to avoid proxy timeout
+        const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1500; // Only chunk if text is larger than this
 
         // For small texts, process directly
         if (text.length <= CHUNK_THRESHOLD) {
-            return this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
+            const result = await this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
+            if (vaultChunkOptions?.onChunkOperations && result.success && result.operations?.length) {
+                vaultChunkOptions.onChunkOperations({
+                    chunkIndex: 1,
+                    totalChunks: 1,
+                    operations: result.operations,
+                });
+            }
+            return result;
         }
 
         console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
@@ -937,6 +957,7 @@ export class GraphApiService {
                 }
 
                 if (result.operations) {
+                    const chunkAddedOps: AIOperation[] = [];
                     // Deduplicate entities
                     for (const op of result.operations) {
                         if (op.action === 'create' && op.entities) {
@@ -953,10 +974,12 @@ export class GraphApiService {
                             });
 
                             if (dedupedEntities.length > 0) {
-                                allOperations.push({
+                                const mergedOp: AIOperation = {
                                     ...op,
                                     entities: dedupedEntities
-                                });
+                                };
+                                allOperations.push(mergedOp);
+                                chunkAddedOps.push(mergedOp);
 
                                 // Add to accumulated entities for context in next chunk
                                 accumulatedEntities = [
@@ -972,7 +995,15 @@ export class GraphApiService {
                         } else if (op.connections) {
                             // Include connection operations
                             allOperations.push(op);
+                            chunkAddedOps.push(op);
                         }
+                    }
+                    if (vaultChunkOptions?.onChunkOperations && chunkAddedOps.length > 0) {
+                        vaultChunkOptions.onChunkOperations({
+                            chunkIndex: chunkNum,
+                            totalChunks: chunks.length,
+                            operations: chunkAddedOps,
+                        });
                     }
                 }
             } catch (error) {

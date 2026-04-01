@@ -4101,11 +4101,19 @@ var GraphApiService = class {
    * Process large text by chunking and merging entities.
    * For texts larger than CHUNK_THRESHOLD, splits into chunks and processes each.
    */
-  async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal, useLocal = false) {
-    const CHUNK_SIZE = 1e3;
-    const CHUNK_THRESHOLD = 1500;
+  async processTextInChunks(text, existingEntities, referenceTime, onChunkProgress, onRetry, signal, useLocal = false, vaultChunkOptions) {
+    const CHUNK_SIZE = vaultChunkOptions?.chunkSize ?? 1e3;
+    const CHUNK_THRESHOLD = vaultChunkOptions?.chunkThreshold ?? 1500;
     if (text.length <= CHUNK_THRESHOLD) {
-      return this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
+      const result = await this.processText(text, existingEntities, referenceTime, onRetry, signal, useLocal);
+      if (vaultChunkOptions?.onChunkOperations && result.success && result.operations?.length) {
+        vaultChunkOptions.onChunkOperations({
+          chunkIndex: 1,
+          totalChunks: 1,
+          operations: result.operations
+        });
+      }
+      return result;
     }
     console.debug(`[GraphApiService] Large text detected (${text.length} chars), processing in chunks`);
     const chunks = this.splitTextIntoChunks(text, CHUNK_SIZE);
@@ -4130,6 +4138,7 @@ var GraphApiService = class {
           continue;
         }
         if (result.operations) {
+          const chunkAddedOps = [];
           for (const op of result.operations) {
             if (op.action === "create" && op.entities) {
               const dedupedEntities = op.entities.filter((entity) => {
@@ -4143,10 +4152,12 @@ var GraphApiService = class {
                 return true;
               });
               if (dedupedEntities.length > 0) {
-                allOperations.push({
+                const mergedOp = {
                   ...op,
                   entities: dedupedEntities
-                });
+                };
+                allOperations.push(mergedOp);
+                chunkAddedOps.push(mergedOp);
                 accumulatedEntities = [
                   ...accumulatedEntities,
                   ...dedupedEntities.map((e) => ({
@@ -4159,7 +4170,15 @@ var GraphApiService = class {
               }
             } else if (op.connections) {
               allOperations.push(op);
+              chunkAddedOps.push(op);
             }
+          }
+          if (vaultChunkOptions?.onChunkOperations && chunkAddedOps.length > 0) {
+            vaultChunkOptions.onChunkOperations({
+              chunkIndex: chunkNum,
+              totalChunks: chunks.length,
+              operations: chunkAddedOps
+            });
           }
         }
       } catch (error) {
@@ -11508,7 +11527,7 @@ ${extractedText}`;
         query,
         attachmentsContext,
         currentConversation,
-        (tool, msg, percent) => {
+        (tool, msg, percent, _detail) => {
           onProgress(`[${tool}] ${msg}`, percent);
         }
       );
@@ -11801,7 +11820,8 @@ Respond with this exact JSON structure:
   }
   /**
    * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
-   * extract text (API for binary), run processTextInChunks per file, merge graph commands.
+   * extract text (API for binary), run processTextInChunks per file with smaller chunks,
+   * accumulate @@ commands (and report progress with the growing list for UI).
    */
   async runVaultGraphIngest(onFileProgress) {
     const graphCommands = [];
@@ -11810,10 +11830,22 @@ Respond with this exact JSON structure:
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     let truncatedFiles = 0;
     let extractFailures = 0;
+    const percentFor = (fileIndexZeroBased, chunkNum, totalChunks) => {
+      const f = maxFiles > 0 ? (fileIndexZeroBased + 1) / maxFiles : 1;
+      let frac = f;
+      if (chunkNum !== void 0 && totalChunks !== void 0 && totalChunks > 1) {
+        frac = (fileIndexZeroBased + (chunkNum - 1) / totalChunks) / Math.max(maxFiles, 1);
+      }
+      return Math.min(94, 5 + Math.floor(85 * frac));
+    };
+    const emit = (message, fileIndexZeroBased, chunkNum, totalChunks) => {
+      onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
+        vaultIngestAccumulatedCommands: [...graphCommands]
+      });
+    };
     for (let i = 0; i < maxFiles; i++) {
       const file = files[i];
-      const pct = 5 + Math.floor(85 * (i + 1) / Math.max(maxFiles, 1));
-      onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
+      emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
       const ext = (file.extension || "").toLowerCase();
       let content;
       if (ext === "md" || ext === "markdown" || ext === "txt") {
@@ -11849,10 +11881,37 @@ ${content}`;
       const extraction = await this.plugin.graphApiService.processTextInChunks(
         block,
         this.plugin.entityManager.getAllEntities(),
-        (/* @__PURE__ */ new Date()).toISOString()
+        (/* @__PURE__ */ new Date()).toISOString(),
+        (chunkNum, totalChunks, msg) => {
+          emit(`${file.path} \u2014 ${msg}`, i, chunkNum, totalChunks);
+        },
+        void 0,
+        void 0,
+        false,
+        {
+          chunkSize: _OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
+          chunkThreshold: _OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
+          onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
+            graphCommands.push(...this.operationsToGraphCommands(operations));
+            emit(
+              `Graph extraction: ${file.path} \u2014 chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
+              i,
+              chunkIndex,
+              totalChunks
+            );
+          }
+        }
       );
-      if (extraction.success && extraction.operations && extraction.operations.length > 0) {
-        graphCommands.push(...this.operationsToGraphCommands(extraction.operations));
+      if (extraction.success) {
+        emit(
+          `Graph extraction: ${file.path} \u2014 done (${graphCommands.length} command(s) so far)`,
+          i
+        );
+      } else {
+        emit(
+          `Graph extraction skipped/failed: ${file.path} \u2014 ${extraction.error || "no entities"}`,
+          i
+        );
       }
     }
     const summary = `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` Proposed **${graphCommands.length}** graph command(s) before deduplication.`;
@@ -12004,8 +12063,8 @@ ${reportData.content}` : reportData.content;
           case "VAULT_GRAPH_INGEST": {
             onProgress(displayName, "Starting vault graph ingest...", 5);
             try {
-              const out = await this.runVaultGraphIngest((msg, pct) => {
-                onProgress(displayName, msg, pct);
+              const out = await this.runVaultGraphIngest((msg, pct, detail) => {
+                onProgress(displayName, msg, pct, detail);
               });
               results["VAULT_GRAPH_INGEST"] = {
                 __vaultIngest: true,
@@ -12301,6 +12360,9 @@ Synthesize the tool results, graph state, and the user's request into a conversa
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
 _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE = 6e4;
+/** Smaller chunks than default processTextInChunks so each /process-text call sees less text at once. */
+_OrchestrationService.VAULT_INGEST_CHUNK_SIZE = 800;
+_OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD = 1e3;
 /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
 _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
   "md",
@@ -15621,6 +15683,35 @@ var ChatView = class extends import_obsidian14.ItemView {
         disclaimer.style.fontStyle = "italic";
         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
       }
+      const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
+      const existingIngestPreview = messageDiv.querySelector(".vault-ai-vault-ingest-preview");
+      if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
+        const ingestPreview = existingIngestPreview || (() => {
+          const el = document.createElement("div");
+          el.className = "vault-ai-vault-ingest-preview";
+          progressContainer.insertAdjacentElement("afterend", el);
+          return el;
+        })();
+        ingestPreview.empty();
+        ingestPreview.style.marginTop = "10px";
+        ingestPreview.style.padding = "10px 12px";
+        ingestPreview.style.border = "1px solid var(--background-modifier-border)";
+        ingestPreview.style.borderRadius = "8px";
+        ingestPreview.style.background = "var(--background-secondary)";
+        ingestPreview.style.maxHeight = "240px";
+        ingestPreview.style.overflowY = "auto";
+        ingestPreview.style.fontSize = "12px";
+        ingestPreview.createEl("div", {
+          text: `Proposed graph commands (${vaultPreviewCmds.length}) \u2014 grows as each file/chunk is processed`
+        }).style.marginBottom = "8px";
+        const pre = ingestPreview.createEl("pre");
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.wordBreak = "break-word";
+        pre.style.margin = "0";
+        pre.textContent = vaultPreviewCmds.join("\n");
+      } else if (existingIngestPreview) {
+        existingIngestPreview.remove();
+      }
     }
     if (messageIndex < this.chatHistory.length) {
       const contentDiv = messageDiv.querySelector(".vault-ai-chat-content");
@@ -15939,12 +16030,6 @@ ${fileList}` : fileList;
       progress: { message: "Running vault graph ingest...", percent: 5 }
     });
     await this.renderMessages();
-    const updateProgress = (message, percent) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
-      }
-    };
     try {
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
@@ -15954,8 +16039,16 @@ ${fileList}` : fileList;
         q,
         attachmentsContext,
         this.currentConversation,
-        (_displayName, msg, pct) => {
-          updateProgress(msg, pct);
+        (_displayName, msg, pct, detail) => {
+          if (this.activeAbortControllers.has(assistantIndex)) {
+            this.chatHistory[assistantIndex].progress = { message: msg, percent: pct };
+            if (detail?.vaultIngestAccumulatedCommands) {
+              this.chatHistory[assistantIndex].vaultIngestPreviewCommands = [
+                ...detail.vaultIngestAccumulatedCommands
+              ];
+            }
+            this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
+          }
         }
       );
       this.activeAbortControllers.delete(assistantIndex);
@@ -15970,6 +16063,7 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].savedPlan = plan;
       this.chatHistory[assistantIndex].savedQuery = q;
       this.chatHistory[assistantIndex].progress = void 0;
+      this.chatHistory[assistantIndex].vaultIngestPreviewCommands = void 0;
       this._awaitingToolReview = true;
       await this.renderMessages();
     } catch (e) {
@@ -16066,7 +16160,8 @@ ${fileList}` : fileList;
       "OSINT_SEARCH": "\u{1F310} Digital Footprint",
       "CORPORATE_REPORTS": "\u{1F3E2} Companies & People",
       "LOCAL_VAULT": "\u{1F4C1} Local Search",
-      "EXTRACT_TO_GRAPH": "\u{1F3F7}\uFE0F Graph Extraction"
+      "EXTRACT_TO_GRAPH": "\u{1F3F7}\uFE0F Graph Extraction",
+      "VAULT_GRAPH_INGEST": "\u{1F5C2}\uFE0F Vault graph ingest"
     };
     for (const [tool, result] of Object.entries(item.toolResults)) {
       const details = document.createElement("details");
@@ -16112,7 +16207,12 @@ ${fileList}` : fileList;
       if (typeof result === "string") {
         displayText = result;
       } else if (result && typeof result === "object") {
-        if (result.summary) {
+        if (result.__vaultIngest && result.summary) {
+          const n = Array.isArray(result.graphCommands) ? result.graphCommands.length : 0;
+          displayText = `${result.summary}
+
+**${n}** proposed graph command(s) \u2014 confirm with **\u{1F4CA} Generate Analysis & Graph**, then review the full list in the next step.`;
+        } else if (result.summary) {
           displayText = result.summary;
         } else if (result.results && Array.isArray(result.results)) {
           displayText = result.results.map((r) => {

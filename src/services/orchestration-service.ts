@@ -125,7 +125,7 @@ export class OrchestrationService {
                 query,
                 attachmentsContext,
                 currentConversation,
-                (tool, msg, percent) => {
+                (tool, msg, percent, _detail) => {
                     onProgress(`[${tool}] ${msg}`, percent);
                 }
             );
@@ -402,6 +402,9 @@ Respond with this exact JSON structure:
 
     private static readonly VAULT_INGEST_MAX_FILES = 200;
     private static readonly VAULT_INGEST_MAX_CHARS_PER_FILE = 60000;
+    /** Smaller chunks than default processTextInChunks so each /process-text call sees less text at once. */
+    private static readonly VAULT_INGEST_CHUNK_SIZE = 800;
+    private static readonly VAULT_INGEST_CHUNK_THRESHOLD = 1000;
     /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
     private static readonly VAULT_INGEST_EXTENSIONS = new Set([
         'md',
@@ -479,10 +482,15 @@ Respond with this exact JSON structure:
 
     /**
      * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
-     * extract text (API for binary), run processTextInChunks per file, merge graph commands.
+     * extract text (API for binary), run processTextInChunks per file with smaller chunks,
+     * accumulate @@ commands (and report progress with the growing list for UI).
      */
     private async runVaultGraphIngest(
-        onFileProgress: (message: string, percent: number) => void
+        onFileProgress: (
+            message: string,
+            percent: number,
+            detail?: { vaultIngestAccumulatedCommands: string[] }
+        ) => void
     ): Promise<{
         summary: string;
         graphCommands: string[];
@@ -503,10 +511,25 @@ Respond with this exact JSON structure:
         let truncatedFiles = 0;
         let extractFailures = 0;
 
+        const percentFor = (fileIndexZeroBased: number, chunkNum?: number, totalChunks?: number): number => {
+            const f = maxFiles > 0 ? (fileIndexZeroBased + 1) / maxFiles : 1;
+            let frac = f;
+            if (chunkNum !== undefined && totalChunks !== undefined && totalChunks > 1) {
+                frac =
+                    (fileIndexZeroBased + (chunkNum - 1) / totalChunks) / Math.max(maxFiles, 1);
+            }
+            return Math.min(94, 5 + Math.floor(85 * frac));
+        };
+
+        const emit = (message: string, fileIndexZeroBased: number, chunkNum?: number, totalChunks?: number) => {
+            onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
+                vaultIngestAccumulatedCommands: [...graphCommands],
+            });
+        };
+
         for (let i = 0; i < maxFiles; i++) {
             const file = files[i];
-            const pct = 5 + Math.floor((85 * (i + 1)) / Math.max(maxFiles, 1));
-            onFileProgress(`Reading ${file.path} (${i + 1}/${maxFiles})...`, pct);
+            emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
 
             const ext = (file.extension || '').toLowerCase();
             let content: string;
@@ -544,11 +567,38 @@ Respond with this exact JSON structure:
             const extraction = await this.plugin.graphApiService.processTextInChunks(
                 block,
                 this.plugin.entityManager.getAllEntities(),
-                new Date().toISOString()
+                new Date().toISOString(),
+                (chunkNum, totalChunks, msg) => {
+                    emit(`${file.path} — ${msg}`, i, chunkNum, totalChunks);
+                },
+                undefined,
+                undefined,
+                false,
+                {
+                    chunkSize: OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
+                    chunkThreshold: OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
+                    onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
+                        graphCommands.push(...this.operationsToGraphCommands(operations));
+                        emit(
+                            `Graph extraction: ${file.path} — chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
+                            i,
+                            chunkIndex,
+                            totalChunks
+                        );
+                    },
+                }
             );
 
-            if (extraction.success && extraction.operations && extraction.operations.length > 0) {
-                graphCommands.push(...this.operationsToGraphCommands(extraction.operations));
+            if (extraction.success) {
+                emit(
+                    `Graph extraction: ${file.path} — done (${graphCommands.length} command(s) so far)`,
+                    i
+                );
+            } else {
+                emit(
+                    `Graph extraction skipped/failed: ${file.path} — ${extraction.error || "no entities"}`,
+                    i
+                );
             }
         }
 
@@ -575,7 +625,12 @@ Respond with this exact JSON structure:
         query: string,
         attachmentsContext: string,
         currentConversation: any,
-        onProgress: (tool: string, message: string, percent: number) => void
+        onProgress: (
+            tool: string,
+            message: string,
+            percent: number,
+            detail?: { vaultIngestAccumulatedCommands?: string[] }
+        ) => void
     ): Promise<Record<string, any>> {
         const results: Record<string, any> = {};
 
@@ -722,8 +777,8 @@ Respond with this exact JSON structure:
                     case "VAULT_GRAPH_INGEST": {
                         onProgress(displayName, "Starting vault graph ingest...", 5);
                         try {
-                            const out = await this.runVaultGraphIngest((msg, pct) => {
-                                onProgress(displayName, msg, pct);
+                            const out = await this.runVaultGraphIngest((msg, pct, detail) => {
+                                onProgress(displayName, msg, pct, detail);
                             });
                             results["VAULT_GRAPH_INGEST"] = {
                                 __vaultIngest: true,

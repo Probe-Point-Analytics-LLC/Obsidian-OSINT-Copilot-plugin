@@ -2232,6 +2232,8 @@ export interface ChatHistoryItem {
   toolResults?: Record<string, any>;
   savedPlan?: OrchestrationPlan;
   savedQuery?: string;
+  /** During vault graph ingest: @@ commands accumulated so far (live preview before final review). */
+  vaultIngestPreviewCommands?: string[];
 }
 
 export class ChatView extends ItemView {
@@ -4182,6 +4184,36 @@ export class ChatView extends ItemView {
         disclaimer.style.fontStyle = "italic";
         disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
       }
+
+      const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
+      const existingIngestPreview = messageDiv.querySelector(".vault-ai-vault-ingest-preview") as HTMLElement;
+      if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
+        const ingestPreview = existingIngestPreview || (() => {
+          const el = document.createElement("div");
+          el.className = "vault-ai-vault-ingest-preview";
+          progressContainer.insertAdjacentElement("afterend", el);
+          return el;
+        })();
+        ingestPreview.empty();
+        ingestPreview.style.marginTop = "10px";
+        ingestPreview.style.padding = "10px 12px";
+        ingestPreview.style.border = "1px solid var(--background-modifier-border)";
+        ingestPreview.style.borderRadius = "8px";
+        ingestPreview.style.background = "var(--background-secondary)";
+        ingestPreview.style.maxHeight = "240px";
+        ingestPreview.style.overflowY = "auto";
+        ingestPreview.style.fontSize = "12px";
+        ingestPreview.createEl("div", {
+          text: `Proposed graph commands (${vaultPreviewCmds.length}) — grows as each file/chunk is processed`,
+        }).style.marginBottom = "8px";
+        const pre = ingestPreview.createEl("pre");
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.wordBreak = "break-word";
+        pre.style.margin = "0";
+        pre.textContent = vaultPreviewCmds.join("\n");
+      } else if (existingIngestPreview) {
+        existingIngestPreview.remove();
+      }
     }
     // Don't remove progress container if progress is not available - keep the last known progress
 
@@ -4600,13 +4632,6 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
-    const updateProgress = (message: string, percent: number) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        this.chatHistory[assistantIndex].progress = { message, percent };
-        this.updateProgressBar(assistantIndex, { message, percent });
-      }
-    };
-
     try {
       const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
@@ -4617,8 +4642,16 @@ export class ChatView extends ItemView {
         q,
         attachmentsContext,
         this.currentConversation,
-        (_displayName, msg, pct) => {
-          updateProgress(msg, pct);
+        (_displayName, msg, pct, detail) => {
+          if (this.activeAbortControllers.has(assistantIndex)) {
+            this.chatHistory[assistantIndex].progress = { message: msg, percent: pct };
+            if (detail?.vaultIngestAccumulatedCommands) {
+              this.chatHistory[assistantIndex].vaultIngestPreviewCommands = [
+                ...detail.vaultIngestAccumulatedCommands,
+              ];
+            }
+            this.updateProgressBar(assistantIndex, { message: msg, percent: pct });
+          }
         }
       );
 
@@ -4637,6 +4670,7 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].savedPlan = plan;
       this.chatHistory[assistantIndex].savedQuery = q;
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].vaultIngestPreviewCommands = undefined;
       this._awaitingToolReview = true;
       await this.renderMessages();
     } catch (e) {
@@ -4645,6 +4679,7 @@ export class ChatView extends ItemView {
       if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted")) return;
       this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
+      this.chatHistory[assistantIndex].vaultIngestPreviewCommands = undefined;
       await this.renderMessages();
     }
   }
@@ -4757,7 +4792,8 @@ export class ChatView extends ItemView {
       "OSINT_SEARCH": "🌐 Digital Footprint",
       "CORPORATE_REPORTS": "🏢 Companies & People",
       "LOCAL_VAULT": "📁 Local Search",
-      "EXTRACT_TO_GRAPH": "🏷️ Graph Extraction"
+      "EXTRACT_TO_GRAPH": "🏷️ Graph Extraction",
+      "VAULT_GRAPH_INGEST": "🗂️ Vault graph ingest"
     };
 
     for (const [tool, result] of Object.entries(item.toolResults)) {
@@ -4810,8 +4846,11 @@ export class ChatView extends ItemView {
       if (typeof result === 'string') {
         displayText = result;
       } else if (result && typeof result === 'object') {
-        // Extract meaningful text from API responses
-        if (result.summary) {
+        // Vault ingest: show summary + command count (full @@ list was visible during progress)
+        if (result.__vaultIngest && result.summary) {
+          const n = Array.isArray(result.graphCommands) ? result.graphCommands.length : 0;
+          displayText = `${result.summary}\n\n**${n}** proposed graph command(s) — confirm with **📊 Generate Analysis & Graph**, then review the full list in the next step.`;
+        } else if (result.summary) {
           displayText = result.summary;
         } else if (result.results && Array.isArray(result.results)) {
           displayText = result.results.map((r: any) => {
