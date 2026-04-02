@@ -54,6 +54,8 @@ import {
   type OrchestrationProgressMeta,
 } from './src/services/orchestration-service';
 import { UpdaterService } from './src/services/updater-service';
+import { EvidenceService } from './src/services/evidence-service';
+import { EvidencePickerModal } from './src/modals/evidence-picker-modal';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -217,6 +219,7 @@ export default class VaultAIPlugin extends Plugin {
   customTypesService!: CustomTypesService;
   orchestrationService!: OrchestrationService;
   updaterService!: UpdaterService;
+  evidenceService!: EvidenceService;
 
   async onload() {
     await this.loadSettings();
@@ -260,6 +263,9 @@ export default class VaultAIPlugin extends Plugin {
 
     // Initialize Orchestration Service
     this.orchestrationService = new OrchestrationService(this);
+
+    // Initialize Evidence Service
+    this.evidenceService = new EvidenceService(this);
 
     // Initialize Updater Service
     this.updaterService = new UpdaterService(this);
@@ -493,6 +499,18 @@ export default class VaultAIPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "analyze-evidence",
+      name: "Analyze vault evidence",
+      callback: () => {
+        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
+          new Notice("Your plan does not include plugin access.");
+          return;
+        }
+        void this.runEvidenceAnalysis();
+      },
+    });
+
     // Add settings tab
     this.addSettingTab(new VaultAISettingTab(this.app, this));
   }
@@ -501,6 +519,53 @@ export default class VaultAIPlugin extends Plugin {
 
 
 
+  }
+
+  /**
+   * Open the evidence picker, run analysis via the backend, and present
+   * generated graph commands for user review.
+   */
+  async runEvidenceAnalysis(): Promise<void> {
+    if (!(this.settings.reportApiKey || "").trim()) {
+      new Notice("OSINT Copilot: license key is required for evidence analysis.");
+      return;
+    }
+
+    const picker = new EvidencePickerModal(this.app);
+    const result = await picker.pick();
+    if (!result || result.files.length === 0) return;
+
+    const statusNotice = new Notice("Evidence analysis starting…", 0);
+    const updateStatus = (msg: string) => {
+      statusNotice.setMessage(msg);
+    };
+
+    try {
+      const commands = await this.evidenceService.analyze(
+        result.files,
+        (message, percent, detail) => {
+          updateStatus(`[${percent}%] ${message}`);
+          if (detail?.error) {
+            new Notice(`Evidence error: ${detail.error}`, 5000);
+          }
+        },
+      );
+
+      statusNotice.hide();
+
+      if (commands.length === 0) {
+        new Notice("No entities or relationships were extracted from the selected files.");
+        return;
+      }
+
+      new Notice(`Extracted ${commands.length} graph commands. Review and confirm…`, 4000);
+      await this.orchestrationService.executeGraphModifications(commands);
+    } catch (err) {
+      statusNotice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Evidence analysis failed: ${msg}`, 8000);
+      console.error("[OSINT Copilot] Evidence analysis error:", err);
+    }
   }
 
   async loadSettings() {

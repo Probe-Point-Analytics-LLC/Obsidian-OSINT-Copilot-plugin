@@ -31,6 +31,7 @@ export const ORCHESTRATION_TOOL_DISPLAY_NAMES: Record<string, string> = {
     LOCAL_VAULT: "Local Search",
     VAULT_GRAPH_INGEST: "Vault graph (notes)",
     EXTRACT_TO_GRAPH: "Extract to graph",
+    ANALYZE_EVIDENCE: "Evidence analysis",
 };
 
 /** Optional metadata for orchestration progress callbacks (multi-tool UI). */
@@ -1028,6 +1029,57 @@ Respond with this exact JSON structure:
                         });
                         results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
                         onProgress(displayName, "Complete", 100);
+                        break;
+                    }
+
+                    case "ANALYZE_EVIDENCE": {
+                        if (isCancelled("ANALYZE_EVIDENCE")) {
+                            results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                            break;
+                        }
+                        onProgress(displayName, "Opening evidence picker…", 5);
+                        try {
+                            const { EvidencePickerModal } = await import("../modals/evidence-picker-modal");
+                            const picker = new EvidencePickerModal(this.plugin.app);
+                            const selection = await picker.pick();
+                            if (!selection || selection.files.length === 0) {
+                                results["ANALYZE_EVIDENCE"] = "No files selected.";
+                                onProgress(displayName, "Skipped", 100);
+                                break;
+                            }
+                            const { EvidenceService } = await import("./evidence-service");
+                            const svc = new EvidenceService(this.plugin);
+                            const commands = await svc.analyze(
+                                selection.files,
+                                (msg, pct) => {
+                                    if (isCancelled("ANALYZE_EVIDENCE")) return;
+                                    onProgress(displayName, msg, pct);
+                                },
+                            );
+                            if (commands.length > 0) {
+                                const lines = await this.executeGraphCommandsImmediate(commands, { showErrorNotices: false });
+                                results["ANALYZE_EVIDENCE"] = {
+                                    __evidenceAnalysis: true,
+                                    summary: lines.join("\n"),
+                                    graphCommands: [],
+                                    appliedOperationsCount: commands.length,
+                                    filesProcessed: selection.files.length,
+                                };
+                            } else {
+                                results["ANALYZE_EVIDENCE"] = "No entities extracted from evidence files.";
+                            }
+                        } catch (e: unknown) {
+                            results["ANALYZE_EVIDENCE"] = `Evidence analysis failed: ${
+                                e instanceof Error ? e.message : String(e)
+                            }`;
+                        }
+                        if (isCancelled("ANALYZE_EVIDENCE")) {
+                            results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
+                            onProgress(displayName, "Cancelled", 100);
+                        } else {
+                            onProgress(displayName, "Complete", 100);
+                        }
                         break;
                     }
 

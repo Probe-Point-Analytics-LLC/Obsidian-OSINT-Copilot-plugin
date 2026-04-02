@@ -8,6 +8,9 @@ var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -22,6 +25,471 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+// src/modals/evidence-picker-modal.ts
+var evidence_picker_modal_exports = {};
+__export(evidence_picker_modal_exports, {
+  EvidencePickerModal: () => EvidencePickerModal
+});
+function humanSize(bytes) {
+  if (bytes < 1024)
+    return `${bytes} B`;
+  if (bytes < 1024 * 1024)
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+var import_obsidian12, EVIDENCE_EXTENSIONS, TYPE_ICONS, EvidencePickerModal;
+var init_evidence_picker_modal = __esm({
+  "src/modals/evidence-picker-modal.ts"() {
+    "use strict";
+    import_obsidian12 = require("obsidian");
+    EVIDENCE_EXTENSIONS = /* @__PURE__ */ new Set([
+      "md",
+      "markdown",
+      "txt",
+      "pdf",
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "gif",
+      "doc",
+      "docx"
+    ]);
+    TYPE_ICONS = {
+      pdf: "\u{1F4C4}",
+      png: "\u{1F5BC}\uFE0F",
+      jpg: "\u{1F5BC}\uFE0F",
+      jpeg: "\u{1F5BC}\uFE0F",
+      webp: "\u{1F5BC}\uFE0F",
+      gif: "\u{1F5BC}\uFE0F",
+      doc: "\u{1F4DD}",
+      docx: "\u{1F4DD}",
+      md: "\u{1F4CB}",
+      markdown: "\u{1F4CB}",
+      txt: "\u{1F4CB}"
+    };
+    EvidencePickerModal = class extends import_obsidian12.Modal {
+      constructor(app) {
+        super(app);
+        this.selected = /* @__PURE__ */ new Set();
+        this.allFiles = [];
+      }
+      /** Open the modal and return the user's selection (or null on cancel). */
+      pick() {
+        return new Promise((resolve) => {
+          this.resolve = resolve;
+          this.open();
+        });
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass("osint-evidence-picker");
+        this.allFiles = this.app.vault.getFiles().filter((f) => f instanceof import_obsidian12.TFile).filter((f) => EVIDENCE_EXTENSIONS.has((f.extension || "").toLowerCase())).filter((f) => {
+          const p = f.path.replace(/\\/g, "/").toLowerCase();
+          return !p.startsWith(".obsidian/") && !p.includes("/.obsidian/") && !p.startsWith(".git/") && !p.includes("/.git/");
+        }).sort((a, b) => a.path.localeCompare(b.path));
+        contentEl.createEl("h2", { text: "Analyze vault evidence" });
+        const desc = contentEl.createEl("p", { cls: "setting-item-description" });
+        desc.setText(`${this.allFiles.length} evidence files found. Select files to classify and extract structured data.`);
+        const controls = contentEl.createDiv({ cls: "osint-evidence-controls" });
+        controls.setCssProps({ display: "flex", gap: "8px", "margin-bottom": "12px" });
+        const btnAll = controls.createEl("button", { text: "Select all", cls: "mod-muted" });
+        btnAll.addEventListener("click", () => this.toggleAll(true));
+        const btnNone = controls.createEl("button", { text: "Deselect all", cls: "mod-muted" });
+        btnNone.addEventListener("click", () => this.toggleAll(false));
+        const countEl = controls.createSpan({ cls: "osint-evidence-count" });
+        countEl.setCssProps({ "margin-left": "auto", "align-self": "center", "font-size": "0.85em", color: "var(--text-muted)" });
+        this.updateCount(countEl);
+        const listContainer = contentEl.createDiv({ cls: "osint-evidence-list" });
+        listContainer.setCssProps({
+          "max-height": "400px",
+          "overflow-y": "auto",
+          border: "1px solid var(--background-modifier-border)",
+          "border-radius": "6px",
+          padding: "8px"
+        });
+        const grouped = this.groupByFolder(this.allFiles);
+        for (const [folder, files] of grouped) {
+          const folderEl = listContainer.createDiv({ cls: "osint-evidence-folder" });
+          folderEl.setCssProps({ "margin-bottom": "6px" });
+          const folderHeader = folderEl.createDiv();
+          folderHeader.setCssProps({
+            display: "flex",
+            "align-items": "center",
+            gap: "6px",
+            "font-weight": "600",
+            "font-size": "0.85em",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            "margin-bottom": "2px"
+          });
+          folderHeader.createSpan({ text: "\u{1F4C1}" });
+          folderHeader.createSpan({ text: folder || "(root)" });
+          const folderCountSpan = folderHeader.createSpan({ text: ` (${files.length})` });
+          folderCountSpan.setCssProps({ "font-weight": "400" });
+          folderHeader.addEventListener("click", () => {
+            const allChecked = files.every((f) => this.selected.has(f.path));
+            for (const f of files) {
+              if (allChecked)
+                this.selected.delete(f.path);
+              else
+                this.selected.add(f.path);
+            }
+            this.refreshCheckboxes(listContainer);
+            this.updateCount(countEl);
+          });
+          for (const file of files) {
+            const row = folderEl.createEl("label", { cls: "osint-evidence-row" });
+            row.setCssProps({
+              display: "flex",
+              "align-items": "center",
+              gap: "6px",
+              padding: "3px 4px",
+              cursor: "pointer",
+              "border-radius": "4px"
+            });
+            const cb = row.createEl("input");
+            cb.type = "checkbox";
+            cb.checked = this.selected.has(file.path);
+            cb.dataset.path = file.path;
+            cb.addEventListener("change", () => {
+              if (cb.checked)
+                this.selected.add(file.path);
+              else
+                this.selected.delete(file.path);
+              this.updateCount(countEl);
+            });
+            const ext = (file.extension || "").toLowerCase();
+            row.createSpan({ text: TYPE_ICONS[ext] || "\u{1F4CE}" });
+            const nameSpan = row.createSpan({ text: file.name });
+            nameSpan.setCssProps({ flex: "1" });
+            const sizeSpan = row.createSpan({ text: humanSize(file.stat.size) });
+            sizeSpan.setCssProps({ "font-size": "0.8em", color: "var(--text-faint)" });
+          }
+        }
+        const actions = contentEl.createDiv({ cls: "osint-evidence-actions" });
+        actions.setCssProps({ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-top": "16px" });
+        const cancelBtn = actions.createEl("button", { text: "Cancel" });
+        cancelBtn.addEventListener("click", () => {
+          this.resolve(null);
+          this.close();
+        });
+        const analyzeBtn = actions.createEl("button", { text: "Analyze selected", cls: "mod-cta" });
+        analyzeBtn.addEventListener("click", () => {
+          const picked = this.allFiles.filter((f) => this.selected.has(f.path));
+          this.resolve({ files: picked });
+          this.close();
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+      toggleAll(checked) {
+        if (checked) {
+          for (const f of this.allFiles)
+            this.selected.add(f.path);
+        } else {
+          this.selected.clear();
+        }
+        const cbs = this.contentEl.querySelectorAll("input[type=checkbox][data-path]");
+        cbs.forEach((cb) => {
+          cb.checked = checked;
+        });
+        const countEl = this.contentEl.querySelector(".osint-evidence-count");
+        if (countEl)
+          this.updateCount(countEl);
+      }
+      refreshCheckboxes(container) {
+        const cbs = container.querySelectorAll("input[type=checkbox][data-path]");
+        cbs.forEach((cb) => {
+          cb.checked = this.selected.has(cb.dataset.path || "");
+        });
+      }
+      updateCount(el) {
+        el.setText(`${this.selected.size} / ${this.allFiles.length} selected`);
+      }
+      groupByFolder(files) {
+        const map = /* @__PURE__ */ new Map();
+        for (const f of files) {
+          const parts = f.path.split("/");
+          const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+          if (!map.has(folder))
+            map.set(folder, []);
+          map.get(folder).push(f);
+        }
+        return map;
+      }
+    };
+  }
+});
+
+// src/services/evidence-service.ts
+var evidence_service_exports = {};
+__export(evidence_service_exports, {
+  EvidenceService: () => EvidenceService
+});
+var import_obsidian13, MAX_FILE_SIZE, EvidenceService;
+var init_evidence_service = __esm({
+  "src/services/evidence-service.ts"() {
+    "use strict";
+    import_obsidian13 = require("obsidian");
+    MAX_FILE_SIZE = 10 * 1024 * 1024;
+    EvidenceService = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+      }
+      /**
+       * Run the full evidence analysis pipeline.
+       *
+       * 1. Read selected files from vault (text locally, binary as base64).
+       * 2. POST to /api/evidence/analyze (SSE).
+       * 3. Parse SSE events, call progress callback.
+       * 4. Return graph commands derived from the correlated brief.
+       */
+      async analyze(files, onProgress) {
+        const baseUrl = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
+        const apiKey = this.plugin.settings.reportApiKey || "";
+        onProgress("Preparing files\u2026", 2);
+        const filesPayload = [];
+        for (const file of files) {
+          if (file.stat.size > MAX_FILE_SIZE) {
+            onProgress(`Skipping ${file.name} (too large)`, 0, { error: `${file.name} exceeds 10 MB` });
+            continue;
+          }
+          const ext = (file.extension || "").toLowerCase();
+          let b64;
+          if (ext === "md" || ext === "markdown" || ext === "txt") {
+            const text = await this.plugin.app.vault.cachedRead(file);
+            b64 = btoa(unescape(encodeURIComponent(text)));
+          } else {
+            const buf = await this.plugin.app.vault.readBinary(file);
+            b64 = this.arrayBufferToBase64(buf);
+          }
+          filesPayload.push({
+            filename: file.name,
+            content_base64: b64,
+            mime_type: this.mimeFor(ext),
+            vault_path: file.path
+          });
+        }
+        if (filesPayload.length === 0) {
+          onProgress("No files to analyze", 100);
+          return [];
+        }
+        onProgress(`Sending ${filesPayload.length} files to server\u2026`, 5);
+        const body = JSON.stringify({ files: filesPayload, correlate: true });
+        const records = [];
+        let brief = null;
+        let doneEvent = null;
+        try {
+          const resp = await (0, import_obsidian13.requestUrl)({
+            url: `${baseUrl}/api/evidence/analyze`,
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              Accept: "text/event-stream"
+            },
+            body,
+            throw: false
+          });
+          if (resp.status >= 400) {
+            const errText = resp.text || `HTTP ${resp.status}`;
+            onProgress(`Server error: ${errText}`, 0, { error: errText });
+            return [];
+          }
+          const sseText = resp.text || "";
+          const events = this.parseSSE(sseText);
+          for (const ev of events) {
+            switch (ev.event) {
+              case "file_start": {
+                const d = ev.data;
+                const pct = 5 + Math.floor(d.index / d.total * 70);
+                onProgress(`Analyzing ${d.filename} (${d.index + 1}/${d.total})\u2026`, pct);
+                break;
+              }
+              case "file_classified": {
+                const d = ev.data;
+                onProgress(
+                  `${d.filename}: ${d.classification} (${Math.round(d.confidence * 100)}%)`,
+                  5 + Math.floor((d.index + 0.5) / files.length * 70),
+                  { classification: d.classification }
+                );
+                break;
+              }
+              case "file_complete": {
+                const d = ev.data;
+                records.push(d.record);
+                onProgress(
+                  `${d.filename}: extracted ${d.record.entities_detected.length} entities`,
+                  5 + Math.floor((d.index + 1) / files.length * 70),
+                  { record: d.record }
+                );
+                break;
+              }
+              case "file_error": {
+                const d = ev.data;
+                onProgress(`Error: ${d.filename} \u2014 ${d.error}`, 0, { error: d.error });
+                break;
+              }
+              case "correlation_start":
+                onProgress("Cross-document correlation\u2026", 80);
+                break;
+              case "correlation_complete": {
+                const d = ev.data;
+                brief = d.brief;
+                onProgress("Correlation complete", 90, { brief });
+                break;
+              }
+              case "correlation_error": {
+                const d = ev.data;
+                onProgress(`Correlation error: ${d.error}`, 85, { error: d.error });
+                break;
+              }
+              case "done": {
+                doneEvent = ev.data;
+                onProgress(
+                  `Done: ${doneEvent.files_processed} files, ${doneEvent.entities_found} entities, ${doneEvent.relationships_found} relationships`,
+                  95,
+                  { done: doneEvent }
+                );
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          onProgress(`Network error: ${msg}`, 0, { error: msg });
+          return [];
+        }
+        const commands = brief ? this.briefToGraphCommands(brief) : this.recordsToGraphCommands(records);
+        onProgress("Graph commands ready for review", 100);
+        return commands;
+      }
+      // -----------------------------------------------------------------------
+      // Helpers
+      // -----------------------------------------------------------------------
+      briefToGraphCommands(brief) {
+        const cmds = [];
+        for (const ent of brief.resolved_entities) {
+          const props = { ...ent.properties };
+          if (ent.sources.length > 0)
+            props["source"] = ent.sources.join(", ");
+          if (ent.aliases.length > 0)
+            props["aliases"] = ent.aliases.join(", ");
+          cmds.push(
+            `@@create_entity ${JSON.stringify({
+              type: ent.entity_type,
+              label: ent.canonical_name,
+              properties: props
+            })}`
+          );
+        }
+        for (const rel of brief.resolved_relationships) {
+          cmds.push(
+            `@@create_link ${JSON.stringify({
+              from: rel.from_entity,
+              to: rel.to_entity,
+              relationship: rel.relationship
+            })}`
+          );
+        }
+        for (const te of brief.timeline) {
+          cmds.push(
+            `@@create_entity ${JSON.stringify({
+              type: "Event",
+              label: te.description.slice(0, 80),
+              properties: {
+                name: te.description.slice(0, 80),
+                description: te.description,
+                start_date: te.date,
+                add_to_timeline: true,
+                source: te.source,
+                notes: `Entities involved: ${te.entities_involved.join(", ")}`
+              }
+            })}`
+          );
+        }
+        return cmds;
+      }
+      /** Fallback when correlation was not requested or failed. */
+      recordsToGraphCommands(records) {
+        const cmds = [];
+        for (const rec of records) {
+          const src = rec.vault_path || rec.file;
+          for (const ent of rec.entities_detected) {
+            cmds.push(
+              `@@create_entity ${JSON.stringify({
+                type: ent.entity_type,
+                label: ent.name,
+                properties: { ...ent.properties, source: src }
+              })}`
+            );
+          }
+          for (const rel of rec.relationships_detected) {
+            cmds.push(
+              `@@create_link ${JSON.stringify({
+                from: rel.from_entity,
+                to: rel.to_entity,
+                relationship: rel.relationship
+              })}`
+            );
+          }
+        }
+        return cmds;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      parseSSE(text) {
+        const results = [];
+        const blocks = text.split("\n\n");
+        for (const block of blocks) {
+          if (!block.trim())
+            continue;
+          let event = "message";
+          let dataStr = "";
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event: "))
+              event = line.slice(7).trim();
+            else if (line.startsWith("data: "))
+              dataStr = line.slice(6);
+          }
+          if (dataStr) {
+            try {
+              results.push({ event, data: JSON.parse(dataStr) });
+            } catch {
+            }
+          }
+        }
+        return results;
+      }
+      arrayBufferToBase64(buf) {
+        const bytes = new Uint8Array(buf);
+        let binary = "";
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+      }
+      mimeFor(ext) {
+        const map = {
+          pdf: "application/pdf",
+          png: "image/png",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          webp: "image/webp",
+          gif: "image/gif",
+          doc: "application/msword",
+          docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          md: "text/markdown",
+          markdown: "text/markdown",
+          txt: "text/plain"
+        };
+        return map[ext] || "application/octet-stream";
+      }
+    };
+  }
+});
+
 // main.ts
 var main_exports = {};
 __export(main_exports, {
@@ -30,7 +498,7 @@ __export(main_exports, {
   default: () => VaultAIPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian14 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 
 // src/services/ftm-schema-service.ts
 var BASE_SCHEMAS = {
@@ -11427,7 +11895,7 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/services/intent-router.ts
 function detectOrchestrationIntent(query) {
@@ -11462,7 +11930,8 @@ var ORCHESTRATION_TOOL_DISPLAY_NAMES = {
   CORPORATE_REPORTS: "Companies & People",
   LOCAL_VAULT: "Local Search",
   VAULT_GRAPH_INGEST: "Vault graph (notes)",
-  EXTRACT_TO_GRAPH: "Extract to graph"
+  EXTRACT_TO_GRAPH: "Extract to graph",
+  ANALYZE_EVIDENCE: "Evidence analysis"
 };
 var _OrchestrationService = class _OrchestrationService {
   constructor(plugin) {
@@ -11472,7 +11941,7 @@ var _OrchestrationService = class _OrchestrationService {
     if (this.plugin.settings.orchestrationProvider === "osint-copilot") {
       try {
         const base = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
-        const response = await (0, import_obsidian12.requestUrl)({
+        const response = await (0, import_obsidian14.requestUrl)({
           url: `${base}/api/key/info`,
           method: "GET",
           headers: {
@@ -11890,7 +12359,7 @@ Respond with this exact JSON structure:
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const graphCommands = [];
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian12.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian14.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     let truncatedFiles = 0;
     let extractFailures = 0;
@@ -12030,7 +12499,7 @@ ${content}`;
             }
             const darkWebModel = "gpt-5-mini";
             onProgress(displayName, "Initializing job...", 10);
-            const darkWebRes = await (0, import_obsidian12.requestUrl)({
+            const darkWebRes = await (0, import_obsidian14.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
               method: "POST",
               headers: {
@@ -12063,7 +12532,7 @@ ${content}`;
               await new Promise((resolve) => setTimeout(resolve, 5e3));
               const elapsed = Math.round((Date.now() - startTime) / 1e3);
               onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
-              const statusRes = await (0, import_obsidian12.requestUrl)({
+              const statusRes = await (0, import_obsidian14.requestUrl)({
                 url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
                 method: "GET",
                 headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
@@ -12081,7 +12550,7 @@ ${content}`;
             }
             if (completed && !isCancelled("DARK_WEB")) {
               onProgress(displayName, "Downloading results...", 90);
-              const downloadRes = await (0, import_obsidian12.requestUrl)({
+              const downloadRes = await (0, import_obsidian14.requestUrl)({
                 url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
                 method: "GET",
                 headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
@@ -12264,7 +12733,7 @@ Content Preview: ${content.substring(0, 500)}...`);
               onProgress(displayName, "No context", 100);
               break;
             }
-            const graphGenRes = await (0, import_obsidian12.requestUrl)({
+            const graphGenRes = await (0, import_obsidian14.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/process-text`,
               method: "POST",
               headers: {
@@ -12280,6 +12749,55 @@ Content Preview: ${content.substring(0, 500)}...`);
             });
             results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
             onProgress(displayName, "Complete", 100);
+            break;
+          }
+          case "ANALYZE_EVIDENCE": {
+            if (isCancelled("ANALYZE_EVIDENCE")) {
+              results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+              break;
+            }
+            onProgress(displayName, "Opening evidence picker\u2026", 5);
+            try {
+              const { EvidencePickerModal: EvidencePickerModal2 } = await Promise.resolve().then(() => (init_evidence_picker_modal(), evidence_picker_modal_exports));
+              const picker = new EvidencePickerModal2(this.plugin.app);
+              const selection = await picker.pick();
+              if (!selection || selection.files.length === 0) {
+                results["ANALYZE_EVIDENCE"] = "No files selected.";
+                onProgress(displayName, "Skipped", 100);
+                break;
+              }
+              const { EvidenceService: EvidenceService2 } = await Promise.resolve().then(() => (init_evidence_service(), evidence_service_exports));
+              const svc = new EvidenceService2(this.plugin);
+              const commands = await svc.analyze(
+                selection.files,
+                (msg, pct) => {
+                  if (isCancelled("ANALYZE_EVIDENCE"))
+                    return;
+                  onProgress(displayName, msg, pct);
+                }
+              );
+              if (commands.length > 0) {
+                const lines = await this.executeGraphCommandsImmediate(commands, { showErrorNotices: false });
+                results["ANALYZE_EVIDENCE"] = {
+                  __evidenceAnalysis: true,
+                  summary: lines.join("\n"),
+                  graphCommands: [],
+                  appliedOperationsCount: commands.length,
+                  filesProcessed: selection.files.length
+                };
+              } else {
+                results["ANALYZE_EVIDENCE"] = "No entities extracted from evidence files.";
+              }
+            } catch (e) {
+              results["ANALYZE_EVIDENCE"] = `Evidence analysis failed: ${e instanceof Error ? e.message : String(e)}`;
+            }
+            if (isCancelled("ANALYZE_EVIDENCE")) {
+              results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
+              onProgress(displayName, "Cancelled", 100);
+            } else {
+              onProgress(displayName, "Complete", 100);
+            }
             break;
           }
           default:
@@ -12401,7 +12919,7 @@ ${result.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian12.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian14.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -12451,18 +12969,18 @@ ${result.summary || ""}
       ).open();
     });
     if (!confirmedValues) {
-      new import_obsidian12.Notice("Graph modifications cancelled by user.");
+      new import_obsidian14.Notice("Graph modifications cancelled by user.");
       return;
     }
     const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
     if (cmdsToExecute.length === 0) {
-      new import_obsidian12.Notice("No graph modifications selected.");
+      new import_obsidian14.Notice("No graph modifications selected.");
       return;
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian12.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian14.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -12535,7 +13053,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian12.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian14.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -12560,7 +13078,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -12574,7 +13092,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian13.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian15.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -12601,7 +13119,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian13.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian15.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -12628,7 +13146,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian13.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian15.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -12658,7 +13176,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian13.requestUrl)({ url });
+      const response = await (0, import_obsidian15.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -12692,6 +13210,8 @@ var UpdaterService = class {
 };
 
 // main.ts
+init_evidence_service();
+init_evidence_picker_modal();
 var CHAT_MODEL = "gpt-4o-mini";
 var ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 var DARKWEB_MODEL = "gpt-5-mini";
@@ -12754,7 +13274,7 @@ Investigative Creativity & Continuity:
 };
 var REPORT_API_BASE_URL = "https://api.osint-copilot.com";
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var VaultAIPlugin = class extends import_obsidian14.Plugin {
+var VaultAIPlugin = class extends import_obsidian16.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -12762,7 +13282,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
   async onload() {
     await this.loadSettings();
     if (!(this.settings.reportApiKey || "").trim()) {
-      new import_obsidian14.Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
+      new import_obsidian16.Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
     } else {
       this.verifyPermissions();
     }
@@ -12787,6 +13307,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       console.warn("OSINTCopilot: Conversation service initialization had issues:", error);
     }
     this.orchestrationService = new OrchestrationService(this);
+    this.evidenceService = new EvidenceService(this);
     this.updaterService = new UpdaterService(this);
     if (this.settings.enableGraphFeatures) {
       try {
@@ -12855,21 +13376,21 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian14.TFile) {
+        if (file instanceof import_obsidian16.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian14.TFile) {
+        if (file instanceof import_obsidian16.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian14.TFile) {
+        if (file instanceof import_obsidian16.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -12944,10 +13465,10 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
           a.download = `osint-investigation-${timestamp}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian14.Notice("Investigation exported successfully");
+          new import_obsidian16.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian14.Notice("Failed to export investigation");
+          new import_obsidian16.Notice("Failed to export investigation");
         }
       }
     });
@@ -12956,7 +13477,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       name: "Ask (remote)",
       callback: () => {
         if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new import_obsidian14.Notice("Your plan does not include plugin access.");
+          new import_obsidian16.Notice("Your plan does not include plugin access.");
           return;
         }
         this.openAskModal();
@@ -12967,11 +13488,11 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       name: "Reindex vault",
       callback: () => {
         if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new import_obsidian14.Notice("Your plan does not include plugin access.");
+          new import_obsidian16.Notice("Your plan does not include plugin access.");
           return;
         }
         void this.buildIndex().then(() => {
-          new import_obsidian14.Notice("Vault reindexed successfully.");
+          new import_obsidian16.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -12980,17 +13501,69 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new import_obsidian14.Notice("Your plan does not include plugin access.");
+          new import_obsidian16.Notice("Your plan does not include plugin access.");
           return;
         }
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian14.Notice("Entities reloaded from notes.");
+          new import_obsidian16.Notice("Entities reloaded from notes.");
         });
+      }
+    });
+    this.addCommand({
+      id: "analyze-evidence",
+      name: "Analyze vault evidence",
+      callback: () => {
+        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
+          new import_obsidian16.Notice("Your plan does not include plugin access.");
+          return;
+        }
+        void this.runEvidenceAnalysis();
       }
     });
     this.addSettingTab(new VaultAISettingTab(this.app, this));
   }
   onunload() {
+  }
+  /**
+   * Open the evidence picker, run analysis via the backend, and present
+   * generated graph commands for user review.
+   */
+  async runEvidenceAnalysis() {
+    if (!(this.settings.reportApiKey || "").trim()) {
+      new import_obsidian16.Notice("OSINT Copilot: license key is required for evidence analysis.");
+      return;
+    }
+    const picker = new EvidencePickerModal(this.app);
+    const result = await picker.pick();
+    if (!result || result.files.length === 0)
+      return;
+    const statusNotice = new import_obsidian16.Notice("Evidence analysis starting\u2026", 0);
+    const updateStatus = (msg) => {
+      statusNotice.setMessage(msg);
+    };
+    try {
+      const commands = await this.evidenceService.analyze(
+        result.files,
+        (message, percent, detail) => {
+          updateStatus(`[${percent}%] ${message}`);
+          if (detail?.error) {
+            new import_obsidian16.Notice(`Evidence error: ${detail.error}`, 5e3);
+          }
+        }
+      );
+      statusNotice.hide();
+      if (commands.length === 0) {
+        new import_obsidian16.Notice("No entities or relationships were extracted from the selected files.");
+        return;
+      }
+      new import_obsidian16.Notice(`Extracted ${commands.length} graph commands. Review and confirm\u2026`, 4e3);
+      await this.orchestrationService.executeGraphModifications(commands);
+    } catch (err) {
+      statusNotice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new import_obsidian16.Notice(`Evidence analysis failed: ${msg}`, 8e3);
+      console.error("[OSINT Copilot] Evidence analysis error:", err);
+    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -13029,7 +13602,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
     if (!key)
       return;
     try {
-      const response = await (0, import_obsidian14.requestUrl)({
+      const response = await (0, import_obsidian16.requestUrl)({
         url: `${this.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
@@ -13100,11 +13673,11 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
    */
   async openGraphView(forceNew = false) {
     if (this.settings.permissions && this.settings.permissions.allow_graph_automation === false) {
-      new import_obsidian14.Notice("Your plan does not include access to graph automation features. Please upgrade.");
+      new import_obsidian16.Notice("Your plan does not include access to graph automation features. Please upgrade.");
       return;
     }
     if (!this.settings.enableGraphFeatures) {
-      new import_obsidian14.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian16.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -13148,7 +13721,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
-        new import_obsidian14.Notice("Graph view updated with new entities");
+        new import_obsidian16.Notice("Graph view updated with new entities");
       }
     }
   }
@@ -13169,7 +13742,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
       if (this.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian14.Notice("Graph view opened with new entities");
+        new import_obsidian16.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -13217,15 +13790,15 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
   async showEntityOnMap(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian14.Notice("Entity not found");
+      new import_obsidian16.Notice("Entity not found");
       return;
     }
     if (entity.type !== "Location") {
-      new import_obsidian14.Notice("Only location entities can be shown on the map");
+      new import_obsidian16.Notice("Only location entities can be shown on the map");
       return;
     }
     if (!entity.properties.latitude || !entity.properties.longitude) {
-      new import_obsidian14.Notice("Location has no coordinates. Please add latitude and longitude.");
+      new import_obsidian16.Notice("Location has no coordinates. Please add latitude and longitude.");
       return;
     }
     await this.openMapView();
@@ -13396,7 +13969,7 @@ var VaultAIPlugin = class extends import_obsidian14.Plugin {
         // Pass stream flag to endpoint
         use_local: useLocal
       };
-      const requestPromise = (0, import_obsidian14.requestUrl)({
+      const requestPromise = (0, import_obsidian16.requestUrl)({
         url: endpoint,
         method: "POST",
         headers: {
@@ -13654,7 +14227,7 @@ ${additionalContext}
           } else {
             console.debug("[OSINT Copilot] Sending first request (no conversation_id)");
           }
-          const generateResponse = await (0, import_obsidian14.requestUrl)({
+          const generateResponse = await (0, import_obsidian16.requestUrl)({
             url: `${baseUrl}/api/generate-report`,
             method: "POST",
             headers: {
@@ -13735,7 +14308,7 @@ ${additionalContext}
         const elapsedSecs = Math.round(elapsedMs / 1e3);
         statusCallback?.(`Checking report status... (${elapsedSecs}s elapsed)`);
         try {
-          const statusResponse = await (0, import_obsidian14.requestUrl)({
+          const statusResponse = await (0, import_obsidian16.requestUrl)({
             url: `${baseUrl}/api/report-status/${jobId}`,
             method: "GET",
             headers: {
@@ -13840,7 +14413,7 @@ ${additionalContext}
       const maxDownloadRetries = 3;
       for (let downloadAttempt = 1; downloadAttempt <= maxDownloadRetries; downloadAttempt++) {
         try {
-          const downloadResponse = await (0, import_obsidian14.requestUrl)({
+          const downloadResponse = await (0, import_obsidian16.requestUrl)({
             url: `${baseUrl}/api/download-report/${jobId}/md`,
             method: "GET",
             headers: {
@@ -13896,7 +14469,7 @@ ${additionalContext}
     ];
     for (const endpoint of possibleEndpoints) {
       try {
-        const response = await (0, import_obsidian14.requestUrl)({
+        const response = await (0, import_obsidian16.requestUrl)({
           url: `${baseUrl}${endpoint}`,
           method: "GET",
           headers: {
@@ -14123,7 +14696,7 @@ ${additionalContext}
   // ============================================================================
   openAskModal() {
     if (!this.isAuthenticated()) {
-      new import_obsidian14.Notice("License key required for AI features. Please configure your license key in settings.");
+      new import_obsidian16.Notice("License key required for AI features. Please configure your license key in settings.");
       return;
     }
     new AskModal(this.app, this).open();
@@ -14135,11 +14708,11 @@ ${additionalContext}
    */
   async openChatView(forceNew = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new import_obsidian14.Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
+      new import_obsidian16.Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
       return;
     }
     if (!this.settings.reportApiKey) {
-      new import_obsidian14.Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8e3);
+      new import_obsidian16.Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8e3);
       const settingTab = this.app.setting;
       if (settingTab) {
         settingTab.open();
@@ -14162,7 +14735,7 @@ ${additionalContext}
     }
   }
 };
-var AskModal = class extends import_obsidian14.Modal {
+var AskModal = class extends import_obsidian16.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -14190,7 +14763,7 @@ var AskModal = class extends import_obsidian14.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian14.Notice("Please enter a question.");
+      new import_obsidian16.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -14206,7 +14779,7 @@ var AskModal = class extends import_obsidian14.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian14.Notice("Answer copied to clipboard.");
+        new import_obsidian16.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -14217,7 +14790,7 @@ var AskModal = class extends import_obsidian14.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian14.TFile) {
+              if (file instanceof import_obsidian16.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -14237,7 +14810,7 @@ var AskModal = class extends import_obsidian14.Modal {
     contentEl.empty();
   }
 };
-var RenameConversationModal = class extends import_obsidian14.Modal {
+var RenameConversationModal = class extends import_obsidian16.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -14295,7 +14868,7 @@ var RenameConversationModal = class extends import_obsidian14.Modal {
     contentEl.empty();
   }
 };
-var ChatView = class extends import_obsidian14.ItemView {
+var ChatView = class extends import_obsidian16.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -14540,42 +15113,42 @@ var ChatView = class extends import_obsidian14.ItemView {
         this.customChatMode = true;
         this.activeCheckpointId = cpId;
         const cpName = this.plugin.settings.customCheckpoints.find((c) => c.id === cpId)?.name || "Custom Chat";
-        new import_obsidian14.Notice(`${cpName} enabled`);
+        new import_obsidian16.Notice(`${cpName} enabled`);
       } else {
         this.activeCheckpointId = void 0;
         switch (selectedValue) {
           case "local":
             this.localSearchMode = true;
-            new import_obsidian14.Notice("Local search mode enabled");
+            new import_obsidian16.Notice("Local search mode enabled");
             break;
           case "darkweb":
             this.darkWebMode = true;
-            new import_obsidian14.Notice("Dark web mode enabled");
+            new import_obsidian16.Notice("Dark web mode enabled");
             break;
           case "report":
             this.reportGenerationMode = true;
-            new import_obsidian14.Notice("Companies&people mode enabled");
+            new import_obsidian16.Notice("Companies&people mode enabled");
             break;
           case "osint":
             this.osintSearchMode = true;
-            new import_obsidian14.Notice("Leak search mode enabled");
+            new import_obsidian16.Notice("Leak search mode enabled");
             break;
           case "orchestration":
             this.orchestrationMode = true;
-            new import_obsidian14.Notice("Main Copilot mode enabled");
+            new import_obsidian16.Notice("Main Copilot mode enabled");
             break;
           case "vaultingest":
             this.vaultGraphIngestMode = true;
-            new import_obsidian14.Notice("Vault graph ingest mode \u2014 processes markdown, PDF, and images in your vault");
+            new import_obsidian16.Notice("Vault graph ingest mode \u2014 processes markdown, PDF, and images in your vault");
             break;
           case "none":
             if (this.graphGenerationMode) {
-              new import_obsidian14.Notice("Graph only mode enabled - extract entities from your text");
+              new import_obsidian16.Notice("Graph only mode enabled - extract entities from your text");
             } else {
               this.graphGenerationMode = true;
               this.graphGenerationToggle.checked = true;
               this.updateGraphGenerationLabel();
-              new import_obsidian14.Notice("Graph only mode enabled - extract entities from your text");
+              new import_obsidian16.Notice("Graph only mode enabled - extract entities from your text");
             }
             break;
         }
@@ -14607,11 +15180,11 @@ var ChatView = class extends import_obsidian14.ItemView {
       this.updateUploadButtonVisibility();
       this.updateUrlButtonVisibility();
       if (this.isGraphOnlyMode()) {
-        new import_obsidian14.Notice("Graph only mode enabled - extract entities from your text");
+        new import_obsidian16.Notice("Graph only mode enabled - extract entities from your text");
       } else if (this.graphGenerationMode) {
-        new import_obsidian14.Notice("Graph generation enabled");
+        new import_obsidian16.Notice("Graph generation enabled");
       } else {
-        new import_obsidian14.Notice("Graph generation disabled");
+        new import_obsidian16.Notice("Graph generation disabled");
       }
     });
     const entityGenLabel = this.entityGenContainer.createEl("label", {
@@ -14714,7 +15287,7 @@ var ChatView = class extends import_obsidian14.ItemView {
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
       if (!this.isGraphOnlyMode()) {
-        new import_obsidian14.Notice("File drop only available in graph generation mode");
+        new import_obsidian16.Notice("File drop only available in graph generation mode");
         return;
       }
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -14722,7 +15295,7 @@ var ChatView = class extends import_obsidian14.ItemView {
         return;
       }
       const dragManager = this.app.dragManager;
-      if (dragManager && dragManager.draggable && dragManager.draggable.type === "file" && dragManager.draggable.file instanceof import_obsidian14.TFile) {
+      if (dragManager && dragManager.draggable && dragManager.draggable.type === "file" && dragManager.draggable.file instanceof import_obsidian16.TFile) {
         await this.handleDroppedAbstractFile(dragManager.draggable.file);
         return;
       }
@@ -14730,7 +15303,7 @@ var ChatView = class extends import_obsidian14.ItemView {
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian14.TFile) {
+          if (abstractFile instanceof import_obsidian16.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             return;
           }
@@ -14936,7 +15509,7 @@ var ChatView = class extends import_obsidian14.ItemView {
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian14.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian16.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -14983,12 +15556,12 @@ var ChatView = class extends import_obsidian14.ItemView {
     const allowedExtensions = [".md", ".txt", ".pdf", ".docx", ".doc"];
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
     if (!allowedExtensions.includes(ext)) {
-      new import_obsidian14.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+      new import_obsidian16.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian14.Notice(`Attached: ${file.name}`);
+    new import_obsidian16.Notice(`Attached: ${file.name}`);
   }
   async handleDroppedFile(file) {
     if (!file)
@@ -14996,19 +15569,19 @@ var ChatView = class extends import_obsidian14.ItemView {
     const allowedExtensions = [".md", ".txt", ".pdf", ".docx", ".doc"];
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
     if (!allowedExtensions.includes(ext)) {
-      new import_obsidian14.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+      new import_obsidian16.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
       return;
     }
     try {
       this.inputEl.placeholder = `Extracting text from ${file.name}...`;
       this.inputEl.disabled = true;
-      new import_obsidian14.Notice(`Extracting text from ${file.name}...`);
+      new import_obsidian16.Notice(`Extracting text from ${file.name}...`);
       const text = await this.plugin.graphApiService.extractTextFromFile(file);
       this.appendExtractedText(text);
-      new import_obsidian14.Notice(`Text extracted from ${file.name}`);
+      new import_obsidian16.Notice(`Text extracted from ${file.name}`);
     } catch (error) {
       console.error("Drop file error:", error);
-      new import_obsidian14.Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian16.Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.inputEl.disabled = false;
       this.updateInputPlaceholder();
@@ -15023,12 +15596,12 @@ var ChatView = class extends import_obsidian14.ItemView {
       return;
     const allowedExtensions = ["md", "txt", "pdf", "docx", "doc"];
     if (!allowedExtensions.includes(file.extension)) {
-      new import_obsidian14.Notice(`File type .${file.extension} not supported.`);
+      new import_obsidian16.Notice(`File type .${file.extension} not supported.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian14.Notice(`Attached: ${file.name}`);
+    new import_obsidian16.Notice(`Attached: ${file.name}`);
   }
   /**
    * Render the attached files display.
@@ -15087,14 +15660,14 @@ var ChatView = class extends import_obsidian14.ItemView {
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian14.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian16.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian14.Notice(`Text extracted from URL`);
+      new import_obsidian16.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       console.error("URL extraction error:", error);
-      new import_obsidian14.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian16.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
       this.inputEl.disabled = false;
@@ -15109,7 +15682,7 @@ var ChatView = class extends import_obsidian14.ItemView {
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian14.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian16.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -15327,7 +15900,7 @@ var ChatView = class extends import_obsidian14.ItemView {
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian14.Notice("Failed to load conversation");
+      new import_obsidian16.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -15345,7 +15918,7 @@ var ChatView = class extends import_obsidian14.ItemView {
     this.vaultGraphIngestMode = false;
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian14.Notice("Started new conversation");
+    new import_obsidian16.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -15361,9 +15934,9 @@ var ChatView = class extends import_obsidian14.ItemView {
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian14.Notice("Conversation deleted");
+          new import_obsidian16.Notice("Conversation deleted");
         } else {
-          new import_obsidian14.Notice("Failed to delete conversation");
+          new import_obsidian16.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -15381,7 +15954,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian14.Notice("Conversation renamed");
+          new import_obsidian16.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -15415,7 +15988,7 @@ var ChatView = class extends import_obsidian14.ItemView {
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian14.MarkdownRenderer.render(
+      await import_obsidian16.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -15524,7 +16097,7 @@ var ChatView = class extends import_obsidian14.ItemView {
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian14.TFile) {
+              if (file instanceof import_obsidian16.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -15574,10 +16147,10 @@ var ChatView = class extends import_obsidian14.ItemView {
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian14.TFile) {
+                if (file instanceof import_obsidian16.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian14.Notice("Linked note file not found");
+                  new import_obsidian16.Notice("Linked note file not found");
                 }
               })();
             }
@@ -15640,7 +16213,7 @@ var ChatView = class extends import_obsidian14.ItemView {
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian14.TFile) {
+              if (file instanceof import_obsidian16.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -15809,11 +16382,11 @@ var ChatView = class extends import_obsidian14.ItemView {
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian14.TFile) {
+            if (file instanceof import_obsidian16.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian14.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian16.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian14.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian16.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -15925,7 +16498,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian14.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian16.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -16143,7 +16716,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian14.Notice("Task cancelled");
+        new import_obsidian16.Notice("Task cancelled");
       },
       () => {
       },
@@ -16174,7 +16747,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian14.Notice("Operation cancelled");
+        new import_obsidian16.Notice("Operation cancelled");
       },
       () => {
       },
@@ -16196,7 +16769,7 @@ var ChatView = class extends import_obsidian14.ItemView {
     }
     this.inputEl.value = "";
     if (!this.plugin.isAuthenticated()) {
-      new import_obsidian14.Notice("License key required for AI features. Please configure your license key in settings.");
+      new import_obsidian16.Notice("License key required for AI features. Please configure your license key in settings.");
       return;
     }
     let displayValue = value;
@@ -16224,7 +16797,7 @@ var ChatView = class extends import_obsidian14.ItemView {
           let text = "";
           if (attachment.extracted && attachment.content) {
             text = attachment.content;
-          } else if (attachment.file instanceof import_obsidian14.TFile) {
+          } else if (attachment.file instanceof import_obsidian16.TFile) {
             const ext = attachment.file.extension;
             if (["md", "txt"].includes(ext)) {
               text = await this.app.vault.read(attachment.file);
@@ -16262,7 +16835,7 @@ ${text}`);
           } else if (errorStr.includes("too large")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian14.Notice(userMessage, 5e3);
+          new import_obsidian16.Notice(userMessage, 5e3);
         }
       }
       if (extractedCount > 0) {
@@ -16280,9 +16853,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian14.Notice(`Extracted text from ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian16.Notice(`Extracted text from ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian14.Notice(`Extracted ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian16.Notice(`Extracted ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -16616,13 +17189,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian14.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian16.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian14.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian16.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -16680,7 +17253,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     }).style.marginTop = "0";
     if (plan.planSummary) {
       const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
-      import_obsidian14.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
+      import_obsidian16.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
     const allTools = [
       { id: "OSINT_SEARCH", icon: "\u{1F310}", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
@@ -16752,7 +17325,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
           selectedTools.push(toolId);
       });
       if (selectedTools.length === 0) {
-        new import_obsidian14.Notice("Please select at least one investigation module.");
+        new import_obsidian16.Notice("Please select at least one investigation module.");
         return;
       }
       executeBtn.disabled = true;
@@ -16903,7 +17476,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
           await this.processGraphGeneration(assistantIndex, aiResponse, query, aiResponse);
         } catch (graphError) {
           console.error("[OSINT Copilot] Graph generation from custom chat failed:", graphError);
-          new import_obsidian14.Notice("Graph generation failed, but the chat response was received successfully.");
+          new import_obsidian16.Notice("Graph generation failed, but the chat response was received successfully.");
         }
       }
     } catch (error) {
@@ -17067,7 +17640,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian14.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian16.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -17184,7 +17757,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian14.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian16.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -17636,14 +18209,14 @@ ${aiResponse}`;
           await this.processGraphGeneration(messageIndex, reportData.content, description, finalContent);
         } catch (graphError) {
           console.error("[OSINT Copilot] Graph generation from report failed:", graphError);
-          new import_obsidian14.Notice("Graph generation failed, but the report was saved successfully.");
+          new import_obsidian16.Notice("Graph generation failed, but the report was saved successfully.");
         }
       }
       const file = this.app.vault.getAbstractFileByPath(fileName);
-      if (file instanceof import_obsidian14.TFile) {
+      if (file instanceof import_obsidian16.TFile) {
         await this.app.workspace.getLeaf().openFile(file);
       }
-      new import_obsidian14.Notice(`Companies&People saved to ${fileName}`);
+      new import_obsidian16.Notice(`Companies&People saved to ${fileName}`);
     } catch (error) {
       this.activeAbortControllers.delete(messageIndex);
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -17673,7 +18246,7 @@ ${aiResponse}`;
 
 **Error:** ${userMessage}${suggestion}`;
       await this.renderMessages();
-      new import_obsidian14.Notice(`Companies&People generation failed: ${userMessage}`);
+      new import_obsidian16.Notice(`Companies&People generation failed: ${userMessage}`);
     }
   }
   /**
@@ -17703,7 +18276,7 @@ ${aiResponse}`;
 
 Please configure your API key in Settings \u2192 OSINT Copilot \u2192 API Key.`;
         await this.renderMessages();
-        new import_obsidian14.Notice("License key required for leak search. Configure in settings.");
+        new import_obsidian16.Notice("License key required for leak search. Configure in settings.");
         return;
       }
       updateProgress("Detecting entities in query...", 20);
@@ -17774,7 +18347,7 @@ Please configure your API key in Settings \u2192 OSINT Copilot \u2192 API Key.`;
 
 **Error:** ${errorMessage}${suggestion}`;
       await this.renderMessages();
-      new import_obsidian14.Notice(`Digital Footprint failed: ${errorMessage}`);
+      new import_obsidian16.Notice(`Digital Footprint failed: ${errorMessage}`);
     }
   }
   /**
@@ -17933,7 +18506,7 @@ Explanation: ${result.explanation}
       try {
         updateProgress("Connecting to dark web API...", 10);
         const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/investigate`;
-        const response = await (0, import_obsidian14.requestUrl)({
+        const response = await (0, import_obsidian16.requestUrl)({
           url: endpoint,
           method: "POST",
           headers: {
@@ -18074,7 +18647,7 @@ The job may still be processing on the server. You can try checking the status l
       }
       try {
         const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/status/${jobId}`;
-        const response = await (0, import_obsidian14.requestUrl)({
+        const response = await (0, import_obsidian16.requestUrl)({
           url: endpoint,
           method: "GET",
           headers: {
@@ -18231,7 +18804,7 @@ Please check your connection and try again.`,
     try {
       const cleanJobId = jobId.startsWith("darkweb_") ? jobId.replace("darkweb_", "") : jobId;
       const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/summary/${cleanJobId}`;
-      const response = await (0, import_obsidian14.requestUrl)({
+      const response = await (0, import_obsidian16.requestUrl)({
         url: endpoint,
         method: "GET",
         headers: {
@@ -18275,7 +18848,7 @@ ${summary.summary}
       let savedFileName = "";
       try {
         savedFileName = await this.plugin.saveDarkWebReportToVault(reportContent, query, jobId);
-        new import_obsidian14.Notice(`Dark web report saved to ${savedFileName}`);
+        new import_obsidian16.Notice(`Dark web report saved to ${savedFileName}`);
       } catch (saveError) {
         console.error("Error saving dark web report to vault:", saveError);
       }
@@ -18310,16 +18883,16 @@ ${summary.summary}
           await this.processGraphGeneration(messageIndex, reportContent, query, displayText);
         } catch (graphError) {
           console.error("[OSINT Copilot] Graph generation from dark web results failed:", graphError);
-          new import_obsidian14.Notice("Graph generation failed, but the report was saved successfully.");
+          new import_obsidian16.Notice("Graph generation failed, but the report was saved successfully.");
         }
       }
       if (savedFileName) {
         const file = this.app.vault.getAbstractFileByPath(savedFileName);
-        if (file instanceof import_obsidian14.TFile) {
+        if (file instanceof import_obsidian16.TFile) {
           await this.app.workspace.getLeaf().openFile(file);
         }
       }
-      new import_obsidian14.Notice("Dark web investigation completed!");
+      new import_obsidian16.Notice("Dark web investigation completed!");
     } catch (error) {
       console.error(`[OSINT Copilot] Failed to fetch dark web results. Job ID: ${jobId}, Error:`, error);
       this.chatHistory[messageIndex] = {
@@ -18345,7 +18918,7 @@ Please try again or contact support if the issue persists.`,
     this.pollingIntervals.clear();
   }
 };
-var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian16.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /**
@@ -18365,35 +18938,35 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian14.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian14.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+    new import_obsidian16.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian16.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian14.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian16.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian14.Notice("Update successful! Reloading plugin...");
+            new import_obsidian16.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian14.Notice("Failed to download update. Check console for details.");
+            new import_obsidian16.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian14.Notice("An error occurred during update.");
+          new import_obsidian16.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian16.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -18402,7 +18975,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         }
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian16.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -18411,7 +18984,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       text.inputEl.setCssProps({ width: "100%" });
     });
     if (this.plugin.settings.permissions && this.plugin.settings.permissions.allow_custom_chat_config) {
-      new import_obsidian14.Setting(containerEl).setName("Custom chat configuration").setHeading();
+      new import_obsidian16.Setting(containerEl).setName("Custom chat configuration").setHeading();
       containerEl.createEl("p", {
         text: "Configure LLM providers for the 'Custom chat' mode. Add multiple checkpoints (e.g., local models, different providers) and select them in the chat view.",
         // eslint-disable-line obsidianmd/ui/sentence-case
@@ -18478,7 +19051,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
           const typeLabel = checkpoint.type === "mindsdb" ? "MindsDB" : "OpenAI";
           infoEl.createEl("span", { text: ` (${typeLabel}: ${checkpoint.model})`, cls: "setting-item-description" });
           infoEl.createEl("div", { text: checkpoint.url, cls: "setting-item-description" }).style.fontSize = "0.8em";
-          new import_obsidian14.ButtonComponent(checkpointEl).setIcon("pencil").setTooltip("Edit").onClick(() => {
+          new import_obsidian16.ButtonComponent(checkpointEl).setIcon("pencil").setTooltip("Edit").onClick(() => {
             editingId = checkpoint.id;
             newName = checkpoint.name;
             newUrl = checkpoint.url;
@@ -18501,7 +19074,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
             if (actionButton)
               actionButton.setCta();
           });
-          new import_obsidian14.ButtonComponent(checkpointEl).setIcon("trash").setTooltip("Delete").setWarning().onClick(async () => {
+          new import_obsidian16.ButtonComponent(checkpointEl).setIcon("trash").setTooltip("Delete").setWarning().onClick(async () => {
             if (confirm(`Delete checkpoint "${checkpoint.name}"?`)) {
               this.plugin.settings.customCheckpoints.splice(index, 1);
               await this.plugin.saveSettings();
@@ -18514,11 +19087,11 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         });
       };
       renderCheckpoints();
-      new import_obsidian14.Setting(addSection).setName("Name").setDesc("Display name").addText((text) => {
+      new import_obsidian16.Setting(addSection).setName("Name").setDesc("Display name").addText((text) => {
         nameInput = text;
         text.setPlaceholder("My custom LLM").onChange((v) => newName = v);
       });
-      new import_obsidian14.Setting(addSection).setName("Provider type").setDesc("Protocol to use").addDropdown((dropdown) => {
+      new import_obsidian16.Setting(addSection).setName("Provider type").setDesc("Protocol to use").addDropdown((dropdown) => {
         typeDropdown = dropdown;
         dropdown.addOption("openai", "OpenAI compatible (default)").addOption("mindsdb", "MindsDB (SQL via HTTP)").setValue(newType).onChange((v) => {
           const val = v;
@@ -18530,23 +19103,23 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
           }
         });
       });
-      new import_obsidian14.Setting(addSection).setName("API URL").setDesc("Base URL. For MindsDB, use the root (e.g. http://127.0.0.1:47334). For OpenAI, the full path is constructed automatically unless specified.").addText((text) => {
+      new import_obsidian16.Setting(addSection).setName("API URL").setDesc("Base URL. For MindsDB, use the root (e.g. http://127.0.0.1:47334). For OpenAI, the full path is constructed automatically unless specified.").addText((text) => {
         urlInput = text;
         text.setValue(newUrl).setPlaceholder("http://localhost:11434/v1").onChange((v) => newUrl = v);
       });
-      new import_obsidian14.Setting(addSection).setName("API key").setDesc("Optional").addText((text) => {
+      new import_obsidian16.Setting(addSection).setName("API key").setDesc("Optional").addText((text) => {
         keyInput = text;
         text.setPlaceholder("sk-...").onChange((v) => newKey = v);
       });
-      new import_obsidian14.Setting(addSection).setName("Model / agent name").setDesc("Model ID or agent name").addText((text) => {
+      new import_obsidian16.Setting(addSection).setName("Model / agent name").setDesc("Model ID or agent name").addText((text) => {
         modelInput = text;
         text.setPlaceholder("llama3 or my_agent").onChange((v) => newModel = v);
       });
-      new import_obsidian14.Setting(addSection).addButton((btn) => {
+      new import_obsidian16.Setting(addSection).addButton((btn) => {
         actionButton = btn;
         btn.setButtonText("Add checkpoint").setCta().onClick(async () => {
           if (!newName || !newUrl || !newModel) {
-            new import_obsidian14.Notice("Name, URL, and model are required.");
+            new import_obsidian16.Notice("Name, URL, and model are required.");
             return;
           }
           if (editingId) {
@@ -18560,7 +19133,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
                 model: newModel,
                 type: newType
               };
-              new import_obsidian14.Notice("Checkpoint updated!");
+              new import_obsidian16.Notice("Checkpoint updated!");
             }
           } else {
             this.plugin.settings.customCheckpoints.push({
@@ -18571,26 +19144,26 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
               model: newModel,
               type: newType
             });
-            new import_obsidian14.Notice("Checkpoint added!");
+            new import_obsidian16.Notice("Checkpoint added!");
           }
           await this.plugin.saveSettings();
           renderCheckpoints();
           resetForm();
         });
       });
-      new import_obsidian14.Setting(addSection).addButton((btn) => btn.setButtonText("Clear / cancel").onClick(() => {
+      new import_obsidian16.Setting(addSection).addButton((btn) => btn.setButtonText("Clear / cancel").onClick(() => {
         resetForm();
       }));
     } else {
-      new import_obsidian14.Setting(containerEl).setName("Custom chat configuration").setHeading();
+      new import_obsidian16.Setting(containerEl).setName("Custom chat configuration").setHeading();
       containerEl.createEl("p", {
         text: "This feature is available in 'Plugin own data' plan.",
         // eslint-disable-line obsidianmd/ui/sentence-case
         cls: "setting-item-description"
       }).style.color = "var(--text-muted)";
     }
-    new import_obsidian14.Setting(containerEl).setName("Backend API").setHeading();
-    const dashboardSetting = new import_obsidian14.Setting(containerEl).setName("Account dashboard").setDesc("View your API usage, quota, and manage your subscription");
+    new import_obsidian16.Setting(containerEl).setName("Backend API").setHeading();
+    const dashboardSetting = new import_obsidian16.Setting(containerEl).setName("Account dashboard").setDesc("View your API usage, quota, and manage your subscription");
     const linkEl = dashboardSetting.controlEl.createEl("a", {
       text: "Open dashboard \u2192",
       href: "https://osint-copilot.com/dashboard/",
@@ -18601,7 +19174,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       "text-decoration": "none",
       "font-weight": "500"
     });
-    new import_obsidian14.Setting(containerEl).setName("License key").setDesc("License key for all operations (chat, reports, and investigations)").addText((text) => {
+    new import_obsidian16.Setting(containerEl).setName("License key").setDesc("License key for all operations (chat, reports, and investigations)").addText((text) => {
       text.setPlaceholder("Enter your license key").setValue((this.plugin.settings.reportApiKey || "").trim()).onChange(async (value) => {
         this.plugin.settings.reportApiKey = value.trim();
         await this.plugin.saveSettings();
@@ -18753,13 +19326,13 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
         }
       })();
     }
-    new import_obsidian14.Setting(containerEl).setName("Companies&people output directory").setDesc("Directory where generated reports will be saved").addText(
+    new import_obsidian16.Setting(containerEl).setName("Companies&people output directory").setDesc("Directory where generated reports will be saved").addText(
       (text) => text.setPlaceholder("Reports").setValue(this.plugin.settings.reportOutputDir).onChange(async (value) => {
         this.plugin.settings.reportOutputDir = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian16.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(".osint-copilot/conversations").setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         this.plugin.settings.conversationFolder = value;
         this.plugin.conversationService.setBasePath(value);
@@ -18772,21 +19345,21 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       cls: "setting-item-description"
     });
     noteP.setCssProps({ color: "var(--text-muted)" });
-    new import_obsidian14.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian14.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian16.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian16.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian16.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("Main Copilot").setHeading();
-    new import_obsidian14.Setting(containerEl).setName("System Prompt").setDesc("The core instructions that guide the Main Copilot's decision making.").addTextArea((text) => {
+    new import_obsidian16.Setting(containerEl).setName("Main Copilot").setHeading();
+    new import_obsidian16.Setting(containerEl).setName("System Prompt").setDesc("The core instructions that guide the Main Copilot's decision making.").addTextArea((text) => {
       text.setPlaceholder("You are the Main Copilot...").setValue(this.plugin.settings.orchestrationPrompt).onChange(async (value) => {
         this.plugin.settings.orchestrationPrompt = value;
         await this.plugin.saveSettings();
@@ -18794,7 +19367,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       text.inputEl.rows = 15;
       text.inputEl.cols = 50;
     });
-    new import_obsidian14.Setting(containerEl).setName("Provider").setDesc("Select the LLM provider for the Main Copilot.").addDropdown((dropdown) => {
+    new import_obsidian16.Setting(containerEl).setName("Provider").setDesc("Select the LLM provider for the Main Copilot.").addDropdown((dropdown) => {
       dropdown.addOption("osint-copilot", "OSINT Copilot API (Default)").addOption("remote", "OpenAI / Custom API").addOption("local", "Local Model (e.g. LM Studio/Ollama)").setValue(this.plugin.settings.orchestrationProvider).onChange(async (value) => {
         this.plugin.settings.orchestrationProvider = value;
         await this.plugin.saveSettings();
@@ -18802,20 +19375,20 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       });
     });
     if (this.plugin.settings.orchestrationProvider !== "osint-copilot") {
-      new import_obsidian14.Setting(containerEl).setName("API Endpoint URL").setDesc("The base URL for the API (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)").addText(
+      new import_obsidian16.Setting(containerEl).setName("API Endpoint URL").setDesc("The base URL for the API (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)").addText(
         (text) => text.setPlaceholder("http://localhost:11434/v1").setValue(this.plugin.settings.orchestrationLocalUrl).onChange(async (value) => {
           this.plugin.settings.orchestrationLocalUrl = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian14.Setting(containerEl).setName("API Key").setDesc("Leave blank for local unauthenticated models").addText((text) => {
+      new import_obsidian16.Setting(containerEl).setName("API Key").setDesc("Leave blank for local unauthenticated models").addText((text) => {
         text.setPlaceholder("sk-...").setValue(this.plugin.settings.orchestrationApiKey).onChange(async (value) => {
           this.plugin.settings.orchestrationApiKey = value;
           await this.plugin.saveSettings();
         });
         text.inputEl.type = "password";
       });
-      new import_obsidian14.Setting(containerEl).setName("Model Name").setDesc("The exact string identifier for the model (e.g., gpt-4o, llama3)").addText(
+      new import_obsidian16.Setting(containerEl).setName("Model Name").setDesc("The exact string identifier for the model (e.g., gpt-4o, llama3)").addText(
         (text) => text.setPlaceholder("gpt-5.1").setValue(this.plugin.settings.orchestrationModel).onChange(async (value) => {
           this.plugin.settings.orchestrationModel = value;
           await this.plugin.saveSettings();
@@ -18834,7 +19407,7 @@ var VaultAISettingTab = class extends import_obsidian14.PluginSettingTab {
       return null;
     }
     try {
-      const response = await (0, import_obsidian14.requestUrl)({
+      const response = await (0, import_obsidian16.requestUrl)({
         url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
         method: "GET",
         headers: {
