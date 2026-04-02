@@ -477,10 +477,7 @@ Respond with this exact JSON structure:
     }
 
     private static readonly VAULT_INGEST_MAX_FILES = 200;
-    private static readonly VAULT_INGEST_MAX_CHARS_PER_FILE = 60000;
-    /** Smaller chunks so each /process-text finishes before CDN/proxy timeouts (e.g. Cloudflare ~100s). */
-    private static readonly VAULT_INGEST_CHUNK_SIZE = 400;
-    private static readonly VAULT_INGEST_CHUNK_THRESHOLD = 650;
+    private static readonly VAULT_INGEST_BATCH_SIZE = 5;
     /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
     private static readonly VAULT_INGEST_EXTENSIONS = new Set([
         'md',
@@ -557,9 +554,9 @@ Respond with this exact JSON structure:
     }
 
     /**
-     * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
-     * extract text (API for binary), run processTextInChunks per file with smaller chunks,
-     * accumulate @@ commands (and report progress with the growing list for UI).
+     * Walk ingestible vault files, send them in batches to the evidence
+     * analysis endpoint (server-side parallel classification + extraction),
+     * and auto-apply graph commands as each batch completes.
      */
     private async runVaultGraphIngest(
         onFileProgress: (
@@ -576,7 +573,9 @@ Respond with this exact JSON structure:
         truncatedFiles: number;
         extractFailures: number;
     }> {
-        const graphCommands: string[] = [];
+        const { EvidenceService } = await import("./evidence-service");
+        const svc = new EvidenceService(this.plugin);
+
         const vaultFiles = this.plugin.app.vault.getFiles();
         const files = vaultFiles
             .filter((f): f is TFile => f instanceof TFile)
@@ -585,154 +584,71 @@ Respond with this exact JSON structure:
             .sort((a, b) => a.path.localeCompare(b.path));
 
         const maxFiles = Math.min(files.length, OrchestrationService.VAULT_INGEST_MAX_FILES);
-        let truncatedFiles = 0;
+        const filesToProcess = files.slice(0, maxFiles);
+        const BATCH = OrchestrationService.VAULT_INGEST_BATCH_SIZE;
+        const totalBatches = Math.ceil(filesToProcess.length / BATCH);
+
+        const graphCommands: string[] = [];
+        let filesProcessed = 0;
         let extractFailures = 0;
 
-        const percentFor = (fileIndexZeroBased: number, chunkNum?: number, totalChunks?: number): number => {
-            const f = maxFiles > 0 ? (fileIndexZeroBased + 1) / maxFiles : 1;
-            let frac = f;
-            if (chunkNum !== undefined && totalChunks !== undefined && totalChunks > 1) {
-                frac =
-                    (fileIndexZeroBased + (chunkNum - 1) / totalChunks) / Math.max(maxFiles, 1);
-            }
-            return Math.min(94, 5 + Math.floor(85 * frac));
-        };
+        for (let b = 0; b < totalBatches; b++) {
+            if (abortSignal?.aborted) break;
 
-        const emit = (
-            message: string,
-            fileIndexZeroBased: number,
-            chunkNum?: number,
-            totalChunks?: number,
-            extra?: { appliedLine?: string }
-        ) => {
-            onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
-                ...(extra?.appliedLine ? { vaultIngestAppliedLine: extra.appliedLine } : {}),
-            });
-        };
+            const batchFiles = filesToProcess.slice(b * BATCH, (b + 1) * BATCH);
+            const batchLabel = `Batch ${b + 1}/${totalBatches}`;
+            const basePct = Math.floor((b / totalBatches) * 90) + 5;
 
-        const applyAndEmitNewCommands = async (
-            newCmds: string[],
-            filePath: string,
-            fileIndexZeroBased: number,
-            chunkIndex: number,
-            totalChunks: number
-        ) => {
-            graphCommands.push(...newCmds);
-            for (const cmd of newCmds) {
-                const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
-                for (const line of lines) {
-                    emit(
-                        `${filePath} (${chunkIndex}/${totalChunks})`,
-                        fileIndexZeroBased,
-                        chunkIndex,
-                        totalChunks,
-                        { appliedLine: line }
-                    );
-                }
-            }
-        };
+            onFileProgress(
+                `${batchLabel}: sending ${batchFiles.length} files to server…`,
+                basePct,
+            );
 
-        for (let i = 0; i < maxFiles; i++) {
-            if (abortSignal?.aborted) {
-                break;
-            }
-            const file = files[i];
-            emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
-
-            const ext = (file.extension || '').toLowerCase();
-            let content: string;
-
-            if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
-                content = await this.plugin.app.vault.cachedRead(file);
-                if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-                    content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-                    truncatedFiles++;
-                }
-            } else {
-                try {
-                    const buf = await this.plugin.app.vault.readBinary(file);
-                    const blob = new Blob([buf], { type: this.mimeTypeForIngestExtension(ext) });
-                    const syntheticFile = new File([blob], file.name, {
-                        type: this.mimeTypeForIngestExtension(ext),
-                    });
-                    content = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
-                    if (content.length > OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-                        content = content.substring(0, OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-                        truncatedFiles++;
-                    }
-                } catch (err) {
-                    extractFailures++;
-                    console.error(`[OrchestrationService] extract failed for ${file.path}:`, err);
-                    continue;
-                }
-            }
-
-            if (!content || !content.trim()) {
+            let batchCommands: string[];
+            try {
+                batchCommands = await svc.analyze(
+                    batchFiles,
+                    (msg, pct) => {
+                        if (abortSignal?.aborted) return;
+                        const scaled = basePct + Math.floor((pct / 100) * (90 / totalBatches));
+                        onFileProgress(`${batchLabel}: ${msg}`, Math.min(scaled, 94));
+                    },
+                );
+            } catch (e) {
+                if (e instanceof DOMException && e.name === "AbortError") break;
+                console.error(`[OrchestrationService] Evidence batch ${b + 1} failed:`, e);
+                extractFailures += batchFiles.length;
                 continue;
             }
 
-            const block = `Source file: ${file.path}\n\n${content}`;
-            let extraction: Awaited<ReturnType<GraphApiService["processTextInChunks"]>>;
-            try {
-                extraction = await this.plugin.graphApiService.processTextInChunks(
-                    block,
-                    this.plugin.entityManager.getAllEntities(),
-                    new Date().toISOString(),
-                    (chunkNum, totalChunks, msg) => {
-                        emit(`${file.path} — ${msg}`, i, chunkNum, totalChunks);
-                    },
-                    undefined,
-                    abortSignal,
-                    false,
-                    {
-                        chunkSize: OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
-                        chunkThreshold: OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
-                        onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
-                            graphCommands.push(...this.operationsToGraphCommands(operations));
-                            emit(
-                                `Graph extraction: ${file.path} — chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
-                                i,
-                                chunkIndex,
-                                totalChunks
-                            );
-                        },
-                    }
-                );
-            } catch (e) {
-                if (e instanceof DOMException && e.name === "AbortError") {
-                    break;
+            for (const cmd of batchCommands) {
+                const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
+                graphCommands.push(cmd);
+                for (const line of lines) {
+                    onFileProgress(
+                        `${batchLabel}: ${line}`,
+                        basePct,
+                        { vaultIngestAppliedLine: line },
+                    );
                 }
-                throw e;
             }
 
-            if (extraction.success) {
-                emit(
-                    `Graph extraction: ${file.path} — done (${graphCommands.length} command(s) so far)`,
-                    i
-                );
-            } else {
-                emit(
-                    `Graph extraction skipped/failed: ${file.path} — ${extraction.error || "no entities"}`,
-                    i
-                );
-            }
+            filesProcessed += batchFiles.length;
         }
 
         const summary =
             (abortSignal?.aborted ? "**Cancelled by user.** " : "") +
-            `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}).` +
-            (truncatedFiles > 0
-                ? ` ${truncatedFiles} file(s) were truncated to ${OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.`
-                : "") +
-            (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") +
-            ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
+            `Processed **${filesProcessed}** file(s) out of **${files.length}** eligible (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}), ` +
+            `sent in **${totalBatches}** batch(es) of up to ${BATCH} files (server-side parallel analysis). ` +
+            (extractFailures > 0 ? `**${extractFailures}** file(s) failed. ` : "") +
+            `**${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph.`;
 
         return {
             summary,
             graphCommands,
-            filesProcessed: maxFiles,
+            filesProcessed,
             filesTotal: files.length,
-            truncatedFiles,
+            truncatedFiles: 0,
             extractFailures,
         };
     }

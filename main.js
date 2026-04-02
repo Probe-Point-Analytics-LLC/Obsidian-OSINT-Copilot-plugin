@@ -25,214 +25,16 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/modals/evidence-picker-modal.ts
-var evidence_picker_modal_exports = {};
-__export(evidence_picker_modal_exports, {
-  EvidencePickerModal: () => EvidencePickerModal
-});
-function humanSize(bytes) {
-  if (bytes < 1024)
-    return `${bytes} B`;
-  if (bytes < 1024 * 1024)
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-var import_obsidian12, EVIDENCE_EXTENSIONS, TYPE_ICONS, EvidencePickerModal;
-var init_evidence_picker_modal = __esm({
-  "src/modals/evidence-picker-modal.ts"() {
-    "use strict";
-    import_obsidian12 = require("obsidian");
-    EVIDENCE_EXTENSIONS = /* @__PURE__ */ new Set([
-      "md",
-      "markdown",
-      "txt",
-      "pdf",
-      "png",
-      "jpg",
-      "jpeg",
-      "webp",
-      "gif",
-      "doc",
-      "docx"
-    ]);
-    TYPE_ICONS = {
-      pdf: "\u{1F4C4}",
-      png: "\u{1F5BC}\uFE0F",
-      jpg: "\u{1F5BC}\uFE0F",
-      jpeg: "\u{1F5BC}\uFE0F",
-      webp: "\u{1F5BC}\uFE0F",
-      gif: "\u{1F5BC}\uFE0F",
-      doc: "\u{1F4DD}",
-      docx: "\u{1F4DD}",
-      md: "\u{1F4CB}",
-      markdown: "\u{1F4CB}",
-      txt: "\u{1F4CB}"
-    };
-    EvidencePickerModal = class extends import_obsidian12.Modal {
-      constructor(app) {
-        super(app);
-        this.selected = /* @__PURE__ */ new Set();
-        this.allFiles = [];
-      }
-      /** Open the modal and return the user's selection (or null on cancel). */
-      pick() {
-        return new Promise((resolve) => {
-          this.resolve = resolve;
-          this.open();
-        });
-      }
-      onOpen() {
-        const { contentEl } = this;
-        contentEl.addClass("osint-evidence-picker");
-        this.allFiles = this.app.vault.getFiles().filter((f) => f instanceof import_obsidian12.TFile).filter((f) => EVIDENCE_EXTENSIONS.has((f.extension || "").toLowerCase())).filter((f) => {
-          const p = f.path.replace(/\\/g, "/").toLowerCase();
-          return !p.startsWith(".obsidian/") && !p.includes("/.obsidian/") && !p.startsWith(".git/") && !p.includes("/.git/");
-        }).sort((a, b) => a.path.localeCompare(b.path));
-        contentEl.createEl("h2", { text: "Analyze vault evidence" });
-        const desc = contentEl.createEl("p", { cls: "setting-item-description" });
-        desc.setText(`${this.allFiles.length} evidence files found. Select files to classify and extract structured data.`);
-        const controls = contentEl.createDiv({ cls: "osint-evidence-controls" });
-        controls.setCssProps({ display: "flex", gap: "8px", "margin-bottom": "12px" });
-        const btnAll = controls.createEl("button", { text: "Select all", cls: "mod-muted" });
-        btnAll.addEventListener("click", () => this.toggleAll(true));
-        const btnNone = controls.createEl("button", { text: "Deselect all", cls: "mod-muted" });
-        btnNone.addEventListener("click", () => this.toggleAll(false));
-        const countEl = controls.createSpan({ cls: "osint-evidence-count" });
-        countEl.setCssProps({ "margin-left": "auto", "align-self": "center", "font-size": "0.85em", color: "var(--text-muted)" });
-        this.updateCount(countEl);
-        const listContainer = contentEl.createDiv({ cls: "osint-evidence-list" });
-        listContainer.setCssProps({
-          "max-height": "400px",
-          "overflow-y": "auto",
-          border: "1px solid var(--background-modifier-border)",
-          "border-radius": "6px",
-          padding: "8px"
-        });
-        const grouped = this.groupByFolder(this.allFiles);
-        for (const [folder, files] of grouped) {
-          const folderEl = listContainer.createDiv({ cls: "osint-evidence-folder" });
-          folderEl.setCssProps({ "margin-bottom": "6px" });
-          const folderHeader = folderEl.createDiv();
-          folderHeader.setCssProps({
-            display: "flex",
-            "align-items": "center",
-            gap: "6px",
-            "font-weight": "600",
-            "font-size": "0.85em",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            "margin-bottom": "2px"
-          });
-          folderHeader.createSpan({ text: "\u{1F4C1}" });
-          folderHeader.createSpan({ text: folder || "(root)" });
-          const folderCountSpan = folderHeader.createSpan({ text: ` (${files.length})` });
-          folderCountSpan.setCssProps({ "font-weight": "400" });
-          folderHeader.addEventListener("click", () => {
-            const allChecked = files.every((f) => this.selected.has(f.path));
-            for (const f of files) {
-              if (allChecked)
-                this.selected.delete(f.path);
-              else
-                this.selected.add(f.path);
-            }
-            this.refreshCheckboxes(listContainer);
-            this.updateCount(countEl);
-          });
-          for (const file of files) {
-            const row = folderEl.createEl("label", { cls: "osint-evidence-row" });
-            row.setCssProps({
-              display: "flex",
-              "align-items": "center",
-              gap: "6px",
-              padding: "3px 4px",
-              cursor: "pointer",
-              "border-radius": "4px"
-            });
-            const cb = row.createEl("input");
-            cb.type = "checkbox";
-            cb.checked = this.selected.has(file.path);
-            cb.dataset.path = file.path;
-            cb.addEventListener("change", () => {
-              if (cb.checked)
-                this.selected.add(file.path);
-              else
-                this.selected.delete(file.path);
-              this.updateCount(countEl);
-            });
-            const ext = (file.extension || "").toLowerCase();
-            row.createSpan({ text: TYPE_ICONS[ext] || "\u{1F4CE}" });
-            const nameSpan = row.createSpan({ text: file.name });
-            nameSpan.setCssProps({ flex: "1" });
-            const sizeSpan = row.createSpan({ text: humanSize(file.stat.size) });
-            sizeSpan.setCssProps({ "font-size": "0.8em", color: "var(--text-faint)" });
-          }
-        }
-        const actions = contentEl.createDiv({ cls: "osint-evidence-actions" });
-        actions.setCssProps({ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-top": "16px" });
-        const cancelBtn = actions.createEl("button", { text: "Cancel" });
-        cancelBtn.addEventListener("click", () => {
-          this.resolve(null);
-          this.close();
-        });
-        const analyzeBtn = actions.createEl("button", { text: "Analyze selected", cls: "mod-cta" });
-        analyzeBtn.addEventListener("click", () => {
-          const picked = this.allFiles.filter((f) => this.selected.has(f.path));
-          this.resolve({ files: picked });
-          this.close();
-        });
-      }
-      onClose() {
-        this.contentEl.empty();
-      }
-      toggleAll(checked) {
-        if (checked) {
-          for (const f of this.allFiles)
-            this.selected.add(f.path);
-        } else {
-          this.selected.clear();
-        }
-        const cbs = this.contentEl.querySelectorAll("input[type=checkbox][data-path]");
-        cbs.forEach((cb) => {
-          cb.checked = checked;
-        });
-        const countEl = this.contentEl.querySelector(".osint-evidence-count");
-        if (countEl)
-          this.updateCount(countEl);
-      }
-      refreshCheckboxes(container) {
-        const cbs = container.querySelectorAll("input[type=checkbox][data-path]");
-        cbs.forEach((cb) => {
-          cb.checked = this.selected.has(cb.dataset.path || "");
-        });
-      }
-      updateCount(el) {
-        el.setText(`${this.selected.size} / ${this.allFiles.length} selected`);
-      }
-      groupByFolder(files) {
-        const map = /* @__PURE__ */ new Map();
-        for (const f of files) {
-          const parts = f.path.split("/");
-          const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
-          if (!map.has(folder))
-            map.set(folder, []);
-          map.get(folder).push(f);
-        }
-        return map;
-      }
-    };
-  }
-});
-
 // src/services/evidence-service.ts
 var evidence_service_exports = {};
 __export(evidence_service_exports, {
   EvidenceService: () => EvidenceService
 });
-var import_obsidian13, MAX_FILE_SIZE, EvidenceService;
+var import_obsidian12, MAX_FILE_SIZE, EvidenceService;
 var init_evidence_service = __esm({
   "src/services/evidence-service.ts"() {
     "use strict";
-    import_obsidian13 = require("obsidian");
+    import_obsidian12 = require("obsidian");
     MAX_FILE_SIZE = 10 * 1024 * 1024;
     EvidenceService = class {
       constructor(plugin) {
@@ -282,7 +84,7 @@ var init_evidence_service = __esm({
         let brief = null;
         let doneEvent = null;
         try {
-          const resp = await (0, import_obsidian13.requestUrl)({
+          const resp = await (0, import_obsidian12.requestUrl)({
             url: `${baseUrl}/api/evidence/analyze`,
             method: "POST",
             headers: {
@@ -485,6 +287,204 @@ var init_evidence_service = __esm({
           txt: "text/plain"
         };
         return map[ext] || "application/octet-stream";
+      }
+    };
+  }
+});
+
+// src/modals/evidence-picker-modal.ts
+var evidence_picker_modal_exports = {};
+__export(evidence_picker_modal_exports, {
+  EvidencePickerModal: () => EvidencePickerModal
+});
+function humanSize(bytes) {
+  if (bytes < 1024)
+    return `${bytes} B`;
+  if (bytes < 1024 * 1024)
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+var import_obsidian13, EVIDENCE_EXTENSIONS, TYPE_ICONS, EvidencePickerModal;
+var init_evidence_picker_modal = __esm({
+  "src/modals/evidence-picker-modal.ts"() {
+    "use strict";
+    import_obsidian13 = require("obsidian");
+    EVIDENCE_EXTENSIONS = /* @__PURE__ */ new Set([
+      "md",
+      "markdown",
+      "txt",
+      "pdf",
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "gif",
+      "doc",
+      "docx"
+    ]);
+    TYPE_ICONS = {
+      pdf: "\u{1F4C4}",
+      png: "\u{1F5BC}\uFE0F",
+      jpg: "\u{1F5BC}\uFE0F",
+      jpeg: "\u{1F5BC}\uFE0F",
+      webp: "\u{1F5BC}\uFE0F",
+      gif: "\u{1F5BC}\uFE0F",
+      doc: "\u{1F4DD}",
+      docx: "\u{1F4DD}",
+      md: "\u{1F4CB}",
+      markdown: "\u{1F4CB}",
+      txt: "\u{1F4CB}"
+    };
+    EvidencePickerModal = class extends import_obsidian13.Modal {
+      constructor(app) {
+        super(app);
+        this.selected = /* @__PURE__ */ new Set();
+        this.allFiles = [];
+      }
+      /** Open the modal and return the user's selection (or null on cancel). */
+      pick() {
+        return new Promise((resolve) => {
+          this.resolve = resolve;
+          this.open();
+        });
+      }
+      onOpen() {
+        const { contentEl } = this;
+        contentEl.addClass("osint-evidence-picker");
+        this.allFiles = this.app.vault.getFiles().filter((f) => f instanceof import_obsidian13.TFile).filter((f) => EVIDENCE_EXTENSIONS.has((f.extension || "").toLowerCase())).filter((f) => {
+          const p = f.path.replace(/\\/g, "/").toLowerCase();
+          return !p.startsWith(".obsidian/") && !p.includes("/.obsidian/") && !p.startsWith(".git/") && !p.includes("/.git/");
+        }).sort((a, b) => a.path.localeCompare(b.path));
+        contentEl.createEl("h2", { text: "Analyze vault evidence" });
+        const desc = contentEl.createEl("p", { cls: "setting-item-description" });
+        desc.setText(`${this.allFiles.length} evidence files found. Select files to classify and extract structured data.`);
+        const controls = contentEl.createDiv({ cls: "osint-evidence-controls" });
+        controls.setCssProps({ display: "flex", gap: "8px", "margin-bottom": "12px" });
+        const btnAll = controls.createEl("button", { text: "Select all", cls: "mod-muted" });
+        btnAll.addEventListener("click", () => this.toggleAll(true));
+        const btnNone = controls.createEl("button", { text: "Deselect all", cls: "mod-muted" });
+        btnNone.addEventListener("click", () => this.toggleAll(false));
+        const countEl = controls.createSpan({ cls: "osint-evidence-count" });
+        countEl.setCssProps({ "margin-left": "auto", "align-self": "center", "font-size": "0.85em", color: "var(--text-muted)" });
+        this.updateCount(countEl);
+        const listContainer = contentEl.createDiv({ cls: "osint-evidence-list" });
+        listContainer.setCssProps({
+          "max-height": "400px",
+          "overflow-y": "auto",
+          border: "1px solid var(--background-modifier-border)",
+          "border-radius": "6px",
+          padding: "8px"
+        });
+        const grouped = this.groupByFolder(this.allFiles);
+        for (const [folder, files] of grouped) {
+          const folderEl = listContainer.createDiv({ cls: "osint-evidence-folder" });
+          folderEl.setCssProps({ "margin-bottom": "6px" });
+          const folderHeader = folderEl.createDiv();
+          folderHeader.setCssProps({
+            display: "flex",
+            "align-items": "center",
+            gap: "6px",
+            "font-weight": "600",
+            "font-size": "0.85em",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            "margin-bottom": "2px"
+          });
+          folderHeader.createSpan({ text: "\u{1F4C1}" });
+          folderHeader.createSpan({ text: folder || "(root)" });
+          const folderCountSpan = folderHeader.createSpan({ text: ` (${files.length})` });
+          folderCountSpan.setCssProps({ "font-weight": "400" });
+          folderHeader.addEventListener("click", () => {
+            const allChecked = files.every((f) => this.selected.has(f.path));
+            for (const f of files) {
+              if (allChecked)
+                this.selected.delete(f.path);
+              else
+                this.selected.add(f.path);
+            }
+            this.refreshCheckboxes(listContainer);
+            this.updateCount(countEl);
+          });
+          for (const file of files) {
+            const row = folderEl.createEl("label", { cls: "osint-evidence-row" });
+            row.setCssProps({
+              display: "flex",
+              "align-items": "center",
+              gap: "6px",
+              padding: "3px 4px",
+              cursor: "pointer",
+              "border-radius": "4px"
+            });
+            const cb = row.createEl("input");
+            cb.type = "checkbox";
+            cb.checked = this.selected.has(file.path);
+            cb.dataset.path = file.path;
+            cb.addEventListener("change", () => {
+              if (cb.checked)
+                this.selected.add(file.path);
+              else
+                this.selected.delete(file.path);
+              this.updateCount(countEl);
+            });
+            const ext = (file.extension || "").toLowerCase();
+            row.createSpan({ text: TYPE_ICONS[ext] || "\u{1F4CE}" });
+            const nameSpan = row.createSpan({ text: file.name });
+            nameSpan.setCssProps({ flex: "1" });
+            const sizeSpan = row.createSpan({ text: humanSize(file.stat.size) });
+            sizeSpan.setCssProps({ "font-size": "0.8em", color: "var(--text-faint)" });
+          }
+        }
+        const actions = contentEl.createDiv({ cls: "osint-evidence-actions" });
+        actions.setCssProps({ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-top": "16px" });
+        const cancelBtn = actions.createEl("button", { text: "Cancel" });
+        cancelBtn.addEventListener("click", () => {
+          this.resolve(null);
+          this.close();
+        });
+        const analyzeBtn = actions.createEl("button", { text: "Analyze selected", cls: "mod-cta" });
+        analyzeBtn.addEventListener("click", () => {
+          const picked = this.allFiles.filter((f) => this.selected.has(f.path));
+          this.resolve({ files: picked });
+          this.close();
+        });
+      }
+      onClose() {
+        this.contentEl.empty();
+      }
+      toggleAll(checked) {
+        if (checked) {
+          for (const f of this.allFiles)
+            this.selected.add(f.path);
+        } else {
+          this.selected.clear();
+        }
+        const cbs = this.contentEl.querySelectorAll("input[type=checkbox][data-path]");
+        cbs.forEach((cb) => {
+          cb.checked = checked;
+        });
+        const countEl = this.contentEl.querySelector(".osint-evidence-count");
+        if (countEl)
+          this.updateCount(countEl);
+      }
+      refreshCheckboxes(container) {
+        const cbs = container.querySelectorAll("input[type=checkbox][data-path]");
+        cbs.forEach((cb) => {
+          cb.checked = this.selected.has(cb.dataset.path || "");
+        });
+      }
+      updateCount(el) {
+        el.setText(`${this.selected.size} / ${this.allFiles.length} selected`);
+      }
+      groupByFolder(files) {
+        const map = /* @__PURE__ */ new Map();
+        for (const f of files) {
+          const parts = f.path.split("/");
+          const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+          if (!map.has(folder))
+            map.set(folder, []);
+          map.get(folder).push(f);
+        }
+        return map;
       }
     };
   }
@@ -12352,134 +12352,70 @@ Respond with this exact JSON structure:
     return commands;
   }
   /**
-   * Walk ingestible vault files (markdown, PDF, images, Office — excluding plugin / git paths),
-   * extract text (API for binary), run processTextInChunks per file with smaller chunks,
-   * accumulate @@ commands (and report progress with the growing list for UI).
+   * Walk ingestible vault files, send them in batches to the evidence
+   * analysis endpoint (server-side parallel classification + extraction),
+   * and auto-apply graph commands as each batch completes.
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
-    const graphCommands = [];
+    const { EvidenceService: EvidenceService2 } = await Promise.resolve().then(() => (init_evidence_service(), evidence_service_exports));
+    const svc = new EvidenceService2(this.plugin);
     const vaultFiles = this.plugin.app.vault.getFiles();
     const files = vaultFiles.filter((f) => f instanceof import_obsidian14.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
-    let truncatedFiles = 0;
+    const filesToProcess = files.slice(0, maxFiles);
+    const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
+    const totalBatches = Math.ceil(filesToProcess.length / BATCH);
+    const graphCommands = [];
+    let filesProcessed = 0;
     let extractFailures = 0;
-    const percentFor = (fileIndexZeroBased, chunkNum, totalChunks) => {
-      const f = maxFiles > 0 ? (fileIndexZeroBased + 1) / maxFiles : 1;
-      let frac = f;
-      if (chunkNum !== void 0 && totalChunks !== void 0 && totalChunks > 1) {
-        frac = (fileIndexZeroBased + (chunkNum - 1) / totalChunks) / Math.max(maxFiles, 1);
-      }
-      return Math.min(94, 5 + Math.floor(85 * frac));
-    };
-    const emit = (message, fileIndexZeroBased, chunkNum, totalChunks, extra) => {
-      onFileProgress(message, percentFor(fileIndexZeroBased, chunkNum, totalChunks), {
-        ...extra?.appliedLine ? { vaultIngestAppliedLine: extra.appliedLine } : {}
-      });
-    };
-    const applyAndEmitNewCommands = async (newCmds, filePath, fileIndexZeroBased, chunkIndex, totalChunks) => {
-      graphCommands.push(...newCmds);
-      for (const cmd of newCmds) {
-        const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
-        for (const line of lines) {
-          emit(
-            `${filePath} (${chunkIndex}/${totalChunks})`,
-            fileIndexZeroBased,
-            chunkIndex,
-            totalChunks,
-            { appliedLine: line }
-          );
-        }
-      }
-    };
-    for (let i = 0; i < maxFiles; i++) {
-      if (abortSignal?.aborted) {
+    for (let b = 0; b < totalBatches; b++) {
+      if (abortSignal?.aborted)
         break;
-      }
-      const file = files[i];
-      emit(`Reading ${file.path} (${i + 1}/${maxFiles})...`, i);
-      const ext = (file.extension || "").toLowerCase();
-      let content;
-      if (ext === "md" || ext === "markdown" || ext === "txt") {
-        content = await this.plugin.app.vault.cachedRead(file);
-        if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-          content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-          truncatedFiles++;
-        }
-      } else {
-        try {
-          const buf = await this.plugin.app.vault.readBinary(file);
-          const blob = new Blob([buf], { type: this.mimeTypeForIngestExtension(ext) });
-          const syntheticFile = new File([blob], file.name, {
-            type: this.mimeTypeForIngestExtension(ext)
-          });
-          content = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
-          if (content.length > _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE) {
-            content = content.substring(0, _OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE);
-            truncatedFiles++;
-          }
-        } catch (err) {
-          extractFailures++;
-          console.error(`[OrchestrationService] extract failed for ${file.path}:`, err);
-          continue;
-        }
-      }
-      if (!content || !content.trim()) {
-        continue;
-      }
-      const block = `Source file: ${file.path}
-
-${content}`;
-      let extraction;
+      const batchFiles = filesToProcess.slice(b * BATCH, (b + 1) * BATCH);
+      const batchLabel = `Batch ${b + 1}/${totalBatches}`;
+      const basePct = Math.floor(b / totalBatches * 90) + 5;
+      onFileProgress(
+        `${batchLabel}: sending ${batchFiles.length} files to server\u2026`,
+        basePct
+      );
+      let batchCommands;
       try {
-        extraction = await this.plugin.graphApiService.processTextInChunks(
-          block,
-          this.plugin.entityManager.getAllEntities(),
-          (/* @__PURE__ */ new Date()).toISOString(),
-          (chunkNum, totalChunks, msg) => {
-            emit(`${file.path} \u2014 ${msg}`, i, chunkNum, totalChunks);
-          },
-          void 0,
-          abortSignal,
-          false,
-          {
-            chunkSize: _OrchestrationService.VAULT_INGEST_CHUNK_SIZE,
-            chunkThreshold: _OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD,
-            onChunkOperations: ({ chunkIndex, totalChunks, operations }) => {
-              graphCommands.push(...this.operationsToGraphCommands(operations));
-              emit(
-                `Graph extraction: ${file.path} \u2014 chunk ${chunkIndex}/${totalChunks} (${graphCommands.length} command(s) so far)`,
-                i,
-                chunkIndex,
-                totalChunks
-              );
-            }
+        batchCommands = await svc.analyze(
+          batchFiles,
+          (msg, pct) => {
+            if (abortSignal?.aborted)
+              return;
+            const scaled = basePct + Math.floor(pct / 100 * (90 / totalBatches));
+            onFileProgress(`${batchLabel}: ${msg}`, Math.min(scaled, 94));
           }
         );
       } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") {
+        if (e instanceof DOMException && e.name === "AbortError")
           break;
+        console.error(`[OrchestrationService] Evidence batch ${b + 1} failed:`, e);
+        extractFailures += batchFiles.length;
+        continue;
+      }
+      for (const cmd of batchCommands) {
+        const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
+        graphCommands.push(cmd);
+        for (const line of lines) {
+          onFileProgress(
+            `${batchLabel}: ${line}`,
+            basePct,
+            { vaultIngestAppliedLine: line }
+          );
         }
-        throw e;
       }
-      if (extraction.success) {
-        emit(
-          `Graph extraction: ${file.path} \u2014 done (${graphCommands.length} command(s) so far)`,
-          i
-        );
-      } else {
-        emit(
-          `Graph extraction skipped/failed: ${file.path} \u2014 ${extraction.error || "no entities"}`,
-          i
-        );
-      }
+      filesProcessed += batchFiles.length;
     }
-    const summary = (abortSignal?.aborted ? "**Cancelled by user.** " : "") + `Processed **${maxFiles}** file(s) (markdown, PDF, images, text, Office) out of **${files.length}** eligible in the vault (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}).` + (truncatedFiles > 0 ? ` ${truncatedFiles} file(s) were truncated to ${_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE} characters for API limits.` : "") + (extractFailures > 0 ? ` **${extractFailures}** file(s) failed extraction (see console).` : "") + ` **${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph (no confirmation step).`;
+    const summary = (abortSignal?.aborted ? "**Cancelled by user.** " : "") + `Processed **${filesProcessed}** file(s) out of **${files.length}** eligible (cap ${_OrchestrationService.VAULT_INGEST_MAX_FILES}), sent in **${totalBatches}** batch(es) of up to ${BATCH} files (server-side parallel analysis). ` + (extractFailures > 0 ? `**${extractFailures}** file(s) failed. ` : "") + `**${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph.`;
     return {
       summary,
       graphCommands,
-      filesProcessed: maxFiles,
+      filesProcessed,
       filesTotal: files.length,
-      truncatedFiles,
+      truncatedFiles: 0,
       extractFailures
     };
   }
@@ -13058,10 +12994,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
-_OrchestrationService.VAULT_INGEST_MAX_CHARS_PER_FILE = 6e4;
-/** Smaller chunks so each /process-text finishes before CDN/proxy timeouts (e.g. Cloudflare ~100s). */
-_OrchestrationService.VAULT_INGEST_CHUNK_SIZE = 400;
-_OrchestrationService.VAULT_INGEST_CHUNK_THRESHOLD = 650;
+_OrchestrationService.VAULT_INGEST_BATCH_SIZE = 5;
 /** Extensions processed during vault graph ingest (text read locally; binary sent to /api/extract-text). */
 _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
   "md",
