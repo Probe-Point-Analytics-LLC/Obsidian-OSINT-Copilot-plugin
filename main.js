@@ -12857,7 +12857,8 @@ ${result.summary || ""}
     return commands;
   }
   /**
-   * Apply @@ graph commands without modal (vault ingest). Returns one human-readable line per command.
+   * Apply @@ graph commands without modal (vault ingest / evidence analysis).
+   * Returns one human-readable line per command.
    */
   async executeGraphCommandsImmediate(commands, options) {
     const lines = [];
@@ -13556,8 +13557,12 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
         new import_obsidian16.Notice("No entities or relationships were extracted from the selected files.");
         return;
       }
-      new import_obsidian16.Notice(`Extracted ${commands.length} graph commands. Review and confirm\u2026`, 4e3);
-      await this.orchestrationService.executeGraphModifications(commands);
+      new import_obsidian16.Notice(`Applying ${commands.length} graph commands\u2026`, 3e3);
+      const lines = await this.orchestrationService.executeGraphCommandsImmediate(
+        commands,
+        { showErrorNotices: true }
+      );
+      new import_obsidian16.Notice(`Evidence ingested: ${lines.length} operations applied.`, 5e3);
     } catch (err) {
       statusNotice.hide();
       const msg = err instanceof Error ? err.message : String(err);

@@ -558,8 +558,12 @@ export default class VaultAIPlugin extends Plugin {
         return;
       }
 
-      new Notice(`Extracted ${commands.length} graph commands. Review and confirm…`, 4000);
-      await this.orchestrationService.executeGraphModifications(commands);
+      new Notice(`Applying ${commands.length} graph commands…`, 3000);
+      const lines = await this.orchestrationService.executeGraphCommandsImmediate(
+        commands,
+        { showErrorNotices: true },
+      );
+      new Notice(`Evidence ingested: ${lines.length} operations applied.`, 5000);
     } catch (err) {
       statusNotice.hide();
       const msg = err instanceof Error ? err.message : String(err);

@@ -1147,9 +1147,10 @@ Respond with this exact JSON structure:
     }
 
     /**
-     * Apply @@ graph commands without modal (vault ingest). Returns one human-readable line per command.
+     * Apply @@ graph commands without modal (vault ingest / evidence analysis).
+     * Returns one human-readable line per command.
      */
-    private async executeGraphCommandsImmediate(
+    public async executeGraphCommandsImmediate(
         commands: string[],
         options: { showErrorNotices: boolean }
     ): Promise<string[]> {
