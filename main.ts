@@ -4461,9 +4461,11 @@ export class ChatView extends ItemView {
         const fileName = attachment.file.name;
 
         // Update progress message
-        this.chatHistory[extractionMsgIndex].content =
-          `📄 Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
-        await this.renderMessages();
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].content =
+            `📄 Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
+          await this.renderMessages();
+        }
 
         try {
           let text = "";
@@ -4473,8 +4475,9 @@ export class ChatView extends ItemView {
             text = attachment.content;
           } else if (attachment.file instanceof TFile) {
             // TFile from Obsidian vault - read directly for text files, API for binary
-            const ext = attachment.file.extension;
-            if (['md', 'txt'].includes(ext)) {
+            const ext = (attachment.file.extension || '').toLowerCase();
+            const textExts = ['md', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'yaml', 'yml', 'toml', 'ini'];
+            if (textExts.includes(ext)) {
               text = await this.app.vault.read(attachment.file);
             } else {
               // Show special message for PDF/binary files
@@ -4506,30 +4509,35 @@ export class ChatView extends ItemView {
           failedCount++;
           console.error(`Error extracting ${fileName}:`, error);
 
-          // Provide user-friendly error message based on error type
-          let userMessage = `Could not extract text from ${fileName}`;
           const errorStr = error instanceof Error ? error.message : String(error);
+          let userMessage = `${fileName}: ${errorStr}`;
 
-          if (errorStr.includes('timed out') || errorStr.includes('timeout') || errorStr.includes('AbortError')) {
-            userMessage = `${fileName}: File too large or server busy. Try a smaller file.`;
-          } else if (errorStr.includes('429') || errorStr.includes('Too Many Requests')) {
-            userMessage = `${fileName}: Server busy (rate limited). Please wait and try again.`;
-          } else if (errorStr.includes('too large')) {
+          if (errorStr.includes('poppler') || errorStr.includes('pdftotext')) {
+            userMessage = `${fileName}: PDF extraction requires poppler-utils. Install with: sudo pacman -S poppler`;
+          } else if (errorStr.includes('not yet supported')) {
             userMessage = `${fileName}: ${errorStr}`;
           }
 
-          new Notice(userMessage, 5000);
+          new Notice(userMessage, 8000);
         }
       }
 
       // Update or remove the extraction message
       if (extractedCount > 0) {
-        // Remove the extraction progress message
-        this.chatHistory.splice(extractionMsgIndex, 1);
+        if (extractionMsgIndex < this.chatHistory.length) {
+          this.chatHistory.splice(extractionMsgIndex, 1);
+        }
       } else {
         // All failed - show error message
-        this.chatHistory[extractionMsgIndex].content =
-          `❌ Failed to extract text from ${failedCount} file${failedCount > 1 ? 's' : ''}. Please try again.`;
+        if (extractionMsgIndex < this.chatHistory.length && this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].content =
+            `❌ Failed to extract text from ${failedCount} file${failedCount > 1 ? 's' : ''}. Please try again.`;
+        } else {
+          this.chatHistory.push({
+            role: "assistant",
+            content: `❌ Failed to extract text from ${failedCount} file${failedCount > 1 ? 's' : ''}. Please try again.`,
+          });
+        }
         await this.renderMessages();
         return;
       }

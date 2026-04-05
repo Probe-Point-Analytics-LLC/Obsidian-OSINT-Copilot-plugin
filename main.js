@@ -4092,8 +4092,8 @@ var _GraphApiService = class _GraphApiService {
   }
   /**
    * Extract text from a file locally.
-   * Text-based formats are read directly. For binary formats (PDF, DOCX, images),
-   * the raw content is passed to Claude Code CLI for extraction.
+   * Text formats are read directly. PDFs use pdftotext. DOCX uses XML extraction.
+   * Other binary formats are saved to temp and processed by Claude Code CLI.
    */
   async extractTextFromFile(file) {
     const maxSize = 10 * 1024 * 1024;
@@ -4104,11 +4104,16 @@ var _GraphApiService = class _GraphApiService {
     if (_GraphApiService.TEXT_EXTENSIONS.has(ext)) {
       return this.readFileAsText(file);
     }
-    if (this.claudeCodeService) {
-      return this.extractWithClaude(file, ext);
+    if (ext === "pdf") {
+      return this.extractPdfText(file);
+    }
+    if (ext === "docx") {
+      return this.extractDocxText(file);
     }
     throw new Error(
-      `Cannot extract text from .${ext} files locally. Claude Code CLI is required for binary file extraction. Please ensure Claude Code is configured in settings.`
+      `Local text extraction for .${ext} files is not yet supported.
+Supported: text files, PDF (requires pdftotext/poppler), DOCX.
+Tip: paste the text content directly into the chat instead.`
     );
   }
   readFileAsText(file) {
@@ -4119,28 +4124,114 @@ var _GraphApiService = class _GraphApiService {
       reader.readAsText(file);
     });
   }
-  async extractWithClaude(file, ext) {
-    const base64 = await this.readFileAsBase64(file);
-    const prompt = `Extract ALL readable text content from this ${ext.toUpperCase()} file named "${file.name}".
-The file is provided as base64-encoded content below.
-Return ONLY the extracted text, no commentary or formatting.
-If you cannot decode the content, describe what you can see.
-
-BASE64 CONTENT:
-${base64}`;
-    return this.claudeCodeService.chat("", prompt);
-  }
-  readFileAsBase64(file) {
+  readFileAsArrayBuffer(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result;
-        const base64 = dataUrl.split(",")[1] || dataUrl;
-        resolve(base64);
-      };
+      reader.onload = () => resolve(reader.result);
       reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsDataURL(file);
+      reader.readAsArrayBuffer(file);
     });
+  }
+  /**
+   * Extract text from PDF by saving to temp file and running pdftotext (poppler-utils).
+   */
+  async extractPdfText(file) {
+    const nodeFs = require("fs");
+    const nodePath = require("path");
+    const os = require("os");
+    const { execFile } = require("child_process");
+    const buffer = await this.readFileAsArrayBuffer(file);
+    const tmpDir = os.tmpdir();
+    const tmpFile = nodePath.join(tmpDir, `osint-copilot-${Date.now()}.pdf`);
+    try {
+      nodeFs.writeFileSync(tmpFile, Buffer.from(buffer));
+      const text = await new Promise((resolve, reject) => {
+        execFile("pdftotext", ["-layout", tmpFile, "-"], {
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 3e4
+        }, (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error(
+              `PDF text extraction failed. Please install poppler-utils:
+  Ubuntu/Debian: sudo apt install poppler-utils
+  Arch/Manjaro: sudo pacman -S poppler
+  macOS: brew install poppler
+
+Error: ${stderr || error.message}`
+            ));
+          } else {
+            resolve(stdout);
+          }
+        });
+      });
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw new Error("pdftotext returned empty output. The PDF may be image-based (scanned). Image OCR is not yet supported locally.");
+      }
+      return trimmed;
+    } finally {
+      try {
+        nodeFs.unlinkSync(tmpFile);
+      } catch {
+      }
+    }
+  }
+  /**
+   * Extract text from DOCX by reading it as a ZIP and parsing word/document.xml.
+   */
+  async extractDocxText(file) {
+    const buffer = await this.readFileAsArrayBuffer(file);
+    const bytes = new Uint8Array(buffer);
+    const xmlContent = this.extractFileFromZip(bytes, "word/document.xml");
+    if (!xmlContent) {
+      throw new Error("Could not find word/document.xml inside the DOCX file.");
+    }
+    let text = new TextDecoder().decode(xmlContent);
+    text = text.replace(/<w:p[^>]*>/g, "\n");
+    text = text.replace(/<w:tab\/>/g, "	");
+    text = text.replace(/<w:br\/>/g, "\n");
+    text = text.replace(/<[^>]+>/g, "");
+    text = text.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    text = text.replace(/\n{3,}/g, "\n\n");
+    return text.trim();
+  }
+  /**
+   * Minimal ZIP extraction for a single file entry (no external dependencies).
+   */
+  extractFileFromZip(data, targetPath) {
+    let offset = 0;
+    while (offset < data.length - 4) {
+      const sig = data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24;
+      if (sig !== 67324752)
+        break;
+      const compressionMethod = data[offset + 8] | data[offset + 9] << 8;
+      const compressedSize = data[offset + 18] | data[offset + 19] << 8 | data[offset + 20] << 16 | data[offset + 21] << 24;
+      const uncompressedSize = data[offset + 22] | data[offset + 23] << 8 | data[offset + 24] << 16 | data[offset + 25] << 24;
+      const nameLen = data[offset + 26] | data[offset + 27] << 8;
+      const extraLen = data[offset + 28] | data[offset + 29] << 8;
+      const name = new TextDecoder().decode(data.slice(offset + 30, offset + 30 + nameLen));
+      const dataStart = offset + 30 + nameLen + extraLen;
+      if (name === targetPath) {
+        if (compressionMethod === 0) {
+          return data.slice(dataStart, dataStart + uncompressedSize);
+        }
+        if (compressionMethod === 8) {
+          try {
+            const compressed = data.slice(dataStart, dataStart + compressedSize);
+            const { inflateRawSync } = require("zlib");
+            const result = inflateRawSync(Buffer.from(compressed));
+            return new Uint8Array(result);
+          } catch (e) {
+            console.error("[GraphApiService] DOCX decompression failed:", e);
+            return null;
+          }
+        }
+        return null;
+      }
+      const size = compressedSize > 0 ? compressedSize : uncompressedSize;
+      offset = dataStart + size;
+    }
+    return null;
   }
   /**
    * Chat via Claude Code CLI. Replaces remote custom provider and backend calls.
@@ -16188,15 +16279,18 @@ var ChatView = class extends import_obsidian16.ItemView {
       let failedCount = 0;
       for (const attachment of filesToProcess) {
         const fileName = attachment.file.name;
-        this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
-        await this.renderMessages();
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
+          await this.renderMessages();
+        }
         try {
           let text = "";
           if (attachment.extracted && attachment.content) {
             text = attachment.content;
           } else if (attachment.file instanceof import_obsidian16.TFile) {
-            const ext = attachment.file.extension;
-            if (["md", "txt"].includes(ext)) {
+            const ext = (attachment.file.extension || "").toLowerCase();
+            const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
+            if (textExts.includes(ext)) {
               text = await this.app.vault.read(attachment.file);
             } else {
               this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Processing ${fileName}... (this may take a moment for large files)`;
@@ -16223,22 +16317,29 @@ ${text}`);
         } catch (error) {
           failedCount++;
           console.error(`Error extracting ${fileName}:`, error);
-          let userMessage = `Could not extract text from ${fileName}`;
           const errorStr = error instanceof Error ? error.message : String(error);
-          if (errorStr.includes("timed out") || errorStr.includes("timeout") || errorStr.includes("AbortError")) {
-            userMessage = `${fileName}: File too large or server busy. Try a smaller file.`;
-          } else if (errorStr.includes("429") || errorStr.includes("Too Many Requests")) {
-            userMessage = `${fileName}: Server busy (rate limited). Please wait and try again.`;
-          } else if (errorStr.includes("too large")) {
+          let userMessage = `${fileName}: ${errorStr}`;
+          if (errorStr.includes("poppler") || errorStr.includes("pdftotext")) {
+            userMessage = `${fileName}: PDF extraction requires poppler-utils. Install with: sudo pacman -S poppler`;
+          } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian16.Notice(userMessage, 5e3);
+          new import_obsidian16.Notice(userMessage, 8e3);
         }
       }
       if (extractedCount > 0) {
-        this.chatHistory.splice(extractionMsgIndex, 1);
+        if (extractionMsgIndex < this.chatHistory.length) {
+          this.chatHistory.splice(extractionMsgIndex, 1);
+        }
       } else {
-        this.chatHistory[extractionMsgIndex].content = `\u274C Failed to extract text from ${failedCount} file${failedCount > 1 ? "s" : ""}. Please try again.`;
+        if (extractionMsgIndex < this.chatHistory.length && this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].content = `\u274C Failed to extract text from ${failedCount} file${failedCount > 1 ? "s" : ""}. Please try again.`;
+        } else {
+          this.chatHistory.push({
+            role: "assistant",
+            content: `\u274C Failed to extract text from ${failedCount} file${failedCount > 1 ? "s" : ""}. Please try again.`
+          });
+        }
         await this.renderMessages();
         return;
       }

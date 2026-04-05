@@ -529,8 +529,8 @@ export class GraphApiService {
 
     /**
      * Extract text from a file locally.
-     * Text-based formats are read directly. For binary formats (PDF, DOCX, images),
-     * the raw content is passed to Claude Code CLI for extraction.
+     * Text formats are read directly. PDFs use pdftotext. DOCX uses XML extraction.
+     * Other binary formats are saved to temp and processed by Claude Code CLI.
      */
     async extractTextFromFile(file: File): Promise<string> {
         const maxSize = 10 * 1024 * 1024;
@@ -544,14 +544,18 @@ export class GraphApiService {
             return this.readFileAsText(file);
         }
 
-        if (this.claudeCodeService) {
-            return this.extractWithClaude(file, ext);
+        if (ext === 'pdf') {
+            return this.extractPdfText(file);
+        }
+
+        if (ext === 'docx') {
+            return this.extractDocxText(file);
         }
 
         throw new Error(
-            `Cannot extract text from .${ext} files locally. ` +
-            `Claude Code CLI is required for binary file extraction. ` +
-            `Please ensure Claude Code is configured in settings.`
+            `Local text extraction for .${ext} files is not yet supported.\n` +
+            `Supported: text files, PDF (requires pdftotext/poppler), DOCX.\n` +
+            `Tip: paste the text content directly into the chat instead.`
         );
     }
 
@@ -564,30 +568,122 @@ export class GraphApiService {
         });
     }
 
-    private async extractWithClaude(file: File, ext: string): Promise<string> {
-        const base64 = await this.readFileAsBase64(file);
-
-        const prompt =
-            `Extract ALL readable text content from this ${ext.toUpperCase()} file named "${file.name}".\n` +
-            `The file is provided as base64-encoded content below.\n` +
-            `Return ONLY the extracted text, no commentary or formatting.\n` +
-            `If you cannot decode the content, describe what you can see.\n\n` +
-            `BASE64 CONTENT:\n${base64}`;
-
-        return this.claudeCodeService!.chat('', prompt);
-    }
-
-    private readFileAsBase64(file: File): Promise<string> {
+    private readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => {
-                const dataUrl = reader.result as string;
-                const base64 = dataUrl.split(',')[1] || dataUrl;
-                resolve(base64);
-            };
+            reader.onload = () => resolve(reader.result as ArrayBuffer);
             reader.onerror = () => reject(new Error('Failed to read file'));
-            reader.readAsDataURL(file);
+            reader.readAsArrayBuffer(file);
         });
+    }
+
+    /**
+     * Extract text from PDF by saving to temp file and running pdftotext (poppler-utils).
+     */
+    private async extractPdfText(file: File): Promise<string> {
+        const nodeFs = require('fs') as typeof import('fs');
+        const nodePath = require('path') as typeof import('path');
+        const os = require('os') as typeof import('os');
+        const { execFile } = require('child_process') as typeof import('child_process');
+
+        const buffer = await this.readFileAsArrayBuffer(file);
+        const tmpDir = os.tmpdir();
+        const tmpFile = nodePath.join(tmpDir, `osint-copilot-${Date.now()}.pdf`);
+
+        try {
+            nodeFs.writeFileSync(tmpFile, Buffer.from(buffer));
+
+            const text = await new Promise<string>((resolve, reject) => {
+                execFile('pdftotext', ['-layout', tmpFile, '-'], {
+                    maxBuffer: 10 * 1024 * 1024,
+                    timeout: 30_000,
+                }, (error: any, stdout: string, stderr: string) => {
+                    if (error) {
+                        reject(new Error(
+                            `PDF text extraction failed. Please install poppler-utils:\n` +
+                            `  Ubuntu/Debian: sudo apt install poppler-utils\n` +
+                            `  Arch/Manjaro: sudo pacman -S poppler\n` +
+                            `  macOS: brew install poppler\n\n` +
+                            `Error: ${stderr || error.message}`
+                        ));
+                    } else {
+                        resolve(stdout);
+                    }
+                });
+            });
+
+            const trimmed = text.trim();
+            if (!trimmed) {
+                throw new Error('pdftotext returned empty output. The PDF may be image-based (scanned). Image OCR is not yet supported locally.');
+            }
+            return trimmed;
+        } finally {
+            try { nodeFs.unlinkSync(tmpFile); } catch { /* ignore cleanup errors */ }
+        }
+    }
+
+    /**
+     * Extract text from DOCX by reading it as a ZIP and parsing word/document.xml.
+     */
+    private async extractDocxText(file: File): Promise<string> {
+        const buffer = await this.readFileAsArrayBuffer(file);
+        const bytes = new Uint8Array(buffer);
+
+        const xmlContent = this.extractFileFromZip(bytes, 'word/document.xml');
+        if (!xmlContent) {
+            throw new Error('Could not find word/document.xml inside the DOCX file.');
+        }
+
+        let text = new TextDecoder().decode(xmlContent);
+        text = text.replace(/<w:p[^>]*>/g, '\n');
+        text = text.replace(/<w:tab\/>/g, '\t');
+        text = text.replace(/<w:br\/>/g, '\n');
+        text = text.replace(/<[^>]+>/g, '');
+        text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+        text = text.replace(/\n{3,}/g, '\n\n');
+
+        return text.trim();
+    }
+
+    /**
+     * Minimal ZIP extraction for a single file entry (no external dependencies).
+     */
+    private extractFileFromZip(data: Uint8Array, targetPath: string): Uint8Array | null {
+        let offset = 0;
+        while (offset < data.length - 4) {
+            const sig = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24);
+            if (sig !== 0x04034b50) break; // PK\x03\x04
+
+            const compressionMethod = data[offset + 8] | (data[offset + 9] << 8);
+            const compressedSize = data[offset + 18] | (data[offset + 19] << 8) | (data[offset + 20] << 16) | (data[offset + 21] << 24);
+            const uncompressedSize = data[offset + 22] | (data[offset + 23] << 8) | (data[offset + 24] << 16) | (data[offset + 25] << 24);
+            const nameLen = data[offset + 26] | (data[offset + 27] << 8);
+            const extraLen = data[offset + 28] | (data[offset + 29] << 8);
+            const name = new TextDecoder().decode(data.slice(offset + 30, offset + 30 + nameLen));
+            const dataStart = offset + 30 + nameLen + extraLen;
+
+            if (name === targetPath) {
+                if (compressionMethod === 0) {
+                    return data.slice(dataStart, dataStart + uncompressedSize);
+                }
+                if (compressionMethod === 8) {
+                    try {
+                        const compressed = data.slice(dataStart, dataStart + compressedSize);
+                        const { inflateRawSync } = require('zlib') as typeof import('zlib');
+                        const result = inflateRawSync(Buffer.from(compressed));
+                        return new Uint8Array(result);
+                    } catch (e) {
+                        console.error('[GraphApiService] DOCX decompression failed:', e);
+                        return null;
+                    }
+                }
+                return null;
+            }
+
+            const size = compressedSize > 0 ? compressedSize : uncompressedSize;
+            offset = dataStart + size;
+        }
+        return null;
     }
 
     /**

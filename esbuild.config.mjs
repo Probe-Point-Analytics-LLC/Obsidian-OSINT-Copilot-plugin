@@ -31,6 +31,8 @@ const context = await esbuild.context({
     "@lezer/lr",
     "path",
     "fs",
+    "os",
+    "zlib",
     "child_process",
   ],
   format: "cjs",
