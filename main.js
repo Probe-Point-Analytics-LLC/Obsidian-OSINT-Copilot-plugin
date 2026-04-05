@@ -292,204 +292,6 @@ var init_evidence_service = __esm({
   }
 });
 
-// src/modals/evidence-picker-modal.ts
-var evidence_picker_modal_exports = {};
-__export(evidence_picker_modal_exports, {
-  EvidencePickerModal: () => EvidencePickerModal
-});
-function humanSize(bytes) {
-  if (bytes < 1024)
-    return `${bytes} B`;
-  if (bytes < 1024 * 1024)
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-var import_obsidian13, EVIDENCE_EXTENSIONS, TYPE_ICONS, EvidencePickerModal;
-var init_evidence_picker_modal = __esm({
-  "src/modals/evidence-picker-modal.ts"() {
-    "use strict";
-    import_obsidian13 = require("obsidian");
-    EVIDENCE_EXTENSIONS = /* @__PURE__ */ new Set([
-      "md",
-      "markdown",
-      "txt",
-      "pdf",
-      "png",
-      "jpg",
-      "jpeg",
-      "webp",
-      "gif",
-      "doc",
-      "docx"
-    ]);
-    TYPE_ICONS = {
-      pdf: "\u{1F4C4}",
-      png: "\u{1F5BC}\uFE0F",
-      jpg: "\u{1F5BC}\uFE0F",
-      jpeg: "\u{1F5BC}\uFE0F",
-      webp: "\u{1F5BC}\uFE0F",
-      gif: "\u{1F5BC}\uFE0F",
-      doc: "\u{1F4DD}",
-      docx: "\u{1F4DD}",
-      md: "\u{1F4CB}",
-      markdown: "\u{1F4CB}",
-      txt: "\u{1F4CB}"
-    };
-    EvidencePickerModal = class extends import_obsidian13.Modal {
-      constructor(app) {
-        super(app);
-        this.selected = /* @__PURE__ */ new Set();
-        this.allFiles = [];
-      }
-      /** Open the modal and return the user's selection (or null on cancel). */
-      pick() {
-        return new Promise((resolve) => {
-          this.resolve = resolve;
-          this.open();
-        });
-      }
-      onOpen() {
-        const { contentEl } = this;
-        contentEl.addClass("osint-evidence-picker");
-        this.allFiles = this.app.vault.getFiles().filter((f) => f instanceof import_obsidian13.TFile).filter((f) => EVIDENCE_EXTENSIONS.has((f.extension || "").toLowerCase())).filter((f) => {
-          const p = f.path.replace(/\\/g, "/").toLowerCase();
-          return !p.startsWith(".obsidian/") && !p.includes("/.obsidian/") && !p.startsWith(".git/") && !p.includes("/.git/");
-        }).sort((a, b) => a.path.localeCompare(b.path));
-        contentEl.createEl("h2", { text: "Analyze vault evidence" });
-        const desc = contentEl.createEl("p", { cls: "setting-item-description" });
-        desc.setText(`${this.allFiles.length} evidence files found. Select files to classify and extract structured data.`);
-        const controls = contentEl.createDiv({ cls: "osint-evidence-controls" });
-        controls.setCssProps({ display: "flex", gap: "8px", "margin-bottom": "12px" });
-        const btnAll = controls.createEl("button", { text: "Select all", cls: "mod-muted" });
-        btnAll.addEventListener("click", () => this.toggleAll(true));
-        const btnNone = controls.createEl("button", { text: "Deselect all", cls: "mod-muted" });
-        btnNone.addEventListener("click", () => this.toggleAll(false));
-        const countEl = controls.createSpan({ cls: "osint-evidence-count" });
-        countEl.setCssProps({ "margin-left": "auto", "align-self": "center", "font-size": "0.85em", color: "var(--text-muted)" });
-        this.updateCount(countEl);
-        const listContainer = contentEl.createDiv({ cls: "osint-evidence-list" });
-        listContainer.setCssProps({
-          "max-height": "400px",
-          "overflow-y": "auto",
-          border: "1px solid var(--background-modifier-border)",
-          "border-radius": "6px",
-          padding: "8px"
-        });
-        const grouped = this.groupByFolder(this.allFiles);
-        for (const [folder, files] of grouped) {
-          const folderEl = listContainer.createDiv({ cls: "osint-evidence-folder" });
-          folderEl.setCssProps({ "margin-bottom": "6px" });
-          const folderHeader = folderEl.createDiv();
-          folderHeader.setCssProps({
-            display: "flex",
-            "align-items": "center",
-            gap: "6px",
-            "font-weight": "600",
-            "font-size": "0.85em",
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            "margin-bottom": "2px"
-          });
-          folderHeader.createSpan({ text: "\u{1F4C1}" });
-          folderHeader.createSpan({ text: folder || "(root)" });
-          const folderCountSpan = folderHeader.createSpan({ text: ` (${files.length})` });
-          folderCountSpan.setCssProps({ "font-weight": "400" });
-          folderHeader.addEventListener("click", () => {
-            const allChecked = files.every((f) => this.selected.has(f.path));
-            for (const f of files) {
-              if (allChecked)
-                this.selected.delete(f.path);
-              else
-                this.selected.add(f.path);
-            }
-            this.refreshCheckboxes(listContainer);
-            this.updateCount(countEl);
-          });
-          for (const file of files) {
-            const row = folderEl.createEl("label", { cls: "osint-evidence-row" });
-            row.setCssProps({
-              display: "flex",
-              "align-items": "center",
-              gap: "6px",
-              padding: "3px 4px",
-              cursor: "pointer",
-              "border-radius": "4px"
-            });
-            const cb = row.createEl("input");
-            cb.type = "checkbox";
-            cb.checked = this.selected.has(file.path);
-            cb.dataset.path = file.path;
-            cb.addEventListener("change", () => {
-              if (cb.checked)
-                this.selected.add(file.path);
-              else
-                this.selected.delete(file.path);
-              this.updateCount(countEl);
-            });
-            const ext = (file.extension || "").toLowerCase();
-            row.createSpan({ text: TYPE_ICONS[ext] || "\u{1F4CE}" });
-            const nameSpan = row.createSpan({ text: file.name });
-            nameSpan.setCssProps({ flex: "1" });
-            const sizeSpan = row.createSpan({ text: humanSize(file.stat.size) });
-            sizeSpan.setCssProps({ "font-size": "0.8em", color: "var(--text-faint)" });
-          }
-        }
-        const actions = contentEl.createDiv({ cls: "osint-evidence-actions" });
-        actions.setCssProps({ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-top": "16px" });
-        const cancelBtn = actions.createEl("button", { text: "Cancel" });
-        cancelBtn.addEventListener("click", () => {
-          this.resolve(null);
-          this.close();
-        });
-        const analyzeBtn = actions.createEl("button", { text: "Analyze selected", cls: "mod-cta" });
-        analyzeBtn.addEventListener("click", () => {
-          const picked = this.allFiles.filter((f) => this.selected.has(f.path));
-          this.resolve({ files: picked });
-          this.close();
-        });
-      }
-      onClose() {
-        this.contentEl.empty();
-      }
-      toggleAll(checked) {
-        if (checked) {
-          for (const f of this.allFiles)
-            this.selected.add(f.path);
-        } else {
-          this.selected.clear();
-        }
-        const cbs = this.contentEl.querySelectorAll("input[type=checkbox][data-path]");
-        cbs.forEach((cb) => {
-          cb.checked = checked;
-        });
-        const countEl = this.contentEl.querySelector(".osint-evidence-count");
-        if (countEl)
-          this.updateCount(countEl);
-      }
-      refreshCheckboxes(container) {
-        const cbs = container.querySelectorAll("input[type=checkbox][data-path]");
-        cbs.forEach((cb) => {
-          cb.checked = this.selected.has(cb.dataset.path || "");
-        });
-      }
-      updateCount(el) {
-        el.setText(`${this.selected.size} / ${this.allFiles.length} selected`);
-      }
-      groupByFolder(files) {
-        const map = /* @__PURE__ */ new Map();
-        for (const f of files) {
-          const parts = f.path.split("/");
-          const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
-          if (!map.has(folder))
-            map.set(folder, []);
-          map.get(folder).push(f);
-        }
-        return map;
-      }
-    };
-  }
-});
-
 // main.ts
 var main_exports = {};
 __export(main_exports, {
@@ -3992,9 +3794,13 @@ var GraphApiService = class {
   constructor(baseUrl = "https://api.osint-copilot.com", apiKey = "") {
     this.isOnline = false;
     this.settings = null;
+    this.claudeCodeService = null;
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.retryConfig = { ...DEFAULT_RETRY_CONFIG };
+  }
+  setClaudeCodeService(service) {
+    this.claudeCodeService = service;
   }
   /**
    * Update settings.
@@ -4046,55 +3852,13 @@ var GraphApiService = class {
    * Uses Obsidian's requestUrl to bypass CORS restrictions.
    */
   async checkHealth() {
-    if (this.settings?.apiProvider === "openai") {
-      try {
-        const response = await (0, import_obsidian3.requestUrl)({
-          url: this.settings.customApiUrl.replace(/\/v1\/?$/, "") + "/v1/models",
-          method: "GET",
-          headers: this.settings.customApiKey ? { "Authorization": `Bearer ${this.settings.customApiKey}` } : {},
-          throw: false
-        });
-        if (response.status >= 200 && response.status < 300) {
-          this.isOnline = true;
-          return { status: "ok", openai_configured: true, version: "custom" };
-        }
-        this.isOnline = true;
-        return { status: "ok", openai_configured: true };
-      } catch (e) {
-        console.debug("[GraphApiService] Custom API unavailable:", e);
-        this.isOnline = false;
-        return null;
-      }
+    if (this.claudeCodeService) {
+      const available = await this.claudeCodeService.isAvailable();
+      this.isOnline = available;
+      return available ? { status: "ok", openai_configured: true, version: "claude-code-local" } : null;
     }
-    try {
-      const response = await (0, import_obsidian3.requestUrl)({
-        url: `${this.baseUrl}/health`,
-        method: "GET",
-        headers: this.getHeaders(),
-        throw: false
-        // Don't throw on non-2xx status
-      });
-      if (response.status >= 200 && response.status < 300) {
-        this.isOnline = true;
-        return response.json;
-      }
-      const rootResponse = await (0, import_obsidian3.requestUrl)({
-        url: `${this.baseUrl}/`,
-        method: "GET",
-        headers: this.getHeaders(),
-        throw: false
-      });
-      if (rootResponse.status >= 200 && rootResponse.status < 300) {
-        this.isOnline = true;
-        return rootResponse.json;
-      }
-      this.isOnline = false;
-      return null;
-    } catch (error) {
-      this.isOnline = false;
-      console.debug("[GraphApiService] AI API unavailable - graph generation from text will not work");
-      return null;
-    }
+    this.isOnline = false;
+    return null;
   }
   /**
    * Get the current online status.
@@ -4698,126 +4462,14 @@ var GraphApiService = class {
    * @returns ProcessTextResponse with extracted entities and relationships
    */
   async processText(text, existingEntities, referenceTime, onRetry, signal, useLocal = false) {
-    console.debug("[GraphApiService] Processing text with AI:", text.substring(0, 100) + "...");
-    const { maxRetries, baseTimeoutMs } = this.retryConfig;
-    let currentTimeout = baseTimeoutMs;
-    let lastError = null;
-    let lastStatusCode;
-    let hadTimeoutError = false;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
-      }
-      try {
-        if (hadTimeoutError) {
-          currentTimeout = this.calculateTimeout(currentTimeout, true);
-          console.debug(`[GraphApiService] Increased timeout to ${currentTimeout}ms after timeout error`);
-        }
-        console.debug(`[GraphApiService] Attempt ${attempt}/${maxRetries} with ${currentTimeout}ms timeout`);
-        const response = await this.fetchWithTimeout(
-          `${this.baseUrl}/api/process-text`,
-          {
-            method: "POST",
-            headers: this.getHeaders(),
-            mode: "cors",
-            credentials: "omit",
-            body: JSON.stringify({
-              text,
-              existing_entities: existingEntities?.map((e) => ({
-                id: e.id,
-                type: e.type,
-                label: e.label,
-                properties: e.properties
-              })),
-              reference_time: referenceTime,
-              use_local: useLocal
-            })
-          },
-          currentTimeout,
-          signal
-        );
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`[GraphApiService] API error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
-          lastStatusCode = response.status;
-          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-            if (response.status === 401 || response.status === 403) {
-              return {
-                success: false,
-                error: "Authentication required. Please configure your API key in Settings \u2192 OSINT Copilot \u2192 API Key"
-              };
-            }
-            if (response.status === 404) {
-              return {
-                success: false,
-                error: "API endpoint not found. Please check that the API server is running and the URL is correct."
-              };
-            }
-            return {
-              success: false,
-              error: `API error (${response.status}): ${errorText}`
-            };
-          }
-          lastError = new Error(`HTTP ${response.status}: ${errorText}`);
-          if (attempt < maxRetries) {
-            let delayMs = this.calculateBackoffDelay(attempt);
-            if (response.status === 524) {
-              delayMs = Math.min(delayMs * 2 + 3e3, 2e4);
-            }
-            const reason = this.getErrorReason(lastError, response.status);
-            console.debug(`[GraphApiService] Retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
-            if (onRetry) {
-              onRetry(attempt, maxRetries, reason, delayMs);
-            }
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-            continue;
-          }
-        } else {
-          const result = await response.json();
-          console.debug("[GraphApiService] AI processing successful:", result);
-          return result;
-        }
-      } catch (error) {
-        console.error(`[GraphApiService] Process text failed (attempt ${attempt}/${maxRetries}):`, error);
-        lastError = error;
-        if (this.isTimeoutError(error)) {
-          hadTimeoutError = true;
-        }
-        if (this.isRetryableError(error) && attempt < maxRetries) {
-          const delayMs = this.calculateBackoffDelay(attempt);
-          const reason = this.getErrorReason(error, lastStatusCode);
-          console.debug(`[GraphApiService] ${reason} error, retrying in ${Math.round(delayMs)}ms...`);
-          if (onRetry) {
-            onRetry(attempt, maxRetries, reason, delayMs);
-          }
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          continue;
-        }
-        if (!this.isRetryableError(error)) {
-          this.isOnline = false;
-        }
-      }
+    if (!this.claudeCodeService) {
+      return {
+        success: false,
+        error: "Claude Code service not initialized. Please check Settings \u2192 OSINT Copilot \u2192 Graph Extraction."
+      };
     }
-    const errorMessage = this.getErrorMessage(lastError, lastStatusCode);
-    console.error("[GraphApiService] All retries exhausted:", errorMessage);
-    let helpMessage = "\u{1F4A1} Please wait a moment and try again. This is usually temporary.";
-    if (this.isTimeoutError(lastError)) {
-      helpMessage = "\u{1F4A1} The server is busy processing requests. Please wait a moment and try again.";
-    } else if (this.isNetworkError(lastError)) {
-      helpMessage = "\u{1F4A1} Network connection failed. Please check your internet connection and try again.";
-    } else if (lastStatusCode === 524) {
-      helpMessage = "\u{1F4A1} Error 524 means the CDN stopped waiting for the API (often ~100s). Vault ingest and large notes use smaller chunks automatically; if this persists, ask your admin to raise origin/proxy timeouts.";
-    } else if (lastStatusCode && lastStatusCode >= 500) {
-      helpMessage = "\u{1F4A1} The server is experiencing issues. Please try again later.";
-    }
-    return {
-      success: false,
-      error: `Entity extraction failed after ${maxRetries} attempts: ${errorMessage}
-
-${helpMessage}`,
-      // Include the original text so caller can preserve it for retry
-      originalText: text
-    };
+    console.debug("[GraphApiService] Routing to Claude Code for entity extraction");
+    return this.claudeCodeService.extractEntities(text, existingEntities, void 0, signal);
   }
   /**
    * AI-powered OSINT search that automatically detects entity types,
@@ -4911,6 +4563,209 @@ ${helpMessage}`,
       throw new Error("Search timed out. Try reducing the number of providers.");
     }
     throw new Error(`Digital Footprint failed after ${maxRetries} attempts: ${errorMessage}`);
+  }
+};
+
+// src/services/claude-code-service.ts
+var DEFAULT_CONFIG = {
+  cliPath: "claude",
+  model: "sonnet",
+  maxTokens: 16e3,
+  timeoutMs: 12e4
+};
+var SKILL_FILE = ".claude/GRAPH_EXTRACTION.md";
+var ClaudeCodeService = class {
+  constructor(pluginDir, config) {
+    this.skillContent = null;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.pluginDir = pluginDir;
+  }
+  updateConfig(config) {
+    Object.assign(this.config, config);
+  }
+  getSkillContent() {
+    if (this.skillContent)
+      return this.skillContent;
+    try {
+      const nodePath = require("path");
+      const nodeFs = require("fs");
+      const skillPath = nodePath.join(this.pluginDir, SKILL_FILE);
+      this.skillContent = nodeFs.readFileSync(skillPath, "utf-8");
+    } catch {
+      this.skillContent = this.getFallbackSkill();
+    }
+    return this.skillContent;
+  }
+  getFallbackSkill() {
+    return `You are an OSINT investigator AI. Extract entities and relationships from text.
+Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
+Entity types: Person (full_name), Event (name, start_date, description), Company (name), Location (address, city, country), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
+Relationships MUST be UPPERCASE. Notes must be comprehensive. If no entities found: {"operations":[]}`;
+  }
+  buildPrompt(text, existingEntities) {
+    const skill = this.getSkillContent();
+    const now = /* @__PURE__ */ new Date();
+    const refTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    let existingContext = "";
+    if (existingEntities && existingEntities.length > 0) {
+      const lines = existingEntities.slice(0, 50).map((e) => {
+        const propsStr = Object.entries(e.properties || {}).filter(([k, v]) => v && k !== "source" && k !== "image").map(([k, v]) => `${k}: ${String(v).substring(0, 200)}`).join(", ");
+        return `- ${e.type}: ${e.label}${propsStr ? ` (${propsStr})` : ""}`;
+      });
+      existingContext = `
+
+EXISTING ENTITIES (do not duplicate, update instead):
+${lines.join("\n")}`;
+    }
+    return `${skill}
+
+REFERENCE TIME: ${refTime}
+${existingContext}
+
+=== TEXT TO ANALYZE ===
+${text}
+
+Respond with ONLY the JSON object. No markdown fences, no explanation.`;
+  }
+  async extractEntities(text, existingEntities, onProgress, signal) {
+    const prompt = this.buildPrompt(text, existingEntities);
+    onProgress?.("Invoking Claude Code CLI...", 30);
+    try {
+      const raw = await this.invokeCLI(prompt, signal);
+      onProgress?.("Parsing response...", 80);
+      const parsed = this.parseResponse(raw);
+      if (!parsed) {
+        return { success: false, error: "Could not parse JSON from Claude response" };
+      }
+      const operations = this.normalizeOperations(parsed);
+      onProgress?.("Extraction complete", 100);
+      return { success: true, operations };
+    } catch (err) {
+      if (err.name === "AbortError")
+        throw err;
+      console.error("[ClaudeCodeService] extraction failed:", err);
+      return { success: false, error: err.message || String(err) };
+    }
+  }
+  invokeCLI(prompt, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      const { execFile } = require("child_process");
+      const args = [
+        "--print",
+        "--output-format",
+        "text",
+        "--model",
+        this.config.model,
+        "--max-turns",
+        "1"
+      ];
+      const child = execFile(
+        this.config.cliPath,
+        args,
+        {
+          timeout: this.config.timeoutMs,
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...process.env, NO_COLOR: "1" }
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            if (error.killed || error.signal === "SIGTERM") {
+              reject(new DOMException("Aborted", "AbortError"));
+            } else {
+              reject(new Error(`Claude CLI error (code ${error.code}): ${stderr || error.message}`));
+            }
+            return;
+          }
+          resolve(stdout);
+        }
+      );
+      child.stdin?.write(prompt);
+      child.stdin?.end();
+      if (signal) {
+        const onAbort = () => {
+          child.kill("SIGTERM");
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+  parseResponse(raw) {
+    const trimmed = raw.trim();
+    try {
+      const data = JSON.parse(trimmed);
+      if (data.operations)
+        return data;
+    } catch {
+    }
+    const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (fenceMatch) {
+      try {
+        const data = JSON.parse(fenceMatch[1].trim());
+        if (data.operations)
+          return data;
+      } catch {
+      }
+    }
+    const stack = [];
+    let start = -1;
+    let bestStart = -1;
+    let bestEnd = -1;
+    for (let i = 0; i < trimmed.length; i++) {
+      if (trimmed[i] === "{") {
+        if (start === -1)
+          start = i;
+        stack.push(i);
+      } else if (trimmed[i] === "}" && stack.length > 0) {
+        stack.pop();
+        if (stack.length === 0) {
+          const len = i - start + 1;
+          if (bestStart === -1 || len > bestEnd - bestStart + 1) {
+            bestStart = start;
+            bestEnd = i;
+          }
+          start = -1;
+        }
+      }
+    }
+    if (bestStart >= 0) {
+      let candidate = trimmed.substring(bestStart, bestEnd + 1);
+      candidate = candidate.replace(/,(\s*[}\]])/g, "$1");
+      try {
+        const data = JSON.parse(candidate);
+        if (data.operations)
+          return data;
+        if (data.action)
+          return { operations: [data] };
+      } catch {
+      }
+    }
+    return null;
+  }
+  normalizeOperations(data) {
+    if (!data?.operations || !Array.isArray(data.operations))
+      return [];
+    return data.operations.map((op) => ({
+      action: op.action || "create",
+      entities: Array.isArray(op.entities) ? op.entities : void 0,
+      connections: Array.isArray(op.connections) ? op.connections : void 0,
+      updates: Array.isArray(op.updates) ? op.updates : void 0
+    }));
+  }
+  async isAvailable() {
+    return new Promise((resolve) => {
+      try {
+        const { execFile } = require("child_process");
+        execFile(this.config.cliPath, ["--version"], { timeout: 5e3 }, (error) => {
+          resolve(!error);
+        });
+      } catch {
+        resolve(false);
+      }
+    });
   }
 };
 
@@ -11895,7 +11750,7 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 
 // src/services/intent-router.ts
 function detectOrchestrationIntent(query) {
@@ -11925,13 +11780,8 @@ function detectOrchestrationIntent(query) {
 
 // src/services/orchestration-service.ts
 var ORCHESTRATION_TOOL_DISPLAY_NAMES = {
-  DARK_WEB: "DarkWeb Search",
-  OSINT_SEARCH: "Digital Footprint",
-  CORPORATE_REPORTS: "Companies & People",
   LOCAL_VAULT: "Local Search",
-  VAULT_GRAPH_INGEST: "Vault graph (notes)",
-  EXTRACT_TO_GRAPH: "Extract to graph",
-  ANALYZE_EVIDENCE: "Evidence analysis"
+  EXTRACT_TO_GRAPH: "Extract to graph"
 };
 var _OrchestrationService = class _OrchestrationService {
   constructor(plugin) {
@@ -11941,7 +11791,7 @@ var _OrchestrationService = class _OrchestrationService {
     if (this.plugin.settings.orchestrationProvider === "osint-copilot") {
       try {
         const base = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
-        const response = await (0, import_obsidian14.requestUrl)({
+        const response = await (0, import_obsidian13.requestUrl)({
           url: `${base}/api/key/info`,
           method: "GET",
           headers: {
@@ -12108,74 +11958,28 @@ ${extractedText}`;
     }
   }
   /** Example default tools shown in the planner JSON template; aligns with routed intent. */
-  defaultToolsForIntent(intent) {
-    switch (intent) {
-      case "VAULT_GRAPH_BUILD":
-        return ["VAULT_GRAPH_INGEST"];
-      case "VAULT_QA":
-        return ["LOCAL_VAULT"];
-      case "MIXED":
-        return ["LOCAL_VAULT", "OSINT_SEARCH"];
-      case "OSINT_TOOL_RUN":
-      default:
-        return ["OSINT_SEARCH"];
-    }
+  defaultToolsForIntent(_intent) {
+    return ["LOCAL_VAULT"];
   }
   buildRoutedIntentInstructions(intent, hasAttachments) {
     const att = hasAttachments ? " Attachments are present; EXTRACT_TO_GRAPH may be included if it helps ingest files into the graph." : " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
     switch (intent) {
       case "VAULT_GRAPH_BUILD":
-        return `VAULT_GRAPH_BUILD \u2014 User wants to build or enrich the knowledge graph from Obsidian notes (often many or all files).${att} You MUST include "VAULT_GRAPH_INGEST" in toolsToCall (full vault / note ingestion for entity extraction). Do NOT include OSINT_SEARCH, DARK_WEB, or CORPORATE_REPORTS unless the user explicitly asks for external/open-web or dark-web intelligence in the same message.`;
       case "VAULT_QA":
-        return `VAULT_QA \u2014 User wants answers grounded in their vault.${att} Prioritize "LOCAL_VAULT". Add OSINT or other tools only if they clearly ask for outside sources.`;
-      case "OSINT_TOOL_RUN":
-        return `OSINT_TOOL_RUN \u2014 Primary need is external investigation.${att} Prefer OSINT_SEARCH and/or DARK_WEB/CORPORATE_REPORTS as appropriate. Include LOCAL_VAULT only if they also ask about their notes.`;
-      case "MIXED":
-        return `MIXED \u2014 Both vault-local and external investigation appear relevant.${att} Include LOCAL_VAULT plus at least one external tool when appropriate.`;
+        return `${intent} \u2014 User wants answers or graph data from their vault.${att} Use "LOCAL_VAULT" to search notes.`;
       default:
-        return `UNKNOWN \u2014 No strong heuristic match.${att} Choose tools from the user request; prefer LOCAL_VAULT when the question is only about their notes or building the graph from local documents.`;
+        return `${intent} \u2014 Use LOCAL_VAULT to search the user's vault.${att}`;
     }
   }
-  /** When the LLM returns no tools, align defaults with routed intent (avoid forcing OSINT for vault work). */
-  fallbackProposalForEmptyTools(routedIntent, query) {
-    if (routedIntent === "VAULT_GRAPH_BUILD") {
-      return {
-        toolsToCall: ["VAULT_GRAPH_INGEST"],
-        planSummary: `### Investigation Plan
-1. **Vault graph ingest** \u2014 Process your markdown notes and extract entities/relationships for the graph (up to a safe file limit).
-
-*Adjust modules before running.*`,
-        directResponse: `I'll run vault graph ingestion to extract entities from your notes into graph proposals. Add external modules only if you also need OSINT or dark web.`
-      };
-    }
-    if (routedIntent === "VAULT_QA") {
-      return {
-        toolsToCall: ["LOCAL_VAULT"],
-        planSummary: `### Investigation Plan
+  /** When the LLM returns no tools, default to LOCAL_VAULT. */
+  fallbackProposalForEmptyTools(_routedIntent, query) {
+    return {
+      toolsToCall: ["LOCAL_VAULT"],
+      planSummary: `### Investigation Plan
 1. **Local vault** \u2014 Search your Obsidian notes for: "${query}"
 
 *Adjust modules before running.*`,
-        directResponse: `I'll search your vault for relevant material. You can add other modules only if you also need external intelligence.`
-      };
-    }
-    if (routedIntent === "MIXED") {
-      return {
-        toolsToCall: ["LOCAL_VAULT", "OSINT_SEARCH"],
-        planSummary: `### Investigation Plan
-1. **Local vault** \u2014 Review your notes
-2. **OSINT** \u2014 Check external sources
-
-*Click Run to proceed.*`,
-        directResponse: `I'll combine local vault search with OSINT. Adjust modules if needed.`
-      };
-    }
-    return {
-      toolsToCall: ["OSINT_SEARCH"],
-      planSummary: `### Investigation Plan
-1. **OSINT Search** \u2014 Search public intelligence sources for: "${query}"
-
-*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`,
-      directResponse: `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`
+      directResponse: `I'll search your vault for relevant material.`
     };
   }
   async classifyIntent(query, attachmentsContext, graphState, conversationMemory, routedIntent) {
@@ -12194,18 +11998,14 @@ ${routedIntentBlock}
 
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools \u2014 EXCEPT when ROUTED INTENT is VAULT_GRAPH_BUILD: then use VAULT_GRAPH_INGEST only (unless they also ask for external sources). For VAULT_QA, prioritize LOCAL_VAULT. Do not add OSINT_SEARCH for vault-only graph builds.
+2. For ANY investigative question, propose LOCAL_VAULT to search existing vault notes. If attachments are present, also propose EXTRACT_TO_GRAPH.
 3. Set "isProposal" to true and list the tools you recommend.
 4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
 5. Your "directResponse" should describe your PLAN, never the answer to the question.
 6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
 
 === AVAILABLE TOOLS ===
-- "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
-- "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
-- "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Quick keyword search across a few matching Obsidian notes (legacy Q&A style).
-- "VAULT_GRAPH_INGEST" - Read many/all markdown notes in the vault (subject to limits), call the graph API to extract entities and relationships, and propose graph commands.${extractToGraphTool}
+- "LOCAL_VAULT" - Search across matching Obsidian notes in the vault.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -12360,7 +12160,7 @@ Respond with this exact JSON structure:
     const { EvidenceService: EvidenceService2 } = await Promise.resolve().then(() => (init_evidence_service(), evidence_service_exports));
     const svc = new EvidenceService2(this.plugin);
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian14.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian13.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -12427,207 +12227,6 @@ Respond with this exact JSON structure:
       const displayName = toolToDisplayName[tool] || tool;
       try {
         switch (tool) {
-          case "DARK_WEB": {
-            if (isCancelled("DARK_WEB")) {
-              results["DARK_WEB"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-              break;
-            }
-            const darkWebModel = "gpt-5-mini";
-            onProgress(displayName, "Initializing job...", 10);
-            const darkWebRes = await (0, import_obsidian14.requestUrl)({
-              url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`
-              },
-              body: JSON.stringify({ query, model: darkWebModel, threads: 8 }),
-              throw: false
-            });
-            if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
-              results["DARK_WEB"] = `API error: ${darkWebRes.status}`;
-              onProgress(displayName, "Failed", 100);
-              break;
-            }
-            const jobId = darkWebRes.json?.job_id;
-            if (!jobId) {
-              results["DARK_WEB"] = "No job ID returned.";
-              onProgress(displayName, "Failed", 100);
-              break;
-            }
-            const maxPollMs = 5 * 60 * 1e3;
-            const startTime = Date.now();
-            let completed = false;
-            while (Date.now() - startTime < maxPollMs) {
-              if (isCancelled("DARK_WEB")) {
-                results["DARK_WEB"] = "Cancelled by user.";
-                onProgress(displayName, "Cancelled", 100);
-                break;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 5e3));
-              const elapsed = Math.round((Date.now() - startTime) / 1e3);
-              onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
-              const statusRes = await (0, import_obsidian14.requestUrl)({
-                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
-                method: "GET",
-                headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
-                throw: false
-              });
-              if (statusRes.status >= 200 && statusRes.status < 300) {
-                if (statusRes.json?.status === "completed" || statusRes.json?.status === "done") {
-                  completed = true;
-                  break;
-                } else if (statusRes.json?.status === "failed") {
-                  results["DARK_WEB"] = "Investigation failed.";
-                  break;
-                }
-              }
-            }
-            if (completed && !isCancelled("DARK_WEB")) {
-              onProgress(displayName, "Downloading results...", 90);
-              const downloadRes = await (0, import_obsidian14.requestUrl)({
-                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
-                method: "GET",
-                headers: { "Authorization": `Bearer ${this.plugin.settings.reportApiKey}` },
-                throw: false
-              });
-              if (downloadRes.status < 300 && downloadRes.json?.summary) {
-                const summary = downloadRes.json.summary;
-                let savedFileName = "";
-                try {
-                  if (typeof this.plugin.saveDarkWebReportToVault === "function") {
-                    savedFileName = await this.plugin.saveDarkWebReportToVault(summary, query, jobId);
-                  }
-                } catch (e) {
-                  console.error("Could not save dark web report to vault", e);
-                }
-                results["DARK_WEB"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**
-
-${summary}` : summary;
-              } else {
-                results["DARK_WEB"] = "Download failed.";
-              }
-            } else if (!results["DARK_WEB"] && isCancelled("DARK_WEB")) {
-              results["DARK_WEB"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-            }
-            const dw = results["DARK_WEB"];
-            if (typeof dw === "string" && dw.includes("Cancelled")) {
-            } else {
-              onProgress(displayName, "Complete", 100);
-            }
-            break;
-          }
-          case "OSINT_SEARCH": {
-            if (isCancelled("OSINT_SEARCH")) {
-              results["OSINT_SEARCH"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-              break;
-            }
-            onProgress(displayName, "Searching digital footprints...", 30);
-            try {
-              const osintRes = await this.plugin.graphApiService.aiSearch({
-                query,
-                max_providers: 5,
-                parallel: true
-              });
-              results["OSINT_SEARCH"] = osintRes;
-            } catch (e) {
-              results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
-            }
-            if (isCancelled("OSINT_SEARCH")) {
-              results["OSINT_SEARCH"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-            } else {
-              onProgress(displayName, "Complete", 100);
-            }
-            break;
-          }
-          case "CORPORATE_REPORTS": {
-            if (isCancelled("CORPORATE_REPORTS")) {
-              results["CORPORATE_REPORTS"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-              break;
-            }
-            onProgress(displayName, "Generating corporate intelligence report...", 10);
-            try {
-              const reportData = await this.plugin.generateReport(
-                query,
-                currentConversation || null,
-                (status, progress) => {
-                  if (isCancelled("CORPORATE_REPORTS"))
-                    return;
-                  if (progress) {
-                    onProgress(displayName, progress.message, progress.percent);
-                  } else {
-                    onProgress(displayName, status, 30);
-                  }
-                }
-              );
-              let savedFileName = "";
-              try {
-                savedFileName = await this.plugin.saveReportToVault(
-                  reportData.content,
-                  query,
-                  reportData.filename
-                );
-              } catch (e) {
-                console.error("Could not save corporate report to vault", e);
-              }
-              results["CORPORATE_REPORTS"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**
-
-${reportData.content}` : reportData.content;
-            } catch (e) {
-              results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
-            }
-            if (isCancelled("CORPORATE_REPORTS")) {
-              results["CORPORATE_REPORTS"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-            } else {
-              onProgress(displayName, "Complete", 100);
-            }
-            break;
-          }
-          case "VAULT_GRAPH_INGEST": {
-            if (isCancelled("VAULT_GRAPH_INGEST")) {
-              results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-              break;
-            }
-            onProgress(displayName, "Starting vault graph ingest...", 5);
-            try {
-              const vaultSig = this.mergeAbortSignals(
-                options?.globalAbort,
-                options?.abortSignals?.["VAULT_GRAPH_INGEST"]
-              );
-              const out = await this.runVaultGraphIngest((msg, pct, detail) => {
-                if (isCancelled("VAULT_GRAPH_INGEST"))
-                  return;
-                onProgress(displayName, msg, pct, detail);
-              }, vaultSig);
-              results["VAULT_GRAPH_INGEST"] = {
-                __vaultIngest: true,
-                __vaultIngestAutoApplied: true,
-                summary: out.summary,
-                graphCommands: [],
-                appliedOperationsCount: out.graphCommands.length,
-                filesProcessed: out.filesProcessed,
-                filesTotal: out.filesTotal,
-                truncatedFiles: out.truncatedFiles,
-                extractFailures: out.extractFailures
-              };
-            } catch (e) {
-              results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${e instanceof Error ? e.message : String(e)}`;
-            }
-            if (isCancelled("VAULT_GRAPH_INGEST")) {
-              results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-            } else {
-              onProgress(displayName, "Complete", 100);
-            }
-            break;
-          }
           case "LOCAL_VAULT": {
             if (isCancelled("LOCAL_VAULT")) {
               results["LOCAL_VAULT"] = "Cancelled by user.";
@@ -12669,7 +12268,7 @@ Content Preview: ${content.substring(0, 500)}...`);
               onProgress(displayName, "No context", 100);
               break;
             }
-            const graphGenRes = await (0, import_obsidian14.requestUrl)({
+            const graphGenRes = await (0, import_obsidian13.requestUrl)({
               url: `${this.plugin.settings.graphApiUrl}/api/process-text`,
               method: "POST",
               headers: {
@@ -12685,55 +12284,6 @@ Content Preview: ${content.substring(0, 500)}...`);
             });
             results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
             onProgress(displayName, "Complete", 100);
-            break;
-          }
-          case "ANALYZE_EVIDENCE": {
-            if (isCancelled("ANALYZE_EVIDENCE")) {
-              results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-              break;
-            }
-            onProgress(displayName, "Opening evidence picker\u2026", 5);
-            try {
-              const { EvidencePickerModal: EvidencePickerModal2 } = await Promise.resolve().then(() => (init_evidence_picker_modal(), evidence_picker_modal_exports));
-              const picker = new EvidencePickerModal2(this.plugin.app);
-              const selection = await picker.pick();
-              if (!selection || selection.files.length === 0) {
-                results["ANALYZE_EVIDENCE"] = "No files selected.";
-                onProgress(displayName, "Skipped", 100);
-                break;
-              }
-              const { EvidenceService: EvidenceService2 } = await Promise.resolve().then(() => (init_evidence_service(), evidence_service_exports));
-              const svc = new EvidenceService2(this.plugin);
-              const commands = await svc.analyze(
-                selection.files,
-                (msg, pct) => {
-                  if (isCancelled("ANALYZE_EVIDENCE"))
-                    return;
-                  onProgress(displayName, msg, pct);
-                }
-              );
-              if (commands.length > 0) {
-                const lines = await this.executeGraphCommandsImmediate(commands, { showErrorNotices: false });
-                results["ANALYZE_EVIDENCE"] = {
-                  __evidenceAnalysis: true,
-                  summary: lines.join("\n"),
-                  graphCommands: [],
-                  appliedOperationsCount: commands.length,
-                  filesProcessed: selection.files.length
-                };
-              } else {
-                results["ANALYZE_EVIDENCE"] = "No entities extracted from evidence files.";
-              }
-            } catch (e) {
-              results["ANALYZE_EVIDENCE"] = `Evidence analysis failed: ${e instanceof Error ? e.message : String(e)}`;
-            }
-            if (isCancelled("ANALYZE_EVIDENCE")) {
-              results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
-              onProgress(displayName, "Cancelled", 100);
-            } else {
-              onProgress(displayName, "Complete", 100);
-            }
             break;
           }
           default:
@@ -12856,7 +12406,7 @@ ${result.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian14.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian13.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -12906,18 +12456,18 @@ ${result.summary || ""}
       ).open();
     });
     if (!confirmedValues) {
-      new import_obsidian14.Notice("Graph modifications cancelled by user.");
+      new import_obsidian13.Notice("Graph modifications cancelled by user.");
       return;
     }
     const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
     if (cmdsToExecute.length === 0) {
-      new import_obsidian14.Notice("No graph modifications selected.");
+      new import_obsidian13.Notice("No graph modifications selected.");
       return;
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian14.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian13.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -12990,7 +12540,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian14.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian13.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -13012,7 +12562,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -13026,7 +12576,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian15.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian14.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -13053,7 +12603,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian15.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian14.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -13080,7 +12630,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian15.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian14.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -13110,7 +12660,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian15.requestUrl)({ url });
+      const response = await (0, import_obsidian14.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -13145,7 +12695,196 @@ var UpdaterService = class {
 
 // main.ts
 init_evidence_service();
-init_evidence_picker_modal();
+
+// src/modals/evidence-picker-modal.ts
+var import_obsidian15 = require("obsidian");
+var EVIDENCE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "md",
+  "markdown",
+  "txt",
+  "pdf",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "doc",
+  "docx"
+]);
+var TYPE_ICONS = {
+  pdf: "\u{1F4C4}",
+  png: "\u{1F5BC}\uFE0F",
+  jpg: "\u{1F5BC}\uFE0F",
+  jpeg: "\u{1F5BC}\uFE0F",
+  webp: "\u{1F5BC}\uFE0F",
+  gif: "\u{1F5BC}\uFE0F",
+  doc: "\u{1F4DD}",
+  docx: "\u{1F4DD}",
+  md: "\u{1F4CB}",
+  markdown: "\u{1F4CB}",
+  txt: "\u{1F4CB}"
+};
+function humanSize(bytes) {
+  if (bytes < 1024)
+    return `${bytes} B`;
+  if (bytes < 1024 * 1024)
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+var EvidencePickerModal = class extends import_obsidian15.Modal {
+  constructor(app) {
+    super(app);
+    this.selected = /* @__PURE__ */ new Set();
+    this.allFiles = [];
+  }
+  /** Open the modal and return the user's selection (or null on cancel). */
+  pick() {
+    return new Promise((resolve) => {
+      this.resolve = resolve;
+      this.open();
+    });
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("osint-evidence-picker");
+    this.allFiles = this.app.vault.getFiles().filter((f) => f instanceof import_obsidian15.TFile).filter((f) => EVIDENCE_EXTENSIONS.has((f.extension || "").toLowerCase())).filter((f) => {
+      const p = f.path.replace(/\\/g, "/").toLowerCase();
+      return !p.startsWith(".obsidian/") && !p.includes("/.obsidian/") && !p.startsWith(".git/") && !p.includes("/.git/");
+    }).sort((a, b) => a.path.localeCompare(b.path));
+    contentEl.createEl("h2", { text: "Analyze vault evidence" });
+    const desc = contentEl.createEl("p", { cls: "setting-item-description" });
+    desc.setText(`${this.allFiles.length} evidence files found. Select files to classify and extract structured data.`);
+    const controls = contentEl.createDiv({ cls: "osint-evidence-controls" });
+    controls.setCssProps({ display: "flex", gap: "8px", "margin-bottom": "12px" });
+    const btnAll = controls.createEl("button", { text: "Select all", cls: "mod-muted" });
+    btnAll.addEventListener("click", () => this.toggleAll(true));
+    const btnNone = controls.createEl("button", { text: "Deselect all", cls: "mod-muted" });
+    btnNone.addEventListener("click", () => this.toggleAll(false));
+    const countEl = controls.createSpan({ cls: "osint-evidence-count" });
+    countEl.setCssProps({ "margin-left": "auto", "align-self": "center", "font-size": "0.85em", color: "var(--text-muted)" });
+    this.updateCount(countEl);
+    const listContainer = contentEl.createDiv({ cls: "osint-evidence-list" });
+    listContainer.setCssProps({
+      "max-height": "400px",
+      "overflow-y": "auto",
+      border: "1px solid var(--background-modifier-border)",
+      "border-radius": "6px",
+      padding: "8px"
+    });
+    const grouped = this.groupByFolder(this.allFiles);
+    for (const [folder, files] of grouped) {
+      const folderEl = listContainer.createDiv({ cls: "osint-evidence-folder" });
+      folderEl.setCssProps({ "margin-bottom": "6px" });
+      const folderHeader = folderEl.createDiv();
+      folderHeader.setCssProps({
+        display: "flex",
+        "align-items": "center",
+        gap: "6px",
+        "font-weight": "600",
+        "font-size": "0.85em",
+        color: "var(--text-muted)",
+        cursor: "pointer",
+        "margin-bottom": "2px"
+      });
+      folderHeader.createSpan({ text: "\u{1F4C1}" });
+      folderHeader.createSpan({ text: folder || "(root)" });
+      const folderCountSpan = folderHeader.createSpan({ text: ` (${files.length})` });
+      folderCountSpan.setCssProps({ "font-weight": "400" });
+      folderHeader.addEventListener("click", () => {
+        const allChecked = files.every((f) => this.selected.has(f.path));
+        for (const f of files) {
+          if (allChecked)
+            this.selected.delete(f.path);
+          else
+            this.selected.add(f.path);
+        }
+        this.refreshCheckboxes(listContainer);
+        this.updateCount(countEl);
+      });
+      for (const file of files) {
+        const row = folderEl.createEl("label", { cls: "osint-evidence-row" });
+        row.setCssProps({
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          padding: "3px 4px",
+          cursor: "pointer",
+          "border-radius": "4px"
+        });
+        const cb = row.createEl("input");
+        cb.type = "checkbox";
+        cb.checked = this.selected.has(file.path);
+        cb.dataset.path = file.path;
+        cb.addEventListener("change", () => {
+          if (cb.checked)
+            this.selected.add(file.path);
+          else
+            this.selected.delete(file.path);
+          this.updateCount(countEl);
+        });
+        const ext = (file.extension || "").toLowerCase();
+        row.createSpan({ text: TYPE_ICONS[ext] || "\u{1F4CE}" });
+        const nameSpan = row.createSpan({ text: file.name });
+        nameSpan.setCssProps({ flex: "1" });
+        const sizeSpan = row.createSpan({ text: humanSize(file.stat.size) });
+        sizeSpan.setCssProps({ "font-size": "0.8em", color: "var(--text-faint)" });
+      }
+    }
+    const actions = contentEl.createDiv({ cls: "osint-evidence-actions" });
+    actions.setCssProps({ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-top": "16px" });
+    const cancelBtn = actions.createEl("button", { text: "Cancel" });
+    cancelBtn.addEventListener("click", () => {
+      this.resolve(null);
+      this.close();
+    });
+    const analyzeBtn = actions.createEl("button", { text: "Analyze selected", cls: "mod-cta" });
+    analyzeBtn.addEventListener("click", () => {
+      const picked = this.allFiles.filter((f) => this.selected.has(f.path));
+      this.resolve({ files: picked });
+      this.close();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+  toggleAll(checked) {
+    if (checked) {
+      for (const f of this.allFiles)
+        this.selected.add(f.path);
+    } else {
+      this.selected.clear();
+    }
+    const cbs = this.contentEl.querySelectorAll("input[type=checkbox][data-path]");
+    cbs.forEach((cb) => {
+      cb.checked = checked;
+    });
+    const countEl = this.contentEl.querySelector(".osint-evidence-count");
+    if (countEl)
+      this.updateCount(countEl);
+  }
+  refreshCheckboxes(container) {
+    const cbs = container.querySelectorAll("input[type=checkbox][data-path]");
+    cbs.forEach((cb) => {
+      cb.checked = this.selected.has(cb.dataset.path || "");
+    });
+  }
+  updateCount(el) {
+    el.setText(`${this.selected.size} / ${this.allFiles.length} selected`);
+  }
+  groupByFolder(files) {
+    const map = /* @__PURE__ */ new Map();
+    for (const f of files) {
+      const parts = f.path.split("/");
+      const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+      if (!map.has(folder))
+        map.set(folder, []);
+      map.get(folder).push(f);
+    }
+    return map;
+  }
+};
+
+// main.ts
 var CHAT_MODEL = "gpt-4o-mini";
 var ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
 var DARKWEB_MODEL = "gpt-5-mini";
@@ -13164,8 +12903,9 @@ var DEFAULT_SETTINGS = {
   advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
-  // Custom API defaults
-  apiProvider: "default",
+  apiProvider: "claude-code",
+  claudeCodeCliPath: "claude",
+  claudeCodeModel: "sonnet",
   customCheckpoints: [],
   themeMode: "system",
   // Default to system theme
@@ -13213,6 +12953,16 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
   }
+  initClaudeCodeService() {
+    const adapter = this.app.vault.adapter;
+    const basePath = typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
+    const pluginDir = basePath && this.manifest.dir ? `${basePath}/${this.manifest.dir}` : "";
+    const svc = new ClaudeCodeService(pluginDir, {
+      cliPath: this.settings.claudeCodeCliPath || "claude",
+      model: this.settings.claudeCodeModel || "sonnet"
+    });
+    this.graphApiService.setClaudeCodeService(svc);
+  }
   async onload() {
     await this.loadSettings();
     if (!(this.settings.reportApiKey || "").trim()) {
@@ -13228,11 +12978,14 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
       this.settings.reportApiKey
     );
     this.graphApiService.setSettings({
-      apiProvider: "default",
+      apiProvider: "claude-code",
       customApiUrl: "",
       customApiKey: "",
-      customModel: ""
+      customModel: "",
+      claudeCodeCliPath: this.settings.claudeCodeCliPath,
+      claudeCodeModel: this.settings.claudeCodeModel
     });
+    this.initClaudeCodeService();
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
     try {
       await this.conversationService.initialize();
@@ -13512,12 +13265,14 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
       this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
       this.graphApiService.setApiKey(this.settings.reportApiKey);
       this.graphApiService.setSettings({
-        apiProvider: "default",
-        // Backward compat defaults
+        apiProvider: "claude-code",
         customApiUrl: "",
         customApiKey: "",
-        customModel: ""
+        customModel: "",
+        claudeCodeCliPath: this.settings.claudeCodeCliPath,
+        claudeCodeModel: this.settings.claudeCodeModel
       });
+      this.initClaudeCodeService();
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
@@ -13529,7 +13284,7 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
     });
   }
   isAuthenticated() {
-    return !!(this.settings.reportApiKey || "").trim();
+    return true;
   }
   /** Report API base URL (same as Graph API URL in settings). */
   reportApiBaseUrl() {
@@ -14646,16 +14401,7 @@ ${additionalContext}
    */
   async openChatView(forceNew = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new import_obsidian16.Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
-      return;
-    }
-    if (!this.settings.reportApiKey) {
-      new import_obsidian16.Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8e3);
-      const settingTab = this.app.setting;
-      if (settingTab) {
-        settingTab.open();
-        settingTab.openTabById(this.manifest.id);
-      }
+      new import_obsidian16.Notice("Chat view is disabled in permissions.");
       return;
     }
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -14992,14 +14738,8 @@ var ChatView = class extends import_obsidian16.ItemView {
       }
     }
     modeOptions.push(
-      { value: "orchestration", label: "\u{1F9E0} Main Copilot", mode: "orchestrationMode" },
-      // Added Orchestration Agent mode
-      { value: "vaultingest", label: "\u{1F5C2}\uFE0F Vault graph ingest", mode: "vaultGraphIngestMode" },
       { value: "none", label: "\u{1F3F7}\uFE0F Graph Generation", mode: "none" },
-      { value: "local", label: "\u{1F50D} Local Search", mode: "localSearchMode" },
-      { value: "darkweb", label: "\u{1F575}\uFE0F Dark Web", mode: "darkWebMode" },
-      { value: "report", label: "\u{1F4C4} Companies&People", mode: "reportGenerationMode" },
-      { value: "osint", label: "\u{1F50E} Digital Footprint", mode: "osintSearchMode" }
+      { value: "local", label: "\u{1F50D} Local Search", mode: "localSearchMode" }
     );
     for (const option of modeOptions) {
       const optEl = this.modeDropdown.createEl("option", {
@@ -15016,16 +14756,6 @@ var ChatView = class extends import_obsidian16.ItemView {
       } else if (option.value === "none" && this.isGraphOnlyMode())
         optEl.selected = true;
       else if (option.value === "local" && this.localSearchMode)
-        optEl.selected = true;
-      else if (option.value === "darkweb" && this.darkWebMode)
-        optEl.selected = true;
-      else if (option.value === "report" && this.reportGenerationMode)
-        optEl.selected = true;
-      else if (option.value === "osint" && this.osintSearchMode)
-        optEl.selected = true;
-      else if (option.value === "orchestration" && this.orchestrationMode)
-        optEl.selected = true;
-      else if (option.value === "vaultingest" && this.vaultGraphIngestMode)
         optEl.selected = true;
     }
     const settingsBtn = buttonGroup.createEl("button", {
@@ -15058,26 +14788,6 @@ var ChatView = class extends import_obsidian16.ItemView {
           case "local":
             this.localSearchMode = true;
             new import_obsidian16.Notice("Local search mode enabled");
-            break;
-          case "darkweb":
-            this.darkWebMode = true;
-            new import_obsidian16.Notice("Dark web mode enabled");
-            break;
-          case "report":
-            this.reportGenerationMode = true;
-            new import_obsidian16.Notice("Companies&people mode enabled");
-            break;
-          case "osint":
-            this.osintSearchMode = true;
-            new import_obsidian16.Notice("Leak search mode enabled");
-            break;
-          case "orchestration":
-            this.orchestrationMode = true;
-            new import_obsidian16.Notice("Main Copilot mode enabled");
-            break;
-          case "vaultingest":
-            this.vaultGraphIngestMode = true;
-            new import_obsidian16.Notice("Vault graph ingest mode \u2014 processes markdown, PDF, and images in your vault");
             break;
           case "none":
             if (this.graphGenerationMode) {
@@ -15181,7 +14891,7 @@ var ChatView = class extends import_obsidian16.ItemView {
     const spacer = actionRow.createDiv("vault-ai-action-spacer");
     spacer.style.flexGrow = "1";
     const sendBtn = actionRow.createEl("button", {
-      text: this.osintSearchMode ? "Search" : "Send",
+      text: "Send",
       cls: "vault-ai-send-btn"
     });
     sendBtn.addEventListener("click", () => void this.handleSend());
@@ -15264,67 +14974,11 @@ var ChatView = class extends import_obsidian16.ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   getModeDisclaimer() {
-    if (this.vaultGraphIngestMode) {
-      return {
-        icon: "\u{1F5C2}\uFE0F",
-        title: "Vault graph ingest:",
-        text: "Processes notes (markdown, text), PDFs, and images in your vault via the API, then proposes entities for your graph. Attachments add extra context."
-      };
-    }
-    if (this.orchestrationMode) {
-      return {
-        icon: "\u{1F9E0}",
-        title: "Main Copilot:",
-        text: "The agent will automatically use available tools (local search, web search, dark web, reports, graph extraction) to answer your query."
-      };
-    }
     if (this.isGraphOnlyMode()) {
       return {
         icon: "\u{1F3F7}\uFE0F",
         title: "Graph Generation Mode:",
         text: "Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat."
-      };
-    }
-    if (this.osintSearchMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "\u{1F50E}",
-          title: "Digital Footprint + Graph Gen:",
-          text: "Search leaked databases and automatically create entities from the results."
-        };
-      }
-      return {
-        icon: "\u{1F50E}",
-        title: "Digital Footprint:",
-        text: "Search multiple leaked databases for information about people, emails, phones, and more."
-      };
-    }
-    if (this.darkWebMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "\u{1F575}\uFE0F",
-          title: "Dark Web + Graph Gen:",
-          text: "Investigate dark web sources and automatically create entities from findings."
-        };
-      }
-      return {
-        icon: "\u{1F575}\uFE0F",
-        title: "Dark Web:",
-        text: "Search dark web sources for leaked data and threat intelligence."
-      };
-    }
-    if (this.reportGenerationMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "\u{1F4C4}",
-          title: "Persons&Companies + Graph Gen:",
-          text: "Generate comprehensive reports and automatically create entities from the content."
-        };
-      }
-      return {
-        icon: "\u{1F4C4}",
-        title: "Persons&Companies:",
-        text: "Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags"
       };
     }
     if (this.localSearchMode) {
@@ -15615,7 +15269,7 @@ var ChatView = class extends import_obsidian16.ItemView {
   }
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode() {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode && !this.vaultGraphIngestMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode;
   }
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
@@ -15625,19 +15279,8 @@ var ChatView = class extends import_obsidian16.ItemView {
   }
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder() {
-    if (this.vaultGraphIngestMode) {
-      return "Optional note (e.g. scope). Send to ingest markdown, PDF, and images from your vault into the graph...";
-    }
-    if (this.orchestrationMode)
-      return "Ask anything. The agent will orchestrate tools to find the answer...";
     if (this.isGraphOnlyMode()) {
       return "Enter text to extract entities...";
-    } else if (this.osintSearchMode) {
-      return "Enter OSINT search query (e.g., 'Find info about john@example.com')...";
-    } else if (this.darkWebMode) {
-      return "Enter dark web investigation query...";
-    } else if (this.reportGenerationMode) {
-      return "Describe the report you want to generate...";
     } else {
       return "Ask a question about your vault...";
     }
@@ -15682,7 +15325,7 @@ var ChatView = class extends import_obsidian16.ItemView {
     }
     const sendBtn = inputContainer.querySelector(".vault-ai-send-btn");
     if (sendBtn) {
-      sendBtn.textContent = this.osintSearchMode ? "Search" : "Send";
+      sendBtn.textContent = "Send";
     }
   }
   // Get the graph generation label text (shows Graph only when applicable)
@@ -16798,22 +16441,8 @@ ${fileList}` : fileList;
     }
     this.chatHistory.push({ role: "user", content: displayValue });
     await this.saveCurrentConversation();
-    if (this.vaultGraphIngestMode) {
-      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
-      await this.handleVaultGraphIngestOnly(value, attachmentsStr);
-    } else if (this.orchestrationMode) {
-      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
-      await this.handleOrchestrationAgent(value, attachmentsStr);
-    } else if (this.isGraphOnlyMode()) {
+    if (this.isGraphOnlyMode()) {
       await this.handleGraphOnlyMode(processingValue);
-    } else if (this.customChatMode) {
-      await this.handleCustomChat(processingValue);
-    } else if (this.osintSearchMode) {
-      await this.handleOSINTSearch(processingValue);
-    } else if (this.darkWebMode) {
-      await this.handleDarkWebInvestigation(processingValue);
-    } else if (this.reportGenerationMode) {
-      await this.handleReportGeneration(processingValue);
     } else {
       await this.handleNormalChat(processingValue);
     }
@@ -17194,16 +16823,9 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       import_obsidian16.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
     const allTools = [
-      { id: "OSINT_SEARCH", icon: "\u{1F310}", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
-      { id: "DARK_WEB", icon: "\u{1F578}\uFE0F", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
-      { id: "CORPORATE_REPORTS", icon: "\u{1F3E2}", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
       { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "VAULT_GRAPH_INGEST", icon: "\u{1F5C2}\uFE0F", label: "Vault graph ingest", desc: "Process many markdown notes and extract entities for the graph" }
+      { id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Extract entities from text into the knowledge graph" }
     ];
-    const hasAttachments = !!(item.savedQuery && /https?:\/\/|\.(pdf|docx?|txt|md)$/i.test(item.savedQuery));
-    if (hasAttachments) {
-      allTools.push({ id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Process attached files/links into the graph" });
-    }
     const proposedTools = new Set(plan.toolsToCall || []);
     const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
     toolSection.style.marginTop = "12px";
@@ -19283,6 +18905,40 @@ var VaultAISettingTab = class extends import_obsidian16.PluginSettingTab {
       cls: "setting-item-description"
     });
     noteP.setCssProps({ color: "var(--text-muted)" });
+    new import_obsidian16.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    containerEl.createEl("p", {
+      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian16.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+      (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
+        this.plugin.settings.claudeCodeCliPath = value || "claude";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian16.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+      (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
+        this.plugin.settings.claudeCodeModel = value || "sonnet";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian16.Setting(containerEl).setName("Test Claude Code").setDesc("Verify that the Claude CLI is reachable.").addButton(
+      (btn) => btn.setButtonText("Test connection").onClick(async () => {
+        btn.setButtonText("Testing...");
+        btn.setDisabled(true);
+        try {
+          const svc = new ClaudeCodeService("", {
+            cliPath: this.plugin.settings.claudeCodeCliPath
+          });
+          const ok = await svc.isAvailable();
+          new import_obsidian16.Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+        } catch (e) {
+          new import_obsidian16.Notice("Error: " + (e.message || String(e)));
+        }
+        btn.setButtonText("Test connection");
+        btn.setDisabled(false);
+      })
+    );
     new import_obsidian16.Setting(containerEl).setName("Graph view").setHeading();
     new import_obsidian16.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {

@@ -41,6 +41,7 @@ interface ApiKeyInfo {
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity } from './src/services/api-service';
+import { ClaudeCodeService } from './src/services/claude-code-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
@@ -76,7 +77,9 @@ interface VaultAISettings {
   // Conversation settings
   conversationFolder: string;
   // Custom API settings
-  apiProvider: 'default' | 'openai'; // Kept for backward compat, though now unused for custom chat
+  apiProvider: 'claude-code';
+  claudeCodeCliPath: string;
+  claudeCodeModel: string;
   customCheckpoints: CustomCheckpoint[];
   permissions?: {
     allow_web_access: boolean;
@@ -150,8 +153,9 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
-  // Custom API defaults
-  apiProvider: 'default',
+  apiProvider: 'claude-code',
+  claudeCodeCliPath: 'claude',
+  claudeCodeModel: 'sonnet',
   customCheckpoints: [],
 
   themeMode: 'system', // Default to system theme
@@ -221,10 +225,22 @@ export default class VaultAIPlugin extends Plugin {
   updaterService!: UpdaterService;
   evidenceService!: EvidenceService;
 
+  initClaudeCodeService() {
+    const adapter = this.app.vault.adapter as any;
+    const basePath = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+    const pluginDir = basePath && this.manifest.dir
+        ? `${basePath}/${this.manifest.dir}`
+        : '';
+    const svc = new ClaudeCodeService(pluginDir, {
+      cliPath: this.settings.claudeCodeCliPath || 'claude',
+      model: this.settings.claudeCodeModel || 'sonnet',
+    });
+    this.graphApiService.setClaudeCodeService(svc);
+  }
+
   async onload() {
     await this.loadSettings();
 
-    // Check license key on load
     // Check license key on load
     if (!(this.settings.reportApiKey || "").trim()) {
       new Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
@@ -243,14 +259,15 @@ export default class VaultAIPlugin extends Plugin {
       this.settings.graphApiUrl,
       this.settings.reportApiKey
     );
-    // Pass custom API settings
-    // Pass custom API settings
     this.graphApiService.setSettings({
-      apiProvider: 'default',
+      apiProvider: 'claude-code',
       customApiUrl: '',
       customApiKey: '',
-      customModel: ''
+      customModel: '',
+      claudeCodeCliPath: this.settings.claudeCodeCliPath,
+      claudeCodeModel: this.settings.claudeCodeModel,
     });
+    this.initClaudeCodeService();
 
     // Initialize conversation service
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
@@ -583,11 +600,14 @@ export default class VaultAIPlugin extends Plugin {
       this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
       this.graphApiService.setApiKey(this.settings.reportApiKey);
       this.graphApiService.setSettings({
-        apiProvider: 'default', // Backward compat defaults
+        apiProvider: 'claude-code',
         customApiUrl: '',
         customApiKey: '',
-        customModel: ''
+        customModel: '',
+        claudeCodeCliPath: this.settings.claudeCodeCliPath,
+        claudeCodeModel: this.settings.claudeCodeModel,
       });
+      this.initClaudeCodeService();
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
@@ -602,8 +622,7 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   isAuthenticated(): boolean {
-    // AI features require a valid license key
-    return !!(this.settings.reportApiKey || "").trim();
+    return true;
   }
 
   /** Report API base URL (same as Graph API URL in settings). */
@@ -2058,19 +2077,7 @@ export default class VaultAIPlugin extends Plugin {
    */
   async openChatView(forceNew: boolean = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
-      return;
-    }
-    // License key validation - Chat feature requires a valid license key
-    if (!this.settings.reportApiKey) {
-      new Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8000);
-      // Open settings tab so user can enter their license key
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const settingTab = (this.app as any).setting;
-      if (settingTab) {
-        settingTab.open();
-        settingTab.openTabById(this.manifest.id);
-      }
+      new Notice("Chat view is disabled in permissions.");
       return;
     }
 
@@ -2567,13 +2574,8 @@ export class ChatView extends ItemView {
 
     // Add standard options
     modeOptions.push(
-      { value: "orchestration", label: "🧠 Main Copilot", mode: "orchestrationMode" }, // Added Orchestration Agent mode
-      { value: "vaultingest", label: "🗂️ Vault graph ingest", mode: "vaultGraphIngestMode" },
       { value: "none", label: "🏷️ Graph Generation", mode: "none" },
       { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
-      { value: "darkweb", label: "🕵️ Dark Web", mode: "darkWebMode" },
-      { value: "report", label: "📄 Companies&People", mode: "reportGenerationMode" },
-      { value: "osint", label: "🔎 Digital Footprint", mode: "osintSearchMode" },
     );
 
     for (const option of modeOptions) {
@@ -2593,11 +2595,7 @@ export class ChatView extends ItemView {
       }
       else if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
       else if (option.value === "local" && this.localSearchMode) optEl.selected = true;
-      else if (option.value === "darkweb" && this.darkWebMode) optEl.selected = true;
-      else if (option.value === "report" && this.reportGenerationMode) optEl.selected = true;
-      else if (option.value === "osint" && this.osintSearchMode) optEl.selected = true;
-      else if (option.value === "orchestration" && this.orchestrationMode) optEl.selected = true; // Select orchestration mode
-      else if (option.value === "vaultingest" && this.vaultGraphIngestMode) optEl.selected = true;
+      
     }
 
     // Settings shortcut button
@@ -2623,7 +2621,7 @@ export class ChatView extends ItemView {
       this.darkWebMode = false;
       this.reportGenerationMode = false;
       this.osintSearchMode = false;
-      this.orchestrationMode = false; // Reset orchestration mode
+      this.orchestrationMode = false;
       this.vaultGraphIngestMode = false;
 
       // Enable selected mode
@@ -2640,26 +2638,6 @@ export class ChatView extends ItemView {
           case "local":
             this.localSearchMode = true;
             new Notice("Local search mode enabled");
-            break;
-          case "darkweb":
-            this.darkWebMode = true;
-            new Notice("Dark web mode enabled");
-            break;
-          case "report":
-            this.reportGenerationMode = true;
-            new Notice("Companies&people mode enabled");
-            break;
-          case "osint":
-            this.osintSearchMode = true;
-            new Notice("Leak search mode enabled");
-            break;
-          case "orchestration": // Handle orchestration mode selection
-            this.orchestrationMode = true;
-            new Notice("Main Copilot mode enabled");
-            break;
-          case "vaultingest":
-            this.vaultGraphIngestMode = true;
-            new Notice("Vault graph ingest mode — processes markdown, PDF, and images in your vault");
             break;
           case "none":
             // All modes off - Graph only Mode if graph generation is on
@@ -2793,7 +2771,7 @@ export class ChatView extends ItemView {
 
     // Send Button
     const sendBtn = actionRow.createEl("button", {
-      text: this.osintSearchMode ? "Search" : "Send",
+      text: "Send",
       cls: "vault-ai-send-btn"
     });
     sendBtn.addEventListener("click", () => void this.handleSend());
@@ -2897,71 +2875,11 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
-    if (this.vaultGraphIngestMode) {
-      return {
-        icon: "🗂️",
-        title: "Vault graph ingest:",
-        text: "Processes notes (markdown, text), PDFs, and images in your vault via the API, then proposes entities for your graph. Attachments add extra context.",
-      };
-    }
-    if (this.orchestrationMode) {
-      return {
-        icon: "🧠",
-        title: "Main Copilot:",
-        text: "The agent will automatically use available tools (local search, web search, dark web, reports, graph extraction) to answer your query."
-      };
-    }
-
     if (this.isGraphOnlyMode()) {
       return {
         icon: "🏷️",
         title: "Graph Generation Mode:",
         text: "Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat."
-      };
-    }
-
-    if (this.osintSearchMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "🔎",
-          title: "Digital Footprint + Graph Gen:",
-          text: "Search leaked databases and automatically create entities from the results."
-        };
-      }
-      return {
-        icon: "🔎",
-        title: "Digital Footprint:",
-        text: "Search multiple leaked databases for information about people, emails, phones, and more."
-      };
-    }
-
-    if (this.darkWebMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "🕵️",
-          title: "Dark Web + Graph Gen:",
-          text: "Investigate dark web sources and automatically create entities from findings."
-        };
-      }
-      return {
-        icon: "🕵️",
-        title: "Dark Web:",
-        text: "Search dark web sources for leaked data and threat intelligence."
-      };
-    }
-
-    if (this.reportGenerationMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "📄",
-          title: "Persons&Companies + Graph Gen:",
-          text: "Generate comprehensive reports and automatically create entities from the content."
-        };
-      }
-      return {
-        icon: "📄",
-        title: "Persons&Companies:",
-        text: "Generate detailed corporate intelligence reports about people and companies. Include data about sanctions and red flags"
       };
     }
 
@@ -2973,7 +2891,7 @@ export class ChatView extends ItemView {
           text: "Search your vault and automatically create entities from AI responses."
         };
       }
-      return null; // Default mode, no disclaimer needed
+      return null;
     }
 
     return null;
@@ -3335,7 +3253,7 @@ export class ChatView extends ItemView {
 
   // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode && !this.darkWebMode && !this.reportGenerationMode && !this.osintSearchMode && !this.orchestrationMode && !this.vaultGraphIngestMode;
+    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode;
   }
 
   // Show notice when entering Graph only Mode
@@ -3347,18 +3265,8 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    if (this.vaultGraphIngestMode) {
-      return "Optional note (e.g. scope). Send to ingest markdown, PDF, and images from your vault into the graph...";
-    }
-    if (this.orchestrationMode) return "Ask anything. The agent will orchestrate tools to find the answer...";
     if (this.isGraphOnlyMode()) {
       return "Enter text to extract entities...";
-    } else if (this.osintSearchMode) {
-      return "Enter OSINT search query (e.g., 'Find info about john@example.com')...";
-    } else if (this.darkWebMode) {
-      return "Enter dark web investigation query...";
-    } else if (this.reportGenerationMode) {
-      return "Describe the report you want to generate...";
     } else {
       return "Ask a question about your vault...";
     }
@@ -3416,7 +3324,7 @@ export class ChatView extends ItemView {
     // Also update the send button text based on mode
     const sendBtn = inputContainer.querySelector(".vault-ai-send-btn");
     if (sendBtn) {
-      sendBtn.textContent = this.osintSearchMode ? "Search" : "Send";
+      sendBtn.textContent = "Send";
     }
   }
 
@@ -4793,24 +4701,8 @@ export class ChatView extends ItemView {
 
     // Route to appropriate handler based on mode
     // Pass processingValue (includes file content) to handlers, not displayValue
-    if (this.vaultGraphIngestMode) {
-      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join("\n") : "";
-      await this.handleVaultGraphIngestOnly(value, attachmentsStr);
-    } else if (this.orchestrationMode) {
-      // Orchestration agent separates the raw query from the attachments for better prompting
-      const attachmentsStr = extractedContents.length > 0 ? extractedContents.join('\n') : "";
-      await this.handleOrchestrationAgent(value, attachmentsStr);
-    } else if (this.isGraphOnlyMode()) {
-      // Graph only Mode: Extract entities from user input without AI chat
+    if (this.isGraphOnlyMode()) {
       await this.handleGraphOnlyMode(processingValue);
-    } else if (this.customChatMode) {
-      await this.handleCustomChat(processingValue);
-    } else if (this.osintSearchMode) {
-      await this.handleOSINTSearch(processingValue);
-    } else if (this.darkWebMode) {
-      await this.handleDarkWebInvestigation(processingValue);
-    } else if (this.reportGenerationMode) {
-      await this.handleReportGeneration(processingValue);
     } else {
       // Default: Local Search Mode (normal chat)
       await this.handleNormalChat(processingValue);
@@ -5261,18 +5153,9 @@ export class ChatView extends ItemView {
 
     // All available tools with icons and descriptions
     const allTools: { id: string; icon: string; label: string; desc: string }[] = [
-      { id: "OSINT_SEARCH", icon: "🌐", label: "OSINT Search", desc: "Public records, web search, digital footprints" },
-      { id: "DARK_WEB", icon: "🕸️", label: "Dark Web", desc: "Hidden services, underground leaks, threat forums" },
-      { id: "CORPORATE_REPORTS", icon: "🏢", label: "Corporate Reports", desc: "Ownership, financials, sanctions, legal filings" },
       { id: "LOCAL_VAULT", icon: "📁", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "VAULT_GRAPH_INGEST", icon: "🗂️", label: "Vault graph ingest", desc: "Process many markdown notes and extract entities for the graph" },
+      { id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Extract entities from text into the knowledge graph" },
     ];
-
-    // Only show EXTRACT_TO_GRAPH if attachments/links are present
-    const hasAttachments = !!(item.savedQuery && /https?:\/\/|\.(pdf|docx?|txt|md)$/i.test(item.savedQuery));
-    if (hasAttachments) {
-      allTools.push({ id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Process attached files/links into the graph" });
-    }
 
     const proposedTools = new Set(plan.toolsToCall || []);
 
@@ -7776,6 +7659,61 @@ class VaultAISettingTab extends PluginSettingTab {
       cls: "setting-item-description",
     });
     noteP.setCssProps({ color: "var(--text-muted)" });
+
+    // ── Graph Extraction (Claude Code) ─────────────────────────────────────
+    new Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+
+    containerEl.createEl("p", {
+      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Claude CLI path")
+      .setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.")
+      .addText((text) =>
+        text
+          .setPlaceholder("claude")
+          .setValue(this.plugin.settings.claudeCodeCliPath)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCodeCliPath = value || 'claude';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude model")
+      .setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).")
+      .addText((text) =>
+        text
+          .setPlaceholder("sonnet")
+          .setValue(this.plugin.settings.claudeCodeModel)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCodeModel = value || 'sonnet';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Test Claude Code")
+      .setDesc("Verify that the Claude CLI is reachable.")
+      .addButton((btn) =>
+        btn.setButtonText("Test connection").onClick(async () => {
+          btn.setButtonText("Testing...");
+          btn.setDisabled(true);
+          try {
+            const svc = new ClaudeCodeService('', {
+              cliPath: this.plugin.settings.claudeCodeCliPath,
+            });
+            const ok = await svc.isAvailable();
+            new Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+          } catch (e: any) {
+            new Notice("Error: " + (e.message || String(e)));
+          }
+          btn.setButtonText("Test connection");
+          btn.setDisabled(false);
+        })
+      );
 
     new Setting(containerEl).setName("Graph view").setHeading();
 
