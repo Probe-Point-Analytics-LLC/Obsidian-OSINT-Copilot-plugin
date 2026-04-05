@@ -14,6 +14,7 @@
 
 import { requestUrl, RequestUrlResponse } from 'obsidian';
 import { AIOperation, Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
+import { ClaudeCodeService } from './claude-code-service';
 
 /** Optional tuning for vault ingest: smaller chunks + per-chunk callback for live UI. */
 export interface VaultProcessTextChunkOptions {
@@ -103,10 +104,12 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
 
 // Local interface to avoid circular dependency with main.ts
 export interface ApiSettings {
-    apiProvider: 'default' | 'openai';
+    apiProvider: 'claude-code';
     customApiUrl: string;
     customApiKey: string;
     customModel: string;
+    claudeCodeCliPath?: string;
+    claudeCodeModel?: string;
 }
 
 /**
@@ -128,11 +131,16 @@ export class GraphApiService {
     private isOnline: boolean = false;
     private retryConfig: RetryConfig;
     private settings: ApiSettings | null = null;
+    private claudeCodeService: ClaudeCodeService | null = null;
 
     constructor(baseUrl: string = 'https://api.osint-copilot.com', apiKey: string = '') {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.retryConfig = { ...DEFAULT_RETRY_CONFIG };
+    }
+
+    setClaudeCodeService(service: ClaudeCodeService): void {
+        this.claudeCodeService = service;
     }
 
     /**
@@ -191,66 +199,15 @@ export class GraphApiService {
      * Uses Obsidian's requestUrl to bypass CORS restrictions.
      */
     async checkHealth(): Promise<ApiHealthResponse | null> {
-        // If using custom API, check that instead
-        if (this.settings?.apiProvider === 'openai') {
-            try {
-                // Determine health check URL (some providers support /health, others may need a simple completion)
-                // For now, we'll try a fast call to /models or just assume online if URL is reachable
-                const response = await requestUrl({
-                    url: this.settings.customApiUrl.replace(/\/v1\/?$/, '') + '/v1/models',
-                    method: 'GET',
-                    headers: this.settings.customApiKey ? { 'Authorization': `Bearer ${this.settings.customApiKey}` } : {},
-                    throw: false
-                });
-
-                if (response.status >= 200 && response.status < 300) {
-                    this.isOnline = true;
-                    return { status: 'ok', openai_configured: true, version: 'custom' };
-                }
-                // Fallback: assume online if we didn't get a connection error
-                this.isOnline = true;
-                return { status: 'ok', openai_configured: true };
-            } catch (e) {
-                console.debug('[GraphApiService] Custom API unavailable:', e);
-                this.isOnline = false;
-                return null;
-            }
+        if (this.claudeCodeService) {
+            const available = await this.claudeCodeService.isAvailable();
+            this.isOnline = available;
+            return available
+                ? { status: 'ok', openai_configured: true, version: 'claude-code-local' }
+                : null;
         }
-
-        try {
-            // Try the health endpoint first using Obsidian's requestUrl (bypasses CORS)
-            const response: RequestUrlResponse = await requestUrl({
-                url: `${this.baseUrl}/health`,
-                method: 'GET',
-                headers: this.getHeaders(),
-                throw: false // Don't throw on non-2xx status
-            });
-
-            if (response.status >= 200 && response.status < 300) {
-                this.isOnline = true;
-                return response.json;
-            }
-
-            // Fallback: try root endpoint
-            const rootResponse: RequestUrlResponse = await requestUrl({
-                url: `${this.baseUrl}/`,
-                method: 'GET',
-                headers: this.getHeaders(),
-                throw: false
-            });
-
-            if (rootResponse.status >= 200 && rootResponse.status < 300) {
-                this.isOnline = true;
-                return rootResponse.json;
-            }
-
-            this.isOnline = false;
-            return null;
-        } catch (error) {
-            this.isOnline = false;
-            console.debug('[GraphApiService] AI API unavailable - graph generation from text will not work');
-            return null;
-        }
+        this.isOnline = false;
+        return null;
     }
 
     /**
@@ -1073,165 +1030,14 @@ export class GraphApiService {
         signal?: AbortSignal,
         useLocal: boolean = false
     ): Promise<ProcessTextResponse> {
-        // Skip health check - just try the request directly.
-        // If the API is down, the request will fail with a proper timeout error.
-        // This prevents blocking on a hanging health check.
-
-        console.debug('[GraphApiService] Processing text with AI:', text.substring(0, 100) + '...');
-
-        const { maxRetries, baseTimeoutMs } = this.retryConfig;
-        let currentTimeout = baseTimeoutMs;
-        let lastError: unknown = null;
-        let lastStatusCode: number | undefined;
-        let hadTimeoutError = false;
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            if (signal?.aborted) {
-                throw new DOMException('Aborted', 'AbortError');
-            }
-
-            try {
-                // Increase timeout if we had a timeout error on previous attempt
-                if (hadTimeoutError) {
-                    currentTimeout = this.calculateTimeout(currentTimeout, true);
-                    console.debug(`[GraphApiService] Increased timeout to ${currentTimeout}ms after timeout error`);
-                }
-
-                console.debug(`[GraphApiService] Attempt ${attempt}/${maxRetries} with ${currentTimeout}ms timeout`);
-
-                const response = await this.fetchWithTimeout(
-                    `${this.baseUrl}/api/process-text`,
-                    {
-                        method: 'POST',
-                        headers: this.getHeaders(),
-                        mode: 'cors',
-                        credentials: 'omit',
-                        body: JSON.stringify({
-                            text,
-                            existing_entities: existingEntities?.map(e => ({
-                                id: e.id,
-                                type: e.type,
-                                label: e.label,
-                                properties: e.properties
-                            })),
-                            reference_time: referenceTime,
-                            use_local: useLocal
-                        })
-                    },
-                    currentTimeout,
-                    signal
-                );
-
-                // Handle non-OK responses
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error(`[GraphApiService] API error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
-                    lastStatusCode = response.status;
-
-                    // Non-retryable client errors (4xx except 429)
-                    if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-                        if (response.status === 401 || response.status === 403) {
-                            return {
-                                success: false,
-                                error: 'Authentication required. Please configure your API key in Settings → OSINT Copilot → API Key'
-                            };
-                        }
-
-                        if (response.status === 404) {
-                            return {
-                                success: false,
-                                error: 'API endpoint not found. Please check that the API server is running and the URL is correct.'
-                            };
-                        }
-
-                        return {
-                            success: false,
-                            error: `API error (${response.status}): ${errorText}`
-                        };
-                    }
-
-                    // Retryable errors (5xx, 429)
-                    lastError = new Error(`HTTP ${response.status}: ${errorText}`);
-
-                    if (attempt < maxRetries) {
-                        let delayMs = this.calculateBackoffDelay(attempt);
-                        // 524 = Cloudflare origin timeout; same payload may need a breather before retry
-                        if (response.status === 524) {
-                            delayMs = Math.min(delayMs * 2 + 3000, 20000);
-                        }
-                        const reason = this.getErrorReason(lastError, response.status);
-                        console.debug(`[GraphApiService] Retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
-
-                        // Notify caller about retry
-                        if (onRetry) {
-                            onRetry(attempt, maxRetries, reason, delayMs);
-                        }
-
-                        await new Promise(resolve => setTimeout(resolve, delayMs));
-                        continue;
-                    }
-                } else {
-                    // Success!
-                    const result = await response.json();
-                    console.debug('[GraphApiService] AI processing successful:', result);
-                    return result as ProcessTextResponse;
-                }
-            } catch (error) {
-                console.error(`[GraphApiService] Process text failed (attempt ${attempt}/${maxRetries}):`, error);
-                lastError = error;
-
-                // Track timeout errors to increase timeout on next attempt
-                if (this.isTimeoutError(error)) {
-                    hadTimeoutError = true;
-                }
-
-                // Check if error is retryable
-                if (this.isRetryableError(error) && attempt < maxRetries) {
-                    const delayMs = this.calculateBackoffDelay(attempt);
-                    const reason = this.getErrorReason(error, lastStatusCode);
-                    console.debug(`[GraphApiService] ${reason} error, retrying in ${Math.round(delayMs)}ms...`);
-
-                    // Notify caller about retry
-                    if (onRetry) {
-                        onRetry(attempt, maxRetries, reason, delayMs);
-                    }
-
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                    continue;
-                }
-
-                // Non-retryable error or max retries reached
-                if (!this.isRetryableError(error)) {
-                    // Mark as offline only for non-retryable errors
-                    this.isOnline = false;
-                }
-            }
+        if (!this.claudeCodeService) {
+            return {
+                success: false,
+                error: 'Claude Code service not initialized. Please check Settings → OSINT Copilot → Graph Extraction.',
+            };
         }
-
-        // All retries exhausted
-        const errorMessage = this.getErrorMessage(lastError, lastStatusCode);
-        console.error('[GraphApiService] All retries exhausted:', errorMessage);
-
-        // Provide helpful message based on error type
-        let helpMessage = '💡 Please wait a moment and try again. This is usually temporary.';
-        if (this.isTimeoutError(lastError)) {
-            helpMessage = '💡 The server is busy processing requests. Please wait a moment and try again.';
-        } else if (this.isNetworkError(lastError)) {
-            helpMessage = '💡 Network connection failed. Please check your internet connection and try again.';
-        } else if (lastStatusCode === 524) {
-            helpMessage =
-                '💡 Error 524 means the CDN stopped waiting for the API (often ~100s). ' +
-                'Vault ingest and large notes use smaller chunks automatically; if this persists, ask your admin to raise origin/proxy timeouts.';
-        } else if (lastStatusCode && lastStatusCode >= 500) {
-            helpMessage = '💡 The server is experiencing issues. Please try again later.';
-        }
-
-        return {
-            success: false,
-            error: `Entity extraction failed after ${maxRetries} attempts: ${errorMessage}\n\n${helpMessage}`,
-            // Include the original text so caller can preserve it for retry
-            originalText: text
-        };
+        console.debug('[GraphApiService] Routing to Claude Code for entity extraction');
+        return this.claudeCodeService.extractEntities(text, existingEntities, undefined, signal);
     }
 
 

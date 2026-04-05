@@ -41,6 +41,7 @@ interface ApiKeyInfo {
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity } from './src/services/api-service';
+import { ClaudeCodeService } from './src/services/claude-code-service';
 import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
@@ -76,7 +77,9 @@ interface VaultAISettings {
   // Conversation settings
   conversationFolder: string;
   // Custom API settings
-  apiProvider: 'default' | 'openai'; // Kept for backward compat, though now unused for custom chat
+  apiProvider: 'claude-code';
+  claudeCodeCliPath: string;
+  claudeCodeModel: string;
   customCheckpoints: CustomCheckpoint[];
   permissions?: {
     allow_web_access: boolean;
@@ -150,8 +153,9 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
-  // Custom API defaults
-  apiProvider: 'default',
+  apiProvider: 'claude-code',
+  claudeCodeCliPath: 'claude',
+  claudeCodeModel: 'sonnet',
   customCheckpoints: [],
 
   themeMode: 'system', // Default to system theme
@@ -221,10 +225,22 @@ export default class VaultAIPlugin extends Plugin {
   updaterService!: UpdaterService;
   evidenceService!: EvidenceService;
 
+  initClaudeCodeService() {
+    const adapter = this.app.vault.adapter as any;
+    const basePath = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+    const pluginDir = basePath && this.manifest.dir
+        ? `${basePath}/${this.manifest.dir}`
+        : '';
+    const svc = new ClaudeCodeService(pluginDir, {
+      cliPath: this.settings.claudeCodeCliPath || 'claude',
+      model: this.settings.claudeCodeModel || 'sonnet',
+    });
+    this.graphApiService.setClaudeCodeService(svc);
+  }
+
   async onload() {
     await this.loadSettings();
 
-    // Check license key on load
     // Check license key on load
     if (!(this.settings.reportApiKey || "").trim()) {
       new Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
@@ -243,14 +259,15 @@ export default class VaultAIPlugin extends Plugin {
       this.settings.graphApiUrl,
       this.settings.reportApiKey
     );
-    // Pass custom API settings
-    // Pass custom API settings
     this.graphApiService.setSettings({
-      apiProvider: 'default',
+      apiProvider: 'claude-code',
       customApiUrl: '',
       customApiKey: '',
-      customModel: ''
+      customModel: '',
+      claudeCodeCliPath: this.settings.claudeCodeCliPath,
+      claudeCodeModel: this.settings.claudeCodeModel,
     });
+    this.initClaudeCodeService();
 
     // Initialize conversation service
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
@@ -583,11 +600,14 @@ export default class VaultAIPlugin extends Plugin {
       this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
       this.graphApiService.setApiKey(this.settings.reportApiKey);
       this.graphApiService.setSettings({
-        apiProvider: 'default', // Backward compat defaults
+        apiProvider: 'claude-code',
         customApiUrl: '',
         customApiKey: '',
-        customModel: ''
+        customModel: '',
+        claudeCodeCliPath: this.settings.claudeCodeCliPath,
+        claudeCodeModel: this.settings.claudeCodeModel,
       });
+      this.initClaudeCodeService();
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
@@ -602,8 +622,7 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   isAuthenticated(): boolean {
-    // AI features require a valid license key
-    return !!(this.settings.reportApiKey || "").trim();
+    return true;
   }
 
   /** Report API base URL (same as Graph API URL in settings). */
@@ -2058,19 +2077,7 @@ export default class VaultAIPlugin extends Plugin {
    */
   async openChatView(forceNew: boolean = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
-      return;
-    }
-    // License key validation - Chat feature requires a valid license key
-    if (!this.settings.reportApiKey) {
-      new Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8000);
-      // Open settings tab so user can enter their license key
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const settingTab = (this.app as any).setting;
-      if (settingTab) {
-        settingTab.open();
-        settingTab.openTabById(this.manifest.id);
-      }
+      new Notice("Chat view is disabled in permissions.");
       return;
     }
 
@@ -7652,6 +7659,61 @@ class VaultAISettingTab extends PluginSettingTab {
       cls: "setting-item-description",
     });
     noteP.setCssProps({ color: "var(--text-muted)" });
+
+    // ── Graph Extraction (Claude Code) ─────────────────────────────────────
+    new Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+
+    containerEl.createEl("p", {
+      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Claude CLI path")
+      .setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.")
+      .addText((text) =>
+        text
+          .setPlaceholder("claude")
+          .setValue(this.plugin.settings.claudeCodeCliPath)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCodeCliPath = value || 'claude';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude model")
+      .setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).")
+      .addText((text) =>
+        text
+          .setPlaceholder("sonnet")
+          .setValue(this.plugin.settings.claudeCodeModel)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCodeModel = value || 'sonnet';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Test Claude Code")
+      .setDesc("Verify that the Claude CLI is reachable.")
+      .addButton((btn) =>
+        btn.setButtonText("Test connection").onClick(async () => {
+          btn.setButtonText("Testing...");
+          btn.setDisabled(true);
+          try {
+            const svc = new ClaudeCodeService('', {
+              cliPath: this.plugin.settings.claudeCodeCliPath,
+            });
+            const ok = await svc.isAvailable();
+            new Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+          } catch (e: any) {
+            new Notice("Error: " + (e.message || String(e)));
+          }
+          btn.setButtonText("Test connection");
+          btn.setDisabled(false);
+        })
+      );
 
     new Setting(containerEl).setName("Graph view").setHeading();
 

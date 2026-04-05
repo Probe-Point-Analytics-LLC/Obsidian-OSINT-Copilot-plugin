@@ -3794,9 +3794,13 @@ var GraphApiService = class {
   constructor(baseUrl = "https://api.osint-copilot.com", apiKey = "") {
     this.isOnline = false;
     this.settings = null;
+    this.claudeCodeService = null;
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.retryConfig = { ...DEFAULT_RETRY_CONFIG };
+  }
+  setClaudeCodeService(service) {
+    this.claudeCodeService = service;
   }
   /**
    * Update settings.
@@ -3848,55 +3852,13 @@ var GraphApiService = class {
    * Uses Obsidian's requestUrl to bypass CORS restrictions.
    */
   async checkHealth() {
-    if (this.settings?.apiProvider === "openai") {
-      try {
-        const response = await (0, import_obsidian3.requestUrl)({
-          url: this.settings.customApiUrl.replace(/\/v1\/?$/, "") + "/v1/models",
-          method: "GET",
-          headers: this.settings.customApiKey ? { "Authorization": `Bearer ${this.settings.customApiKey}` } : {},
-          throw: false
-        });
-        if (response.status >= 200 && response.status < 300) {
-          this.isOnline = true;
-          return { status: "ok", openai_configured: true, version: "custom" };
-        }
-        this.isOnline = true;
-        return { status: "ok", openai_configured: true };
-      } catch (e) {
-        console.debug("[GraphApiService] Custom API unavailable:", e);
-        this.isOnline = false;
-        return null;
-      }
+    if (this.claudeCodeService) {
+      const available = await this.claudeCodeService.isAvailable();
+      this.isOnline = available;
+      return available ? { status: "ok", openai_configured: true, version: "claude-code-local" } : null;
     }
-    try {
-      const response = await (0, import_obsidian3.requestUrl)({
-        url: `${this.baseUrl}/health`,
-        method: "GET",
-        headers: this.getHeaders(),
-        throw: false
-        // Don't throw on non-2xx status
-      });
-      if (response.status >= 200 && response.status < 300) {
-        this.isOnline = true;
-        return response.json;
-      }
-      const rootResponse = await (0, import_obsidian3.requestUrl)({
-        url: `${this.baseUrl}/`,
-        method: "GET",
-        headers: this.getHeaders(),
-        throw: false
-      });
-      if (rootResponse.status >= 200 && rootResponse.status < 300) {
-        this.isOnline = true;
-        return rootResponse.json;
-      }
-      this.isOnline = false;
-      return null;
-    } catch (error) {
-      this.isOnline = false;
-      console.debug("[GraphApiService] AI API unavailable - graph generation from text will not work");
-      return null;
-    }
+    this.isOnline = false;
+    return null;
   }
   /**
    * Get the current online status.
@@ -4500,126 +4462,14 @@ var GraphApiService = class {
    * @returns ProcessTextResponse with extracted entities and relationships
    */
   async processText(text, existingEntities, referenceTime, onRetry, signal, useLocal = false) {
-    console.debug("[GraphApiService] Processing text with AI:", text.substring(0, 100) + "...");
-    const { maxRetries, baseTimeoutMs } = this.retryConfig;
-    let currentTimeout = baseTimeoutMs;
-    let lastError = null;
-    let lastStatusCode;
-    let hadTimeoutError = false;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
-      }
-      try {
-        if (hadTimeoutError) {
-          currentTimeout = this.calculateTimeout(currentTimeout, true);
-          console.debug(`[GraphApiService] Increased timeout to ${currentTimeout}ms after timeout error`);
-        }
-        console.debug(`[GraphApiService] Attempt ${attempt}/${maxRetries} with ${currentTimeout}ms timeout`);
-        const response = await this.fetchWithTimeout(
-          `${this.baseUrl}/api/process-text`,
-          {
-            method: "POST",
-            headers: this.getHeaders(),
-            mode: "cors",
-            credentials: "omit",
-            body: JSON.stringify({
-              text,
-              existing_entities: existingEntities?.map((e) => ({
-                id: e.id,
-                type: e.type,
-                label: e.label,
-                properties: e.properties
-              })),
-              reference_time: referenceTime,
-              use_local: useLocal
-            })
-          },
-          currentTimeout,
-          signal
-        );
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`[GraphApiService] API error (attempt ${attempt}/${maxRetries}):`, response.status, errorText);
-          lastStatusCode = response.status;
-          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-            if (response.status === 401 || response.status === 403) {
-              return {
-                success: false,
-                error: "Authentication required. Please configure your API key in Settings \u2192 OSINT Copilot \u2192 API Key"
-              };
-            }
-            if (response.status === 404) {
-              return {
-                success: false,
-                error: "API endpoint not found. Please check that the API server is running and the URL is correct."
-              };
-            }
-            return {
-              success: false,
-              error: `API error (${response.status}): ${errorText}`
-            };
-          }
-          lastError = new Error(`HTTP ${response.status}: ${errorText}`);
-          if (attempt < maxRetries) {
-            let delayMs = this.calculateBackoffDelay(attempt);
-            if (response.status === 524) {
-              delayMs = Math.min(delayMs * 2 + 3e3, 2e4);
-            }
-            const reason = this.getErrorReason(lastError, response.status);
-            console.debug(`[GraphApiService] Retrying in ${Math.round(delayMs)}ms (reason: ${reason})...`);
-            if (onRetry) {
-              onRetry(attempt, maxRetries, reason, delayMs);
-            }
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-            continue;
-          }
-        } else {
-          const result = await response.json();
-          console.debug("[GraphApiService] AI processing successful:", result);
-          return result;
-        }
-      } catch (error) {
-        console.error(`[GraphApiService] Process text failed (attempt ${attempt}/${maxRetries}):`, error);
-        lastError = error;
-        if (this.isTimeoutError(error)) {
-          hadTimeoutError = true;
-        }
-        if (this.isRetryableError(error) && attempt < maxRetries) {
-          const delayMs = this.calculateBackoffDelay(attempt);
-          const reason = this.getErrorReason(error, lastStatusCode);
-          console.debug(`[GraphApiService] ${reason} error, retrying in ${Math.round(delayMs)}ms...`);
-          if (onRetry) {
-            onRetry(attempt, maxRetries, reason, delayMs);
-          }
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          continue;
-        }
-        if (!this.isRetryableError(error)) {
-          this.isOnline = false;
-        }
-      }
+    if (!this.claudeCodeService) {
+      return {
+        success: false,
+        error: "Claude Code service not initialized. Please check Settings \u2192 OSINT Copilot \u2192 Graph Extraction."
+      };
     }
-    const errorMessage = this.getErrorMessage(lastError, lastStatusCode);
-    console.error("[GraphApiService] All retries exhausted:", errorMessage);
-    let helpMessage = "\u{1F4A1} Please wait a moment and try again. This is usually temporary.";
-    if (this.isTimeoutError(lastError)) {
-      helpMessage = "\u{1F4A1} The server is busy processing requests. Please wait a moment and try again.";
-    } else if (this.isNetworkError(lastError)) {
-      helpMessage = "\u{1F4A1} Network connection failed. Please check your internet connection and try again.";
-    } else if (lastStatusCode === 524) {
-      helpMessage = "\u{1F4A1} Error 524 means the CDN stopped waiting for the API (often ~100s). Vault ingest and large notes use smaller chunks automatically; if this persists, ask your admin to raise origin/proxy timeouts.";
-    } else if (lastStatusCode && lastStatusCode >= 500) {
-      helpMessage = "\u{1F4A1} The server is experiencing issues. Please try again later.";
-    }
-    return {
-      success: false,
-      error: `Entity extraction failed after ${maxRetries} attempts: ${errorMessage}
-
-${helpMessage}`,
-      // Include the original text so caller can preserve it for retry
-      originalText: text
-    };
+    console.debug("[GraphApiService] Routing to Claude Code for entity extraction");
+    return this.claudeCodeService.extractEntities(text, existingEntities, void 0, signal);
   }
   /**
    * AI-powered OSINT search that automatically detects entity types,
@@ -4713,6 +4563,209 @@ ${helpMessage}`,
       throw new Error("Search timed out. Try reducing the number of providers.");
     }
     throw new Error(`Digital Footprint failed after ${maxRetries} attempts: ${errorMessage}`);
+  }
+};
+
+// src/services/claude-code-service.ts
+var DEFAULT_CONFIG = {
+  cliPath: "claude",
+  model: "sonnet",
+  maxTokens: 16e3,
+  timeoutMs: 12e4
+};
+var SKILL_FILE = ".claude/GRAPH_EXTRACTION.md";
+var ClaudeCodeService = class {
+  constructor(pluginDir, config) {
+    this.skillContent = null;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.pluginDir = pluginDir;
+  }
+  updateConfig(config) {
+    Object.assign(this.config, config);
+  }
+  getSkillContent() {
+    if (this.skillContent)
+      return this.skillContent;
+    try {
+      const nodePath = require("path");
+      const nodeFs = require("fs");
+      const skillPath = nodePath.join(this.pluginDir, SKILL_FILE);
+      this.skillContent = nodeFs.readFileSync(skillPath, "utf-8");
+    } catch {
+      this.skillContent = this.getFallbackSkill();
+    }
+    return this.skillContent;
+  }
+  getFallbackSkill() {
+    return `You are an OSINT investigator AI. Extract entities and relationships from text.
+Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
+Entity types: Person (full_name), Event (name, start_date, description), Company (name), Location (address, city, country), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
+Relationships MUST be UPPERCASE. Notes must be comprehensive. If no entities found: {"operations":[]}`;
+  }
+  buildPrompt(text, existingEntities) {
+    const skill = this.getSkillContent();
+    const now = /* @__PURE__ */ new Date();
+    const refTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    let existingContext = "";
+    if (existingEntities && existingEntities.length > 0) {
+      const lines = existingEntities.slice(0, 50).map((e) => {
+        const propsStr = Object.entries(e.properties || {}).filter(([k, v]) => v && k !== "source" && k !== "image").map(([k, v]) => `${k}: ${String(v).substring(0, 200)}`).join(", ");
+        return `- ${e.type}: ${e.label}${propsStr ? ` (${propsStr})` : ""}`;
+      });
+      existingContext = `
+
+EXISTING ENTITIES (do not duplicate, update instead):
+${lines.join("\n")}`;
+    }
+    return `${skill}
+
+REFERENCE TIME: ${refTime}
+${existingContext}
+
+=== TEXT TO ANALYZE ===
+${text}
+
+Respond with ONLY the JSON object. No markdown fences, no explanation.`;
+  }
+  async extractEntities(text, existingEntities, onProgress, signal) {
+    const prompt = this.buildPrompt(text, existingEntities);
+    onProgress?.("Invoking Claude Code CLI...", 30);
+    try {
+      const raw = await this.invokeCLI(prompt, signal);
+      onProgress?.("Parsing response...", 80);
+      const parsed = this.parseResponse(raw);
+      if (!parsed) {
+        return { success: false, error: "Could not parse JSON from Claude response" };
+      }
+      const operations = this.normalizeOperations(parsed);
+      onProgress?.("Extraction complete", 100);
+      return { success: true, operations };
+    } catch (err) {
+      if (err.name === "AbortError")
+        throw err;
+      console.error("[ClaudeCodeService] extraction failed:", err);
+      return { success: false, error: err.message || String(err) };
+    }
+  }
+  invokeCLI(prompt, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      const { execFile } = require("child_process");
+      const args = [
+        "--print",
+        "--output-format",
+        "text",
+        "--model",
+        this.config.model,
+        "--max-turns",
+        "1"
+      ];
+      const child = execFile(
+        this.config.cliPath,
+        args,
+        {
+          timeout: this.config.timeoutMs,
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...process.env, NO_COLOR: "1" }
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            if (error.killed || error.signal === "SIGTERM") {
+              reject(new DOMException("Aborted", "AbortError"));
+            } else {
+              reject(new Error(`Claude CLI error (code ${error.code}): ${stderr || error.message}`));
+            }
+            return;
+          }
+          resolve(stdout);
+        }
+      );
+      child.stdin?.write(prompt);
+      child.stdin?.end();
+      if (signal) {
+        const onAbort = () => {
+          child.kill("SIGTERM");
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+  parseResponse(raw) {
+    const trimmed = raw.trim();
+    try {
+      const data = JSON.parse(trimmed);
+      if (data.operations)
+        return data;
+    } catch {
+    }
+    const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (fenceMatch) {
+      try {
+        const data = JSON.parse(fenceMatch[1].trim());
+        if (data.operations)
+          return data;
+      } catch {
+      }
+    }
+    const stack = [];
+    let start = -1;
+    let bestStart = -1;
+    let bestEnd = -1;
+    for (let i = 0; i < trimmed.length; i++) {
+      if (trimmed[i] === "{") {
+        if (start === -1)
+          start = i;
+        stack.push(i);
+      } else if (trimmed[i] === "}" && stack.length > 0) {
+        stack.pop();
+        if (stack.length === 0) {
+          const len = i - start + 1;
+          if (bestStart === -1 || len > bestEnd - bestStart + 1) {
+            bestStart = start;
+            bestEnd = i;
+          }
+          start = -1;
+        }
+      }
+    }
+    if (bestStart >= 0) {
+      let candidate = trimmed.substring(bestStart, bestEnd + 1);
+      candidate = candidate.replace(/,(\s*[}\]])/g, "$1");
+      try {
+        const data = JSON.parse(candidate);
+        if (data.operations)
+          return data;
+        if (data.action)
+          return { operations: [data] };
+      } catch {
+      }
+    }
+    return null;
+  }
+  normalizeOperations(data) {
+    if (!data?.operations || !Array.isArray(data.operations))
+      return [];
+    return data.operations.map((op) => ({
+      action: op.action || "create",
+      entities: Array.isArray(op.entities) ? op.entities : void 0,
+      connections: Array.isArray(op.connections) ? op.connections : void 0,
+      updates: Array.isArray(op.updates) ? op.updates : void 0
+    }));
+  }
+  async isAvailable() {
+    return new Promise((resolve) => {
+      try {
+        const { execFile } = require("child_process");
+        execFile(this.config.cliPath, ["--version"], { timeout: 5e3 }, (error) => {
+          resolve(!error);
+        });
+      } catch {
+        resolve(false);
+      }
+    });
   }
 };
 
@@ -12850,8 +12903,9 @@ var DEFAULT_SETTINGS = {
   advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
-  // Custom API defaults
-  apiProvider: "default",
+  apiProvider: "claude-code",
+  claudeCodeCliPath: "claude",
+  claudeCodeModel: "sonnet",
   customCheckpoints: [],
   themeMode: "system",
   // Default to system theme
@@ -12899,6 +12953,16 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
   }
+  initClaudeCodeService() {
+    const adapter = this.app.vault.adapter;
+    const basePath = typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
+    const pluginDir = basePath && this.manifest.dir ? `${basePath}/${this.manifest.dir}` : "";
+    const svc = new ClaudeCodeService(pluginDir, {
+      cliPath: this.settings.claudeCodeCliPath || "claude",
+      model: this.settings.claudeCodeModel || "sonnet"
+    });
+    this.graphApiService.setClaudeCodeService(svc);
+  }
   async onload() {
     await this.loadSettings();
     if (!(this.settings.reportApiKey || "").trim()) {
@@ -12914,11 +12978,14 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
       this.settings.reportApiKey
     );
     this.graphApiService.setSettings({
-      apiProvider: "default",
+      apiProvider: "claude-code",
       customApiUrl: "",
       customApiKey: "",
-      customModel: ""
+      customModel: "",
+      claudeCodeCliPath: this.settings.claudeCodeCliPath,
+      claudeCodeModel: this.settings.claudeCodeModel
     });
+    this.initClaudeCodeService();
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
     try {
       await this.conversationService.initialize();
@@ -13198,12 +13265,14 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
       this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
       this.graphApiService.setApiKey(this.settings.reportApiKey);
       this.graphApiService.setSettings({
-        apiProvider: "default",
-        // Backward compat defaults
+        apiProvider: "claude-code",
         customApiUrl: "",
         customApiKey: "",
-        customModel: ""
+        customModel: "",
+        claudeCodeCliPath: this.settings.claudeCodeCliPath,
+        claudeCodeModel: this.settings.claudeCodeModel
       });
+      this.initClaudeCodeService();
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
@@ -13215,7 +13284,7 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
     });
   }
   isAuthenticated() {
-    return !!(this.settings.reportApiKey || "").trim();
+    return true;
   }
   /** Report API base URL (same as Graph API URL in settings). */
   reportApiBaseUrl() {
@@ -14332,16 +14401,7 @@ ${additionalContext}
    */
   async openChatView(forceNew = false) {
     if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new import_obsidian16.Notice("Your plan does not include access to the chat view/local agent. Please upgrade to local agent or plugin own data plan.");
-      return;
-    }
-    if (!this.settings.reportApiKey) {
-      new import_obsidian16.Notice("A valid license key is required to use the chat feature. Please purchase a license key to enable this functionality.", 8e3);
-      const settingTab = this.app.setting;
-      if (settingTab) {
-        settingTab.open();
-        settingTab.openTabById(this.manifest.id);
-      }
+      new import_obsidian16.Notice("Chat view is disabled in permissions.");
       return;
     }
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -18845,6 +18905,40 @@ var VaultAISettingTab = class extends import_obsidian16.PluginSettingTab {
       cls: "setting-item-description"
     });
     noteP.setCssProps({ color: "var(--text-muted)" });
+    new import_obsidian16.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    containerEl.createEl("p", {
+      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian16.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+      (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
+        this.plugin.settings.claudeCodeCliPath = value || "claude";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian16.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+      (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
+        this.plugin.settings.claudeCodeModel = value || "sonnet";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian16.Setting(containerEl).setName("Test Claude Code").setDesc("Verify that the Claude CLI is reachable.").addButton(
+      (btn) => btn.setButtonText("Test connection").onClick(async () => {
+        btn.setButtonText("Testing...");
+        btn.setDisabled(true);
+        try {
+          const svc = new ClaudeCodeService("", {
+            cliPath: this.plugin.settings.claudeCodeCliPath
+          });
+          const ok = await svc.isAvailable();
+          new import_obsidian16.Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+        } catch (e) {
+          new import_obsidian16.Notice("Error: " + (e.message || String(e)));
+        }
+        btn.setButtonText("Test connection");
+        btn.setDisabled(false);
+      })
+    );
     new import_obsidian16.Setting(containerEl).setName("Graph view").setHeading();
     new import_obsidian16.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
