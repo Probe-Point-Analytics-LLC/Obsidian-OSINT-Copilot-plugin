@@ -25,13 +25,8 @@ export interface OrchestrationResult {
 
 /** Display names for orchestration tool ids (UI + progress rows). */
 export const ORCHESTRATION_TOOL_DISPLAY_NAMES: Record<string, string> = {
-    DARK_WEB: "DarkWeb Search",
-    OSINT_SEARCH: "Digital Footprint",
-    CORPORATE_REPORTS: "Companies & People",
     LOCAL_VAULT: "Local Search",
-    VAULT_GRAPH_INGEST: "Vault graph (notes)",
     EXTRACT_TO_GRAPH: "Extract to graph",
-    ANALYZE_EVIDENCE: "Evidence analysis",
 };
 
 /** Optional metadata for orchestration progress callbacks (multi-tool UI). */
@@ -266,18 +261,8 @@ export class OrchestrationService {
     }
 
     /** Example default tools shown in the planner JSON template; aligns with routed intent. */
-    private defaultToolsForIntent(intent: OrchestrationIntent): string[] {
-        switch (intent) {
-            case "VAULT_GRAPH_BUILD":
-                return ["VAULT_GRAPH_INGEST"];
-            case "VAULT_QA":
-                return ["LOCAL_VAULT"];
-            case "MIXED":
-                return ["LOCAL_VAULT", "OSINT_SEARCH"];
-            case "OSINT_TOOL_RUN":
-            default:
-                return ["OSINT_SEARCH"];
-        }
+    private defaultToolsForIntent(_intent: OrchestrationIntent): string[] {
+        return ["LOCAL_VAULT"];
     }
 
     private buildRoutedIntentInstructions(intent: OrchestrationIntent, hasAttachments: boolean): string {
@@ -286,49 +271,23 @@ export class OrchestrationService {
             : " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
         switch (intent) {
             case "VAULT_GRAPH_BUILD":
-                return `VAULT_GRAPH_BUILD — User wants to build or enrich the knowledge graph from Obsidian notes (often many or all files).${att} You MUST include "VAULT_GRAPH_INGEST" in toolsToCall (full vault / note ingestion for entity extraction). Do NOT include OSINT_SEARCH, DARK_WEB, or CORPORATE_REPORTS unless the user explicitly asks for external/open-web or dark-web intelligence in the same message.`;
             case "VAULT_QA":
-                return `VAULT_QA — User wants answers grounded in their vault.${att} Prioritize "LOCAL_VAULT". Add OSINT or other tools only if they clearly ask for outside sources.`;
-            case "OSINT_TOOL_RUN":
-                return `OSINT_TOOL_RUN — Primary need is external investigation.${att} Prefer OSINT_SEARCH and/or DARK_WEB/CORPORATE_REPORTS as appropriate. Include LOCAL_VAULT only if they also ask about their notes.`;
-            case "MIXED":
-                return `MIXED — Both vault-local and external investigation appear relevant.${att} Include LOCAL_VAULT plus at least one external tool when appropriate.`;
+                return `${intent} — User wants answers or graph data from their vault.${att} Use "LOCAL_VAULT" to search notes.`;
             default:
-                return `UNKNOWN — No strong heuristic match.${att} Choose tools from the user request; prefer LOCAL_VAULT when the question is only about their notes or building the graph from local documents.`;
+                return `${intent} — Use LOCAL_VAULT to search the user's vault.${att}`;
         }
     }
 
-    /** When the LLM returns no tools, align defaults with routed intent (avoid forcing OSINT for vault work). */
-    private fallbackProposalForEmptyTools(routedIntent: OrchestrationIntent, query: string): {
+    /** When the LLM returns no tools, default to LOCAL_VAULT. */
+    private fallbackProposalForEmptyTools(_routedIntent: OrchestrationIntent, query: string): {
         toolsToCall: string[];
         planSummary: string;
         directResponse: string;
     } {
-        if (routedIntent === "VAULT_GRAPH_BUILD") {
-            return {
-                toolsToCall: ["VAULT_GRAPH_INGEST"],
-                planSummary: `### Investigation Plan\n1. **Vault graph ingest** — Process your markdown notes and extract entities/relationships for the graph (up to a safe file limit).\n\n*Adjust modules before running.*`,
-                directResponse: `I'll run vault graph ingestion to extract entities from your notes into graph proposals. Add external modules only if you also need OSINT or dark web.`,
-            };
-        }
-        if (routedIntent === "VAULT_QA") {
-            return {
-                toolsToCall: ["LOCAL_VAULT"],
-                planSummary: `### Investigation Plan\n1. **Local vault** — Search your Obsidian notes for: "${query}"\n\n*Adjust modules before running.*`,
-                directResponse: `I'll search your vault for relevant material. You can add other modules only if you also need external intelligence.`,
-            };
-        }
-        if (routedIntent === "MIXED") {
-            return {
-                toolsToCall: ["LOCAL_VAULT", "OSINT_SEARCH"],
-                planSummary: `### Investigation Plan\n1. **Local vault** — Review your notes\n2. **OSINT** — Check external sources\n\n*Click Run to proceed.*`,
-                directResponse: `I'll combine local vault search with OSINT. Adjust modules if needed.`,
-            };
-        }
         return {
-            toolsToCall: ["OSINT_SEARCH"],
-            planSummary: `### Investigation Plan\n1. **OSINT Search** — Search public intelligence sources for: "${query}"\n\n*Reply to add more modules (DARK_WEB, CORPORATE_REPORTS, etc.) or click Run to proceed.*`,
-            directResponse: `I'll investigate this using OSINT Search. You can add more modules like DARK_WEB or CORPORATE_REPORTS before I start.`,
+            toolsToCall: ["LOCAL_VAULT"],
+            planSummary: `### Investigation Plan\n1. **Local vault** — Search your Obsidian notes for: "${query}"\n\n*Adjust modules before running.*`,
+            directResponse: `I'll search your vault for relevant material.`,
         };
     }
 
@@ -367,18 +326,14 @@ ${routedIntentBlock}
 
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. For ANY investigative question (who, what, where, when about people, organizations, events, crimes, threats), you MUST propose tools — EXCEPT when ROUTED INTENT is VAULT_GRAPH_BUILD: then use VAULT_GRAPH_INGEST only (unless they also ask for external sources). For VAULT_QA, prioritize LOCAL_VAULT. Do not add OSINT_SEARCH for vault-only graph builds.
+2. For ANY investigative question, propose LOCAL_VAULT to search existing vault notes. If attachments are present, also propose EXTRACT_TO_GRAPH.
 3. Set "isProposal" to true and list the tools you recommend.
 4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
 5. Your "directResponse" should describe your PLAN, never the answer to the question.
 6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
 
 === AVAILABLE TOOLS ===
-- "OSINT_SEARCH" - Search digital footprints: emails, phones, breaches, public records, web search.
-- "DARK_WEB" - Dark web intelligence: hidden services, underground leaks, threat actor forums.
-- "CORPORATE_REPORTS" - Corporate/legal data: ownership registries, financial filings, sanctions lists.
-- "LOCAL_VAULT" - Quick keyword search across a few matching Obsidian notes (legacy Q&A style).
-- "VAULT_GRAPH_INGEST" - Read many/all markdown notes in the vault (subject to limits), call the graph API to extract entities and relationships, and propose graph commands.${extractToGraphTool}
+- "LOCAL_VAULT" - Search across matching Obsidian notes in the vault.${extractToGraphTool}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -678,214 +633,6 @@ Respond with this exact JSON structure:
             const displayName = toolToDisplayName[tool] || tool;
             try {
                 switch (tool) {
-                    case "DARK_WEB": {
-                        if (isCancelled("DARK_WEB")) {
-                            results["DARK_WEB"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                            break;
-                        }
-                        const darkWebModel = "gpt-5-mini"; // Align with main.ts DARKWEB_MODEL
-                        onProgress(displayName, "Initializing job...", 10);
-                        const darkWebRes = await requestUrl({
-                            url: `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`,
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${this.plugin.settings.reportApiKey}`
-                            },
-                            body: JSON.stringify({ query, model: darkWebModel, threads: 8 }),
-                            throw: false
-                        });
-                        if (darkWebRes.status < 200 || darkWebRes.status >= 300) {
-                            results["DARK_WEB"] = `API error: ${darkWebRes.status}`;
-                            onProgress(displayName, "Failed", 100);
-                            break;
-                        }
-                        const jobId = darkWebRes.json?.job_id;
-                        if (!jobId) {
-                            results["DARK_WEB"] = "No job ID returned.";
-                            onProgress(displayName, "Failed", 100);
-                            break;
-                        }
-
-                        const maxPollMs = 5 * 60 * 1000;
-                        const startTime = Date.now();
-                        let completed = false;
-                        while (Date.now() - startTime < maxPollMs) {
-                            if (isCancelled("DARK_WEB")) {
-                                results["DARK_WEB"] = "Cancelled by user.";
-                                onProgress(displayName, "Cancelled", 100);
-                                break;
-                            }
-                            await new Promise(resolve => setTimeout(resolve, 5000));
-                            const elapsed = Math.round((Date.now() - startTime) / 1000);
-                            onProgress(displayName, `Searching... (${elapsed}s)`, 30 + Math.min(60, Math.floor(elapsed / 2)));
-
-                            const statusRes = await requestUrl({
-                                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`,
-                                method: 'GET',
-                                headers: { 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}` },
-                                throw: false
-                            });
-                            if (statusRes.status >= 200 && statusRes.status < 300) {
-                                if (statusRes.json?.status === 'completed' || statusRes.json?.status === 'done') {
-                                    completed = true;
-                                    break;
-                                } else if (statusRes.json?.status === 'failed') {
-                                    results["DARK_WEB"] = "Investigation failed.";
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (completed && !isCancelled("DARK_WEB")) {
-                            onProgress(displayName, "Downloading results...", 90);
-                            const downloadRes = await requestUrl({
-                                url: `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${jobId}`,
-                                method: 'GET',
-                                headers: { 'Authorization': `Bearer ${this.plugin.settings.reportApiKey}` },
-                                throw: false
-                            });
-
-                            if (downloadRes.status < 300 && downloadRes.json?.summary) {
-                                const summary = downloadRes.json.summary;
-                                let savedFileName = "";
-                                try {
-                                    if (typeof (this.plugin as any).saveDarkWebReportToVault === "function") {
-                                        savedFileName = await (this.plugin as any).saveDarkWebReportToVault(summary, query, jobId);
-                                    }
-                                } catch (e) {
-                                    console.error("Could not save dark web report to vault", e);
-                                }
-                                results["DARK_WEB"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**\n\n${summary}` : summary;
-                            } else {
-                                results["DARK_WEB"] = "Download failed.";
-                            }
-                        } else if (!results["DARK_WEB"] && isCancelled("DARK_WEB")) {
-                            results["DARK_WEB"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                        }
-                        const dw = results["DARK_WEB"];
-                        if (typeof dw === "string" && dw.includes("Cancelled")) {
-                            // already at 100%
-                        } else {
-                            onProgress(displayName, "Complete", 100);
-                        }
-                        break;
-                    }
-
-                    case "OSINT_SEARCH": {
-                        if (isCancelled("OSINT_SEARCH")) {
-                            results["OSINT_SEARCH"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                            break;
-                        }
-                        onProgress(displayName, "Searching digital footprints...", 30);
-                        try {
-                            const osintRes = await this.plugin.graphApiService.aiSearch({
-                                query,
-                                max_providers: 5,
-                                parallel: true
-                            });
-                            results["OSINT_SEARCH"] = osintRes;
-                        } catch (e: any) {
-                            results["OSINT_SEARCH"] = `Search failed: ${e.message}`;
-                        }
-                        if (isCancelled("OSINT_SEARCH")) {
-                            results["OSINT_SEARCH"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                        } else {
-                            onProgress(displayName, "Complete", 100);
-                        }
-                        break;
-                    }
-
-                    case "CORPORATE_REPORTS": {
-                        if (isCancelled("CORPORATE_REPORTS")) {
-                            results["CORPORATE_REPORTS"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                            break;
-                        }
-                        onProgress(displayName, "Generating corporate intelligence report...", 10);
-                        try {
-                            const reportData = await this.plugin.generateReport(
-                                query,
-                                currentConversation || null,
-                                (status, progress) => {
-                                    if (isCancelled("CORPORATE_REPORTS")) return;
-                                    if (progress) {
-                                        onProgress(displayName, progress.message, progress.percent);
-                                    } else {
-                                        onProgress(displayName, status, 30);
-                                    }
-                                }
-                            );
-
-                            let savedFileName = "";
-                            try {
-                                savedFileName = await this.plugin.saveReportToVault(
-                                    reportData.content,
-                                    query,
-                                    reportData.filename
-                                );
-                            } catch (e) {
-                                console.error("Could not save corporate report to vault", e);
-                            }
-
-                            results["CORPORATE_REPORTS"] = savedFileName ? `**Saved to Vault: [[${savedFileName}]]**\n\n${reportData.content}` : reportData.content;
-                        } catch (e: any) {
-                            results["CORPORATE_REPORTS"] = `Report generation failed: ${e.message}`;
-                        }
-                        if (isCancelled("CORPORATE_REPORTS")) {
-                            results["CORPORATE_REPORTS"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                        } else {
-                            onProgress(displayName, "Complete", 100);
-                        }
-                        break;
-                    }
-
-                    case "VAULT_GRAPH_INGEST": {
-                        if (isCancelled("VAULT_GRAPH_INGEST")) {
-                            results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                            break;
-                        }
-                        onProgress(displayName, "Starting vault graph ingest...", 5);
-                        try {
-                            const vaultSig = this.mergeAbortSignals(
-                                options?.globalAbort,
-                                options?.abortSignals?.["VAULT_GRAPH_INGEST"]
-                            );
-                            const out = await this.runVaultGraphIngest((msg, pct, detail) => {
-                                if (isCancelled("VAULT_GRAPH_INGEST")) return;
-                                onProgress(displayName, msg, pct, detail);
-                            }, vaultSig);
-                            results["VAULT_GRAPH_INGEST"] = {
-                                __vaultIngest: true,
-                                __vaultIngestAutoApplied: true,
-                                summary: out.summary,
-                                graphCommands: [],
-                                appliedOperationsCount: out.graphCommands.length,
-                                filesProcessed: out.filesProcessed,
-                                filesTotal: out.filesTotal,
-                                truncatedFiles: out.truncatedFiles,
-                                extractFailures: out.extractFailures,
-                            };
-                        } catch (e: unknown) {
-                            results["VAULT_GRAPH_INGEST"] = `Vault graph ingest failed: ${
-                                e instanceof Error ? e.message : String(e)
-                            }`;
-                        }
-                        if (isCancelled("VAULT_GRAPH_INGEST")) {
-                            results["VAULT_GRAPH_INGEST"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                        } else {
-                            onProgress(displayName, "Complete", 100);
-                        }
-                        break;
-                    }
-
                     case "LOCAL_VAULT": {
                         if (isCancelled("LOCAL_VAULT")) {
                             results["LOCAL_VAULT"] = "Cancelled by user.";
@@ -945,57 +692,6 @@ Respond with this exact JSON structure:
                         });
                         results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
                         onProgress(displayName, "Complete", 100);
-                        break;
-                    }
-
-                    case "ANALYZE_EVIDENCE": {
-                        if (isCancelled("ANALYZE_EVIDENCE")) {
-                            results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                            break;
-                        }
-                        onProgress(displayName, "Opening evidence picker…", 5);
-                        try {
-                            const { EvidencePickerModal } = await import("../modals/evidence-picker-modal");
-                            const picker = new EvidencePickerModal(this.plugin.app);
-                            const selection = await picker.pick();
-                            if (!selection || selection.files.length === 0) {
-                                results["ANALYZE_EVIDENCE"] = "No files selected.";
-                                onProgress(displayName, "Skipped", 100);
-                                break;
-                            }
-                            const { EvidenceService } = await import("./evidence-service");
-                            const svc = new EvidenceService(this.plugin);
-                            const commands = await svc.analyze(
-                                selection.files,
-                                (msg, pct) => {
-                                    if (isCancelled("ANALYZE_EVIDENCE")) return;
-                                    onProgress(displayName, msg, pct);
-                                },
-                            );
-                            if (commands.length > 0) {
-                                const lines = await this.executeGraphCommandsImmediate(commands, { showErrorNotices: false });
-                                results["ANALYZE_EVIDENCE"] = {
-                                    __evidenceAnalysis: true,
-                                    summary: lines.join("\n"),
-                                    graphCommands: [],
-                                    appliedOperationsCount: commands.length,
-                                    filesProcessed: selection.files.length,
-                                };
-                            } else {
-                                results["ANALYZE_EVIDENCE"] = "No entities extracted from evidence files.";
-                            }
-                        } catch (e: unknown) {
-                            results["ANALYZE_EVIDENCE"] = `Evidence analysis failed: ${
-                                e instanceof Error ? e.message : String(e)
-                            }`;
-                        }
-                        if (isCancelled("ANALYZE_EVIDENCE")) {
-                            results["ANALYZE_EVIDENCE"] = "Cancelled by user.";
-                            onProgress(displayName, "Cancelled", 100);
-                        } else {
-                            onProgress(displayName, "Complete", 100);
-                        }
                         break;
                     }
 
