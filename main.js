@@ -3790,7 +3790,7 @@ var DEFAULT_RETRY_CONFIG = {
   timeoutMultiplierOnTimeout: 1.5
   // Increase timeout by 50% on each timeout retry
 };
-var GraphApiService = class {
+var _GraphApiService = class _GraphApiService {
   constructor(baseUrl = "https://api.osint-copilot.com", apiKey = "") {
     this.isOnline = false;
     this.settings = null;
@@ -4039,276 +4039,139 @@ var GraphApiService = class {
     return baseTimeout;
   }
   /**
-   * Extract text from a URL via the backend API.
-   * Uses Obsidian's requestUrl directly for maximum reliability.
-   * Returns full text - chunking happens in processText for large texts.
+   * Extract text from a URL locally by fetching the page and stripping HTML.
    */
   async extractTextFromUrl(url) {
-    console.debug("[GraphApiService] extractTextFromUrl called with:", url);
+    console.debug("[GraphApiService] extractTextFromUrl (local) called with:", url);
     try {
-      console.debug("[GraphApiService] Making request to:", `${this.baseUrl}/api/extract-text`);
       const response = await (0, import_obsidian3.requestUrl)({
-        url: `${this.baseUrl}/api/extract-text`,
-        method: "POST",
-        headers: this.getHeaders(),
-        body: JSON.stringify({ url }),
+        url,
+        method: "GET",
+        headers: { "Accept": "text/html,application/xhtml+xml,text/plain,*/*" },
         throw: false
       });
-      console.debug("[GraphApiService] Response status:", response.status);
       if (response.status < 200 || response.status >= 300) {
-        console.error("[GraphApiService] extractTextFromUrl error:", response.status, response.text);
-        try {
-          const errorJson = JSON.parse(response.text);
-          throw new Error(errorJson.error || `Server error (${response.status})`);
-        } catch {
-          throw new Error(`Server error (${response.status})`);
-        }
+        throw new Error(`Failed to fetch URL (${response.status})`);
       }
-      const json = response.json;
-      console.debug("[GraphApiService] Response json success:", json.success);
-      if (json.success && json.text) {
-        console.debug("[GraphApiService] Extracted text length:", json.text.length);
-        return json.text;
+      const contentType = (response.headers?.["content-type"] || "").toLowerCase();
+      let text = response.text || "";
+      if (contentType.includes("text/html") || text.trimStart().startsWith("<")) {
+        text = this.htmlToText(text);
       }
-      throw new Error(json.error || "Failed to extract text from URL");
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw new Error("No text content could be extracted from this URL");
+      }
+      console.debug("[GraphApiService] Extracted text length:", trimmed.length);
+      return trimmed;
     } catch (error) {
       console.error("[GraphApiService] extractTextFromUrl exception:", error);
       throw error;
     }
   }
+  htmlToText(html) {
+    let text = html;
+    text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+    text = text.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "");
+    text = text.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "");
+    text = text.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "");
+    text = text.replace(/<!--[\s\S]*?-->/g, "");
+    text = text.replace(/<(br|hr|p|div|li|tr|h[1-6])[^>]*\/?>/gi, "\n");
+    text = text.replace(/<[^>]+>/g, "");
+    text = text.replace(/&nbsp;/gi, " ");
+    text = text.replace(/&amp;/gi, "&");
+    text = text.replace(/&lt;/gi, "<");
+    text = text.replace(/&gt;/gi, ">");
+    text = text.replace(/&quot;/gi, '"');
+    text = text.replace(/&#39;/gi, "'");
+    text = text.replace(/&[a-zA-Z]+;/g, " ");
+    text = text.replace(/[ \t]+/g, " ");
+    text = text.replace(/\n{3,}/g, "\n\n");
+    return text.trim();
+  }
   /**
-   * Extract text from a file via the backend API (/api/extract-text).
-   * Supports .md, .txt, .pdf, .docx, .doc, and common images (.png, .jpg, .jpeg, .webp, .gif) when the server is configured for OCR/vision.
-   * Includes retry logic with exponential backoff for timeouts and rate limits.
+   * Extract text from a file locally.
+   * Text-based formats are read directly. For binary formats (PDF, DOCX, images),
+   * the raw content is passed to Claude Code CLI for extraction.
    */
   async extractTextFromFile(file) {
     const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
       throw new Error(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Limit is 10MB.`);
     }
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (_GraphApiService.TEXT_EXTENSIONS.has(ext)) {
+      return this.readFileAsText(file);
+    }
+    if (this.claudeCodeService) {
+      return this.extractWithClaude(file, ext);
+    }
+    throw new Error(
+      `Cannot extract text from .${ext} files locally. Claude Code CLI is required for binary file extraction. Please ensure Claude Code is configured in settings.`
+    );
+  }
+  readFileAsText(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const result = reader.result;
-          const maxRetries = 3;
-          const baseTimeout = 12e4;
-          let lastError = null;
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-              console.debug(`[GraphApiService] File extraction attempt ${attempt}/${maxRetries}: ${file.name}`);
-              const response = await this.fetchWithTimeout(
-                `${this.baseUrl}/api/extract-text`,
-                {
-                  method: "POST",
-                  headers: this.getHeaders(),
-                  body: JSON.stringify({
-                    filename: file.name,
-                    content_base64: result
-                  })
-                },
-                baseTimeout
-              );
-              if (!response.ok) {
-                const errorText = await response.text();
-                if (response.status === 429 && attempt < maxRetries) {
-                  const delayMs = this.calculateBackoffDelay(attempt);
-                  console.debug(`[GraphApiService] Rate limited, retrying in ${delayMs}ms...`);
-                  await new Promise((r) => setTimeout(r, delayMs));
-                  continue;
-                }
-                if (response.status >= 500 && attempt < maxRetries) {
-                  const delayMs = this.calculateBackoffDelay(attempt);
-                  console.debug(`[GraphApiService] Server error, retrying in ${delayMs}ms...`);
-                  await new Promise((r) => setTimeout(r, delayMs));
-                  continue;
-                }
-                try {
-                  const errorJson = JSON.parse(errorText);
-                  throw new Error(errorJson.error || errorText);
-                } catch {
-                  throw new Error(`Server error (${response.status}): ${errorText}`);
-                }
-              }
-              const json = await response.json();
-              if (json.success) {
-                const t = typeof json.text === "string" ? json.text.trim() : "";
-                if (t.startsWith("Error:")) {
-                  const inner = t.replace(/^Error:\s*/i, "").trim();
-                  throw new Error(inner);
-                }
-                resolve(json.text);
-                return;
-              } else {
-                const raw = json.error || "Failed to extract text";
-                const inner = typeof raw === "string" ? raw.replace(/^Error:\s*/i, "").trim() : String(raw);
-                throw new Error(inner);
-              }
-            } catch (error) {
-              lastError = error;
-              if (this.isTimeoutError(error) && attempt < maxRetries) {
-                const delayMs = this.calculateBackoffDelay(attempt);
-                console.debug(`[GraphApiService] Timeout, retrying in ${delayMs}ms...`);
-                await new Promise((r) => setTimeout(r, delayMs));
-                continue;
-              }
-              if (this.isNetworkError(error) && attempt < maxRetries) {
-                const delayMs = this.calculateBackoffDelay(attempt);
-                console.debug(`[GraphApiService] Network error, retrying in ${delayMs}ms...`);
-                await new Promise((r) => setTimeout(r, delayMs));
-                continue;
-              }
-              throw error;
-            }
-          }
-          throw lastError || new Error("Failed to extract text after retries");
-        } catch (error) {
-          reject(error);
-        }
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.readAsText(file);
+    });
+  }
+  async extractWithClaude(file, ext) {
+    const base64 = await this.readFileAsBase64(file);
+    const prompt = `Extract ALL readable text content from this ${ext.toUpperCase()} file named "${file.name}".
+The file is provided as base64-encoded content below.
+Return ONLY the extracted text, no commentary or formatting.
+If you cannot decode the content, describe what you can see.
+
+BASE64 CONTENT:
+${base64}`;
+    return this.claudeCodeService.chat("", prompt);
+  }
+  readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const base64 = dataUrl.split(",")[1] || dataUrl;
+        resolve(base64);
       };
       reader.onerror = () => reject(new Error("Failed to read file"));
       reader.readAsDataURL(file);
     });
   }
   /**
-   * Call custom OpenAI-compatible API for chat.
-   * outputting natural language response.
+   * Chat via Claude Code CLI. Replaces remote custom provider and backend calls.
    */
   async chatWithCustomProvider(text, systemPrompt, settings, signal) {
-    if (!settings)
-      throw new Error("Custom chat settings not provided");
-    const { customApiUrl, customApiKey, customModel, type } = settings;
-    if (type === "mindsdb") {
-      let endpoint2 = customApiUrl.trim().replace(/\/+$/, "");
-      if (!endpoint2.endsWith("/api/sql/query")) {
-        endpoint2 = `${endpoint2}/api/sql/query`;
-      }
-      const sanitizedText = text.replace(/'/g, "''");
-      const query = `SELECT answer FROM ${customModel} WHERE question='${sanitizedText}'`;
-      const requestPromise2 = (0, import_obsidian3.requestUrl)({
-        url: endpoint2,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...customApiKey ? { "Authorization": `Bearer ${customApiKey}` } : {}
-        },
-        body: JSON.stringify({ query }),
-        throw: false
-      });
-      if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
-      }
-      const response2 = await (signal ? Promise.race([
-        requestPromise2,
-        new Promise((_, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-        })
-      ]) : requestPromise2);
-      if (response2.status >= 200 && response2.status < 300) {
-        try {
-          const data = await response2.json;
-          if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-            return String(data.data[0][0]);
-          }
-          return "No response from MindsDB agent.";
-        } catch (e) {
-          console.error("MindsDB parsing error:", e);
-          throw new Error("Failed to parse MindsDB response");
-        }
-      } else {
-        console.error("MindsDB API Error:", response2.status, response2.text);
-        throw new Error(`MindsDB API Error: ${response2.status}`);
-      }
+    if (!this.claudeCodeService) {
+      throw new Error("Claude Code service not initialized.");
     }
-    const defaultSystemPrompt = `You are a helpful OSINT assistant. Answer the user's questions to the best of your ability.`;
-    const actualSystemPrompt = systemPrompt || defaultSystemPrompt;
-    let endpoint = customApiUrl.trim();
-    if (!endpoint.endsWith("/chat/completions")) {
-      endpoint = `${endpoint.replace(/\/+$/, "")}/chat/completions`;
-    }
-    if (signal?.aborted) {
-      throw new DOMException("Aborted", "AbortError");
-    }
-    const requestPromise = (0, import_obsidian3.requestUrl)({
-      url: endpoint,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...customApiKey ? { "Authorization": `Bearer ${customApiKey}` } : {}
-      },
-      body: JSON.stringify({
-        model: customModel,
-        messages: [
-          { role: "system", content: actualSystemPrompt },
-          { role: "user", content: text }
-        ]
-      }),
-      throw: false
-    });
-    const response = await (signal ? Promise.race([
-      requestPromise,
-      new Promise((_, reject) => {
-        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-      })
-    ]) : requestPromise);
-    if (response.status >= 200 && response.status < 300) {
-      try {
-        const data = await response.json;
-        return data.choices[0].message.content;
-      } catch (e) {
-        console.error("[GraphApiService] Failed to parse custom API response:", e);
-        throw new Error("Failed to parse AI response.");
-      }
-    }
-    throw new Error(`Custom API Error: ${response.status} ${await response.text}`);
+    const sys = systemPrompt || "You are a helpful OSINT assistant. Answer the user's questions to the best of your ability.";
+    return this.claudeCodeService.chat(sys, text, signal);
   }
   /**
-   * Call the backend remote model natively.
+   * General-purpose LLM call via Claude Code CLI.
    */
   async callRemoteModel(messages, jsonResponse = false, customModel, signal, orchestrationOptions) {
-    let endpoint = `${this.baseUrl}/api/chat/completion`;
-    let reqHeaders = this.getHeaders();
-    if (orchestrationOptions && orchestrationOptions.provider !== "osint-copilot") {
-      endpoint = orchestrationOptions.url.trim();
-      if (!endpoint.endsWith("/chat/completions")) {
-        endpoint = `${endpoint.replace(/\/+$/, "")}/chat/completions`;
-      }
-      reqHeaders = {
-        "Content-Type": "application/json",
-        ...orchestrationOptions.apiKey ? { "Authorization": `Bearer ${orchestrationOptions.apiKey}` } : {}
-      };
+    if (!this.claudeCodeService) {
+      throw new Error("Claude Code service not initialized.");
     }
-    const payload = {
-      model: customModel || "gpt-4o",
-      messages
-    };
+    let systemPrompt = "";
+    let userContent = "";
+    for (const msg of messages) {
+      if (msg.role === "system") {
+        systemPrompt += (systemPrompt ? "\n" : "") + msg.content;
+      } else {
+        userContent += (userContent ? "\n" : "") + msg.content;
+      }
+    }
     if (jsonResponse) {
-      payload.response_format = { type: "json_object" };
+      systemPrompt += "\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.";
     }
-    const requestPromise = (0, import_obsidian3.requestUrl)({
-      url: endpoint,
-      method: "POST",
-      headers: reqHeaders,
-      body: JSON.stringify(payload),
-      throw: false
-    });
-    const response = await (signal ? Promise.race([
-      requestPromise,
-      new Promise((_, reject) => {
-        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-      })
-    ]) : requestPromise);
-    if (response.status >= 200 && response.status < 300) {
-      try {
-        const data = await response.json;
-        return data.choices && data.choices[0] && data.choices[0].message.content ? data.choices[0].message.content : JSON.stringify(data);
-      } catch (e) {
-        console.error("[GraphApiService] Failed to parse custom API response:", e);
-        return await response.text;
-      }
-    }
-    const errorPrefix = !orchestrationOptions || orchestrationOptions.provider === "osint-copilot" ? "OSINT Copilot API Error" : "Custom API Error";
-    throw new Error(`${errorPrefix}: ${response.status} ${await response.text}`);
+    return this.claudeCodeService.chat(systemPrompt, userContent, signal);
   }
   /**
    * Split text into chunks, trying to break at paragraph boundaries.
@@ -4565,6 +4428,48 @@ var GraphApiService = class {
     throw new Error(`Digital Footprint failed after ${maxRetries} attempts: ${errorMessage}`);
   }
 };
+_GraphApiService.TEXT_EXTENSIONS = /* @__PURE__ */ new Set([
+  "md",
+  "txt",
+  "csv",
+  "json",
+  "xml",
+  "html",
+  "htm",
+  "log",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "sh",
+  "bat",
+  "ps1",
+  "py",
+  "js",
+  "ts",
+  "jsx",
+  "tsx",
+  "java",
+  "c",
+  "cpp",
+  "h",
+  "hpp",
+  "cs",
+  "go",
+  "rs",
+  "rb",
+  "css",
+  "scss",
+  "less",
+  "sql",
+  "r",
+  "swift",
+  "kt"
+]);
+var GraphApiService = _GraphApiService;
 
 // src/services/claude-code-service.ts
 var DEFAULT_CONFIG = {
@@ -4754,6 +4659,18 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
       connections: Array.isArray(op.connections) ? op.connections : void 0,
       updates: Array.isArray(op.updates) ? op.updates : void 0
     }));
+  }
+  /**
+   * General-purpose chat: send system + user messages to Claude CLI, return text.
+   * Used for local search answer synthesis, entity extraction from queries, etc.
+   */
+  async chat(systemPrompt, userMessage, signal) {
+    const prompt = systemPrompt ? `${systemPrompt}
+
+---
+
+${userMessage}` : userMessage;
+    return this.invokeCLI(prompt, signal);
   }
   async isAvailable() {
     return new Promise((resolve) => {
@@ -12885,10 +12802,9 @@ var EvidencePickerModal = class extends import_obsidian15.Modal {
 };
 
 // main.ts
-var CHAT_MODEL = "gpt-4o-mini";
-var ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
-var DARKWEB_MODEL = "gpt-5-mini";
-var LOCAL_VAULT_MODEL = "qwen3:14b";
+var ENTITY_EXTRACTION_MODEL = "claude-code";
+var DARKWEB_MODEL = "claude-code";
+var LOCAL_VAULT_MODEL = "claude-code";
 var DEFAULT_SETTINGS = {
   systemPrompt: "You are a vault assistant. Answer questions clearly and concisely based on the provided notes. Cite note paths in-line where useful.",
   maxNotes: 15,
@@ -12952,6 +12868,7 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
+    this.claudeCodeService = null;
   }
   initClaudeCodeService() {
     const adapter = this.app.vault.adapter;
@@ -12961,13 +12878,12 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
       cliPath: this.settings.claudeCodeCliPath || "claude",
       model: this.settings.claudeCodeModel || "sonnet"
     });
+    this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
   }
   async onload() {
     await this.loadSettings();
-    if (!(this.settings.reportApiKey || "").trim()) {
-      new import_obsidian16.Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
-    } else {
+    if ((this.settings.reportApiKey || "").trim()) {
       this.verifyPermissions();
     }
     this.customTypesService = new CustomTypesService(this.app);
@@ -13647,56 +13563,19 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
   // REMOTE MODEL INTEGRATION
   // ============================================================================
   async callRemoteModel(messages, stream = false, model, signal, useLocal = false) {
-    if (!this.settings.reportApiKey) {
-      throw new Error(
-        "License key is required. Please configure it in settings."
-      );
+    if (!this.claudeCodeService) {
+      throw new Error("Claude Code not initialized. Check Settings \u2192 OSINT Copilot \u2192 Graph Extraction.");
     }
-    const endpoint = `${REPORT_API_BASE_URL}/api/chat/completion`;
-    try {
-      const modelToUse = useLocal ? LOCAL_VAULT_MODEL : model || CHAT_MODEL;
-      const requestBody = {
-        model: modelToUse,
-        messages,
-        stream,
-        // Pass stream flag to endpoint
-        use_local: useLocal
-      };
-      const requestPromise = (0, import_obsidian16.requestUrl)({
-        url: endpoint,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.settings.reportApiKey}`
-        },
-        body: JSON.stringify(requestBody),
-        throw: false
-      });
-      if (signal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
+    let systemPrompt = "";
+    let userContent = "";
+    for (const msg of messages) {
+      if (msg.role === "system") {
+        systemPrompt += (systemPrompt ? "\n" : "") + msg.content;
+      } else {
+        userContent += (userContent ? "\n" : "") + msg.content;
       }
-      const response = await (signal ? Promise.race([
-        requestPromise,
-        new Promise((_, reject) => {
-          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-        })
-      ]) : requestPromise);
-      if (response.status < 200 || response.status >= 300) {
-        const errorText = response.text || "";
-        console.error("[callRemoteModel] API error:", response.status, errorText);
-        throw new Error(
-          `API request failed (${response.status}): ${errorText.substring(0, 200)}`
-        );
-      }
-      const jsonData = response.json;
-      const content = jsonData.choices?.[0]?.message?.content || jsonData.choices?.[0]?.text || jsonData.content || "";
-      return content || "No answer received.";
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Model call failed: ${error.message}`);
-      }
-      throw error;
     }
+    return this.claudeCodeService.chat(systemPrompt, userContent, signal);
   }
   // ============================================================================
   // STREAMING MODEL INTEGRATION
@@ -13737,68 +13616,16 @@ var VaultAIPlugin = class extends import_obsidian16.Plugin {
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
-  /**
-   * Execute a streaming fetch request (single attempt)
-   * Note: Obsidian's requestUrl doesn't support streaming, so we use non-streaming
-   * and deliver the full response at once via onDelta callback.
-   */
-  async executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal = false) {
+  async callRemoteModelStream(messages, onDelta, onRetry, signal, useLocal = false) {
     const full = await this.callRemoteModel(messages, false, void 0, signal, useLocal);
     if (onDelta)
       onDelta(full);
     return full;
   }
-  async callRemoteModelStream(messages, onDelta, onRetry, signal, useLocal = false) {
-    if (!this.settings.reportApiKey) {
-      throw new Error("License key is required. Please configure it in settings.");
-    }
-    const endpoint = `${REPORT_API_BASE_URL}/api/chat`;
-    const maxRetries = 3;
-    const getRetryDelay = (attempt) => {
-      const delays = [500, 1e3, 2e3];
-      return delays[attempt - 1] || 2e3;
-    };
-    let lastError = null;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        if (signal?.aborted) {
-          throw new Error("Request was cancelled.");
-        }
-        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        if (!this.isTransientNetworkError(lastError)) {
-          break;
-        }
-        if (attempt < maxRetries) {
-          const delayMs = getRetryDelay(attempt);
-          console.debug(`[OSINT Copilot] Network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
-          if (onRetry) {
-            onRetry(attempt, maxRetries);
-          }
-          await this.sleep(delayMs);
-        }
-      }
-    }
-    if (lastError) {
-      const errorMessage = lastError.message.toLowerCase();
-      if (this.isTransientNetworkError(lastError)) {
-        throw new Error("Network connection error. Please check your internet connection and try again.");
-      }
-      if (errorMessage.includes("abort")) {
-        throw new Error("Request was cancelled.");
-      }
-      throw new Error(`API request failed: ${lastError.message}`);
-    }
-    throw new Error("An unexpected error occurred. Please try again.");
-  }
   // ============================================================================
   // Q&A FUNCTIONALITY
   // ============================================================================
   async askVault(query) {
-    if (!this.isAuthenticated()) {
-      throw new Error("License key required for AI features. Please configure your license key in settings.");
-    }
     const contextNotes = this.retrieveNotes(query);
     if (contextNotes.length === 0) {
       return {
@@ -13843,9 +13670,6 @@ ${excerpt}
    * @param onRetry Optional callback for retry notifications
    */
   async askVaultStream(query, onDelta, preloadedNotes, onRetry, additionalContext, signal, useLocal = false) {
-    if (!this.isAuthenticated()) {
-      throw new Error("License key required for AI features. Please configure your license key in settings.");
-    }
     const contextNotes = preloadedNotes ?? this.retrieveNotes(query);
     if (contextNotes.length === 0 && !additionalContext) {
       const noNotesMsg = "No relevant notes found for your query.";
@@ -14388,10 +14212,6 @@ ${additionalContext}
   // MODALS
   // ============================================================================
   openAskModal() {
-    if (!this.isAuthenticated()) {
-      new import_obsidian16.Notice("License key required for AI features. Please configure your license key in settings.");
-      return;
-    }
     new AskModal(this.app, this).open();
   }
   /**
@@ -16349,10 +16169,6 @@ var ChatView = class extends import_obsidian16.ItemView {
       }
     }
     this.inputEl.value = "";
-    if (!this.plugin.isAuthenticated()) {
-      new import_obsidian16.Notice("License key required for AI features. Please configure your license key in settings.");
-      return;
-    }
     let displayValue = value;
     let processingValue = value;
     const processedFileNames = [];

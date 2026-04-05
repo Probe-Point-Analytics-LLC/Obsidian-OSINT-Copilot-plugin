@@ -109,15 +109,12 @@ export interface CustomCheckpoint {
   type?: 'openai' | 'mindsdb';
 }
 
-// Default models - hardcoded, not user-configurable
-// Chat API uses Perplexity's sonar-pro model
-const CHAT_MODEL = "gpt-4o-mini";
-// Entity extraction uses OpenAI for better JSON parsing
-const ENTITY_EXTRACTION_MODEL = "gpt-4o-mini";
-// DarkWeb dark web API uses gpt-5-mini for best results with dark web content
-const DARKWEB_MODEL = "gpt-5-mini";
-// Local vault search uses Ollama on the production server (CPU inference, no OpenAI cost)
-const LOCAL_VAULT_MODEL = "qwen3:14b";
+// All AI calls are routed through Claude Code CLI (local).
+// These model constants are no longer used for remote routing but kept for reference.
+const CHAT_MODEL = "claude-code";
+const ENTITY_EXTRACTION_MODEL = "claude-code";
+const DARKWEB_MODEL = "claude-code";
+const LOCAL_VAULT_MODEL = "claude-code";
 
 
 export interface IndexedNote {
@@ -224,6 +221,7 @@ export default class VaultAIPlugin extends Plugin {
   orchestrationService!: OrchestrationService;
   updaterService!: UpdaterService;
   evidenceService!: EvidenceService;
+  claudeCodeService: ClaudeCodeService | null = null;
 
   initClaudeCodeService() {
     const adapter = this.app.vault.adapter as any;
@@ -235,17 +233,15 @@ export default class VaultAIPlugin extends Plugin {
       cliPath: this.settings.claudeCodeCliPath || 'claude',
       model: this.settings.claudeCodeModel || 'sonnet',
     });
+    this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
   }
 
   async onload() {
     await this.loadSettings();
 
-    // Check license key on load
-    if (!(this.settings.reportApiKey || "").trim()) {
-      new Notice("Osint copilot: license key required for AI features. Visualization features (graph, timeline, map) are free. Configure in settings.");
-    } else {
-      // Verify permissions on load
+    // Initialize permissions
+    if ((this.settings.reportApiKey || "").trim()) {
       this.verifyPermissions();
     }
 
@@ -1070,74 +1066,21 @@ export default class VaultAIPlugin extends Plugin {
   // ============================================================================
 
   async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string, signal?: AbortSignal, useLocal: boolean = false): Promise<string> {
-    if (!this.settings.reportApiKey) {
-      throw new Error(
-        "License key is required. Please configure it in settings."
-      );
+    if (!this.claudeCodeService) {
+      throw new Error("Claude Code not initialized. Check Settings → OSINT Copilot → Graph Extraction.");
     }
 
-    // Use unified endpoint that supports both streaming and non-streaming
-    const endpoint = `${REPORT_API_BASE_URL}/api/chat/completion`;
-
-    try {
-      // Local vault search uses Ollama; all other calls use the configured model
-      const modelToUse = useLocal ? LOCAL_VAULT_MODEL : (model || CHAT_MODEL);
-
-      const requestBody: Record<string, unknown> = {
-        model: modelToUse,
-        messages,
-        stream: stream,  // Pass stream flag to endpoint
-        use_local: useLocal,
-      };
-
-
-      // Use Obsidian's requestUrl to bypass CORS restrictions
-      const requestPromise = requestUrl({
-        url: endpoint,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.settings.reportApiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-        throw: false,
-      });
-
-      // Handle cancellation
-      if (signal?.aborted) {
-        throw new DOMException('Aborted', 'AbortError');
+    let systemPrompt = '';
+    let userContent = '';
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        systemPrompt += (systemPrompt ? '\n' : '') + msg.content;
+      } else {
+        userContent += (userContent ? '\n' : '') + msg.content;
       }
-
-      const response: RequestUrlResponse = await (signal
-        ? Promise.race([
-          requestPromise,
-          new Promise<never>((_, reject) => {
-            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
-          })
-        ])
-        : requestPromise);
-
-      if (response.status < 200 || response.status >= 300) {
-        const errorText = response.text || "";
-        console.error("[callRemoteModel] API error:", response.status, errorText);
-        throw new Error(
-          `API request failed (${response.status}): ${errorText.substring(0, 200)}`
-        );
-      }
-
-      // requestUrl doesn't support streaming, so always parse as JSON
-      const jsonData = response.json;
-      const content = jsonData.choices?.[0]?.message?.content ||
-        jsonData.choices?.[0]?.text ||
-        jsonData.content ||
-        "";
-      return content || "No answer received.";
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Model call failed: ${error.message}`);
-      }
-      throw error;
     }
+
+    return this.claudeCodeService.chat(systemPrompt, userContent, signal);
   }
 
   // ============================================================================
@@ -1167,25 +1110,6 @@ export default class VaultAIPlugin extends Plugin {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  /**
-   * Execute a streaming fetch request (single attempt)
-   * Note: Obsidian's requestUrl doesn't support streaming, so we use non-streaming
-   * and deliver the full response at once via onDelta callback.
-   */
-  private async executeStreamingFetch(
-    endpoint: string,
-    messages: ChatMessage[],
-    onDelta?: (text: string) => void,
-    signal?: AbortSignal,
-    useLocal: boolean = false
-  ): Promise<string> {
-    // Obsidian's requestUrl doesn't support streaming responses,
-    // so we fall back to non-streaming and deliver the full response at once
-    const full = await this.callRemoteModel(messages, false, undefined, signal, useLocal);
-    if (onDelta) onDelta(full);
-    return full;
-  }
-
   async callRemoteModelStream(
     messages: ChatMessage[],
     onDelta?: (text: string) => void,
@@ -1193,61 +1117,9 @@ export default class VaultAIPlugin extends Plugin {
     signal?: AbortSignal,
     useLocal: boolean = false
   ): Promise<string> {
-    if (!this.settings.reportApiKey) {
-      throw new Error("License key is required. Please configure it in settings.");
-    }
-
-    const endpoint = `${REPORT_API_BASE_URL}/api/chat`;
-    const maxRetries = 3;
-    // Optimized backoff: 500ms, 1s, 2s (faster initial retry for transient errors)
-    const getRetryDelay = (attempt: number): number => {
-      const delays = [500, 1000, 2000];
-      return delays[attempt - 1] || 2000;
-    };
-
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        if (signal?.aborted) {
-          throw new Error("Request was cancelled.");
-        }
-        return await this.executeStreamingFetch(endpoint, messages, onDelta, signal, useLocal);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        // Only retry on transient network errors
-        if (!this.isTransientNetworkError(lastError)) {
-          break;
-        }
-
-        // Don't retry on the last attempt
-        if (attempt < maxRetries) {
-          const delayMs = getRetryDelay(attempt);
-          console.debug(`[OSINT Copilot] Network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
-
-          // Notify caller about retry
-          if (onRetry) {
-            onRetry(attempt, maxRetries);
-          }
-
-          await this.sleep(delayMs);
-        }
-      }
-    }
-
-    // All retries exhausted, throw user-friendly error
-    if (lastError) {
-      const errorMessage = lastError.message.toLowerCase();
-      if (this.isTransientNetworkError(lastError)) {
-        throw new Error("Network connection error. Please check your internet connection and try again.");
-      }
-      if (errorMessage.includes('abort')) {
-        throw new Error("Request was cancelled.");
-      }
-      throw new Error(`API request failed: ${lastError.message}`);
-    }
-    throw new Error("An unexpected error occurred. Please try again.");
+    const full = await this.callRemoteModel(messages, false, undefined, signal, useLocal);
+    if (onDelta) onDelta(full);
+    return full;
   }
 
   // ============================================================================
@@ -1255,9 +1127,6 @@ export default class VaultAIPlugin extends Plugin {
   // ============================================================================
 
   async askVault(query: string): Promise<{ answer: string; notes: IndexedNote[] }> {
-    if (!this.isAuthenticated()) {
-      throw new Error("License key required for AI features. Please configure your license key in settings.");
-    }
 
     const contextNotes = this.retrieveNotes(query);
 
@@ -1312,10 +1181,6 @@ export default class VaultAIPlugin extends Plugin {
     signal?: AbortSignal,
     useLocal: boolean = false
   ): Promise<{ fullAnswer: string; notes: IndexedNote[] }> {
-    if (!this.isAuthenticated()) {
-      throw new Error("License key required for AI features. Please configure your license key in settings.");
-    }
-
     const contextNotes = preloadedNotes ?? this.retrieveNotes(query);
 
     if (contextNotes.length === 0 && !additionalContext) {
@@ -2063,10 +1928,6 @@ export default class VaultAIPlugin extends Plugin {
   // ============================================================================
 
   openAskModal() {
-    if (!this.isAuthenticated()) {
-      new Notice("License key required for AI features. Please configure your license key in settings.");
-      return;
-    }
     new AskModal(this.app, this).open();
   }
 
@@ -4568,10 +4429,7 @@ export class ChatView extends ItemView {
 
     this.inputEl.value = "";
 
-    if (!this.plugin.isAuthenticated()) {
-      new Notice("License key required for AI features. Please configure your license key in settings.");
-      return;
-    }
+    // Authentication check removed for local-only mode
 
     // Build processed value - keep file content separate from chat display
     let displayValue = value; // What user sees in chat

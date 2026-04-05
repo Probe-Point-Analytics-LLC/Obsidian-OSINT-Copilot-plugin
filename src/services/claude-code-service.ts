@@ -221,6 +221,21 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
         }));
     }
 
+    /**
+     * General-purpose chat: send system + user messages to Claude CLI, return text.
+     * Used for local search answer synthesis, entity extraction from queries, etc.
+     */
+    async chat(
+        systemPrompt: string,
+        userMessage: string,
+        signal?: AbortSignal,
+    ): Promise<string> {
+        const prompt = systemPrompt
+            ? `${systemPrompt}\n\n---\n\n${userMessage}`
+            : userMessage;
+        return this.invokeCLI(prompt, signal);
+    }
+
     async isAvailable(): Promise<boolean> {
         return new Promise((resolve) => {
             try {
