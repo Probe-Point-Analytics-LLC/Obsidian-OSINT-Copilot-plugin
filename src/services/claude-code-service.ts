@@ -46,8 +46,8 @@ export class ClaudeCodeService {
     private getFallbackSkill(): string {
         return `You are an OSINT investigator AI. Extract entities and relationships from text.
 Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
-Entity types: Person (full_name), Event (name, start_date, description), Company (name), Location (address, city, country), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
-Relationships MUST be UPPERCASE. Notes must be comprehensive. If no entities found: {"operations":[]}`;
+Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
+Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
     }
 
     private buildPrompt(text: string, existingEntities?: Entity[]): string {

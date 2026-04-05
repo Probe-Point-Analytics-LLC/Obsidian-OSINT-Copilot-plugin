@@ -1935,14 +1935,14 @@ var ENTITY_CONFIGS = {
   },
   ["Event" /* Event */]: {
     color: "#F22416",
-    properties: ["name", "description", "start_date", "end_date", "add_to_timeline"],
+    properties: ["name", "description", "start_date", "end_date", "add_to_timeline", "outcome", "participants", "location_summary"],
     labelField: "name",
     description: "An event with date and time"
   },
   ["Location" /* Location */]: {
     color: "#FF5722",
-    properties: ["name", "address", "city", "state", "country", "postal_code", "latitude", "longitude", "location_type"],
-    labelField: "name",
+    properties: ["name", "address", "city", "state", "country", "postal_code", "latitude", "longitude", "location_type", "significance", "access_level"],
+    labelField: "address",
     description: "A physical location or address"
   },
   ["Company" /* Company */]: {
@@ -2612,10 +2612,23 @@ var EntityManager = class {
         return null;
       }
       const properties = {};
-      const internalKeys = ["id", "type", "label", "filePath"];
+      const internalKeys = ["id", "type", "label", "filePath", "aliases", "color", "created"];
       for (const [key, value] of Object.entries(frontmatter)) {
         if (!internalKeys.includes(key) && value !== void 0 && value !== null) {
           properties[key] = value;
+        }
+      }
+      const bodyProps = this.parsePropertiesFromBody(content);
+      for (const [key, value] of Object.entries(bodyProps)) {
+        if (!(key in properties) && value !== void 0 && value !== null && value !== "") {
+          if (value === "true")
+            properties[key] = true;
+          else if (value === "false")
+            properties[key] = false;
+          else if (!isNaN(Number(value)) && value !== "")
+            properties[key] = Number(value);
+          else
+            properties[key] = value;
         }
       }
       return {
@@ -2629,6 +2642,28 @@ var EntityManager = class {
       console.error(`Error parsing entity from ${file.path}:`, error);
       return null;
     }
+  }
+  /**
+   * Parse key-value properties from the markdown body's ## Properties section.
+   * Handles lines like: - **key**: value  or  - **key:** value
+   */
+  parsePropertiesFromBody(content) {
+    const result = {};
+    const propsMatch = content.match(/## Properties\s*\n([\s\S]*?)(?:\n##|\n$)/);
+    if (!propsMatch)
+      return result;
+    const lines = propsMatch[1].split("\n");
+    for (const line of lines) {
+      const m = line.match(/^\s*-\s*\*\*([^*:]+)\*\*:?\s*(.*)$/);
+      if (m) {
+        const key = m[1].replace(/:$/, "").trim();
+        const value = m[2].trim();
+        if (key && value) {
+          result[key] = value;
+        }
+      }
+    }
+    return result;
   }
   /**
    * Parse YAML frontmatter from note content.
@@ -4595,8 +4630,8 @@ var ClaudeCodeService = class {
   getFallbackSkill() {
     return `You are an OSINT investigator AI. Extract entities and relationships from text.
 Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
-Entity types: Person (full_name), Event (name, start_date, description), Company (name), Location (address, city, country), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
-Relationships MUST be UPPERCASE. Notes must be comprehensive. If no entities found: {"operations":[]}`;
+Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
+Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
   }
   buildPrompt(text, existingEntities) {
     const skill = this.getSkillContent();
@@ -10753,12 +10788,12 @@ var TimelineView = class extends import_obsidian9.ItemView {
   }
   /**
    * Parse entities into timeline events.
-   * Only includes events that have add_to_timeline set to true.
+   * Events are included unless add_to_timeline is explicitly set to false.
    */
   parseEvents(entities) {
     const events = [];
     for (const entity of entities) {
-      if (!entity.properties.add_to_timeline)
+      if (entity.properties.add_to_timeline === false)
         continue;
       const startDate = this.parseDate(entity.properties.start_date);
       if (!startDate)
@@ -10776,20 +10811,28 @@ var TimelineView = class extends import_obsidian9.ItemView {
     return events;
   }
   /**
-   * Parse a date string in YYYY-MM-DD HH:mm format.
+   * Parse a date string. Supports YYYY-MM-DD HH:mm, YYYY-MM-DD, and standard Date formats.
    */
   parseDate(dateStr) {
-    if (!dateStr)
+    if (!dateStr || dateStr.toLowerCase() === "unknown" || dateStr.toLowerCase() === "n/a")
       return null;
     try {
-      const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-      if (match) {
+      const withTimeMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+      if (withTimeMatch) {
         return new Date(
-          parseInt(match[1]),
-          parseInt(match[2]) - 1,
-          parseInt(match[3]),
-          parseInt(match[4]),
-          parseInt(match[5])
+          parseInt(withTimeMatch[1]),
+          parseInt(withTimeMatch[2]) - 1,
+          parseInt(withTimeMatch[3]),
+          parseInt(withTimeMatch[4]),
+          parseInt(withTimeMatch[5])
+        );
+      }
+      const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (dateOnlyMatch) {
+        return new Date(
+          parseInt(dateOnlyMatch[1]),
+          parseInt(dateOnlyMatch[2]) - 1,
+          parseInt(dateOnlyMatch[3])
         );
       }
       const date = new Date(dateStr);

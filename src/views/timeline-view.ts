@@ -168,14 +168,13 @@ export class TimelineView extends ItemView {
 
     /**
      * Parse entities into timeline events.
-     * Only includes events that have add_to_timeline set to true.
+     * Events are included unless add_to_timeline is explicitly set to false.
      */
     private parseEvents(entities: Entity[]): TimelineEvent[] {
         const events: TimelineEvent[] = [];
 
         for (const entity of entities) {
-            // Only include events that are explicitly added to the timeline
-            if (!entity.properties.add_to_timeline) continue;
+            if (entity.properties.add_to_timeline === false) continue;
 
             const startDate = this.parseDate(entity.properties.start_date as string | undefined);
             if (!startDate) continue;
@@ -198,25 +197,32 @@ export class TimelineView extends ItemView {
     }
 
     /**
-     * Parse a date string in YYYY-MM-DD HH:mm format.
+     * Parse a date string. Supports YYYY-MM-DD HH:mm, YYYY-MM-DD, and standard Date formats.
      */
     private parseDate(dateStr: string | undefined): Date | null {
-        if (!dateStr) return null;
+        if (!dateStr || dateStr.toLowerCase() === 'unknown' || dateStr.toLowerCase() === 'n/a') return null;
 
         try {
-            // Handle YYYY-MM-DD HH:mm format
-            const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-            if (match) {
+            const withTimeMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+            if (withTimeMatch) {
                 return new Date(
-                    parseInt(match[1]),
-                    parseInt(match[2]) - 1,
-                    parseInt(match[3]),
-                    parseInt(match[4]),
-                    parseInt(match[5])
+                    parseInt(withTimeMatch[1]),
+                    parseInt(withTimeMatch[2]) - 1,
+                    parseInt(withTimeMatch[3]),
+                    parseInt(withTimeMatch[4]),
+                    parseInt(withTimeMatch[5])
                 );
             }
 
-            // Try standard Date parsing
+            const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (dateOnlyMatch) {
+                return new Date(
+                    parseInt(dateOnlyMatch[1]),
+                    parseInt(dateOnlyMatch[2]) - 1,
+                    parseInt(dateOnlyMatch[3])
+                );
+            }
+
             const date = new Date(dateStr);
             if (!isNaN(date.getTime())) {
                 return date;

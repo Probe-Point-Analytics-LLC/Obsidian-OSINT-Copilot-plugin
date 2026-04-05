@@ -118,17 +118,27 @@ export class EntityManager {
             }
 
             const type = frontmatter.type as string;
-            // Allow both legacy EntityType and FTM schema types
             if (!type) {
                 return null;
             }
 
-            // Extract all properties except internal ones
             const properties: Record<string, unknown> = {};
-            const internalKeys = ['id', 'type', 'label', 'filePath'];
+            const internalKeys = ['id', 'type', 'label', 'filePath', 'aliases', 'color', 'created'];
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!internalKeys.includes(key) && value !== undefined && value !== null) {
                     properties[key] = value;
+                }
+            }
+
+            // Fallback: parse properties from the markdown body (## Properties section)
+            // for notes that only have properties in the body, not in frontmatter
+            const bodyProps = this.parsePropertiesFromBody(content);
+            for (const [key, value] of Object.entries(bodyProps)) {
+                if (!(key in properties) && value !== undefined && value !== null && value !== '') {
+                    if (value === 'true') properties[key] = true;
+                    else if (value === 'false') properties[key] = false;
+                    else if (!isNaN(Number(value)) && value !== '') properties[key] = Number(value);
+                    else properties[key] = value;
                 }
             }
 
@@ -143,6 +153,29 @@ export class EntityManager {
             console.error(`Error parsing entity from ${file.path}:`, error);
             return null;
         }
+    }
+
+    /**
+     * Parse key-value properties from the markdown body's ## Properties section.
+     * Handles lines like: - **key**: value  or  - **key:** value
+     */
+    private parsePropertiesFromBody(content: string): Record<string, string> {
+        const result: Record<string, string> = {};
+        const propsMatch = content.match(/## Properties\s*\n([\s\S]*?)(?:\n##|\n$)/);
+        if (!propsMatch) return result;
+
+        const lines = propsMatch[1].split('\n');
+        for (const line of lines) {
+            const m = line.match(/^\s*-\s*\*\*([^*:]+)\*\*:?\s*(.*)$/);
+            if (m) {
+                const key = m[1].replace(/:$/, '').trim();
+                const value = m[2].trim();
+                if (key && value) {
+                    result[key] = value;
+                }
+            }
+        }
+        return result;
     }
 
     /**
