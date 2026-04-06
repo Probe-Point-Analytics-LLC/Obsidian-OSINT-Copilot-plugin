@@ -1983,13 +1983,13 @@ var ENTITY_CONFIGS = {
   },
   ["Evidence" /* Evidence */]: {
     color: "#02bfd4",
-    properties: ["name", "description", "tampered"],
+    properties: ["name", "description", "tampered", "filePath"],
     labelField: "name",
     description: "Evidence in an investigation"
   },
   ["Image" /* Image */]: {
     color: "#E9B96E",
-    properties: ["title", "url", "description"],
+    properties: ["title", "url", "description", "filePath"],
     labelField: "title",
     description: "An image"
   },
@@ -2541,6 +2541,9 @@ var EntityManager = class {
    */
   setBasePath(path) {
     this.basePath = path;
+  }
+  getBasePath() {
+    return this.basePath;
   }
   /**
    * Initialize the entity manager and load existing entities.
@@ -8194,7 +8197,7 @@ var GraphHistoryManager = class {
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
 var NODE_POSITIONS_FILE = ".osint-copilot/graph-positions.json";
-var GraphView = class extends import_obsidian8.ItemView {
+var _GraphView = class _GraphView extends import_obsidian8.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap) {
     super(leaf);
     this.cy = null;
@@ -8223,6 +8226,8 @@ var GraphView = class extends import_obsidian8.ItemView {
     this.redoBtn = null;
     // Node positions cache for tracking position changes
     this.nodePositionsCache = /* @__PURE__ */ new Map();
+    // Drag-and-drop overlay for file drops on the graph
+    this.dropOverlay = null;
     /**
      * Save positions with debouncing to avoid too many writes.
      */
@@ -8310,6 +8315,9 @@ var GraphView = class extends import_obsidian8.ItemView {
       top: "0",
       left: "0"
     });
+    this.dropOverlay = container.createDiv({ cls: "graph-drop-overlay" });
+    this.dropOverlay.createDiv({ text: "Drop images or documents here", cls: "graph-drop-overlay-text" });
+    this.setupGraphDropHandlers(container);
     const toolbar = container.createDiv({ cls: "graph_copilot-graph-toolbar" });
     this.createToolbar(toolbar);
     try {
@@ -8362,6 +8370,172 @@ var GraphView = class extends import_obsidian8.ItemView {
       ol.createEl("li", { text: "Check network tab for failed requests to unpkg.com" });
       ol.createEl("li", { text: "Verify plugin settings: enableGraphFeatures should be enabled" });
       new import_obsidian8.Notice("Graph failed to load. Check console for details.", 1e4);
+    }
+  }
+  setupGraphDropHandlers(container) {
+    let dragCounter = 0;
+    container.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      if (dragCounter === 1) {
+        this.dropOverlay?.addClass("active");
+      }
+    });
+    container.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        this.dropOverlay?.removeClass("active");
+      }
+    });
+    container.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = "copy";
+      }
+    });
+    container.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      this.dropOverlay?.removeClass("active");
+      const evt = e;
+      if (!evt.dataTransfer)
+        return;
+      const position = this.screenToModelPosition(evt.clientX, evt.clientY);
+      const internalPath = evt.dataTransfer.getData("text/plain");
+      if (internalPath) {
+        const tfile = this.app.vault.getAbstractFileByPath(internalPath);
+        if (tfile instanceof import_obsidian8.TFile) {
+          await this.handleGraphFileDrop([tfile], position);
+          return;
+        }
+      }
+      if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
+        await this.handleExternalFileDrop(evt.dataTransfer.files, position);
+      }
+    });
+  }
+  screenToModelPosition(clientX, clientY) {
+    if (!this.cy || !this.container) {
+      return { x: 200, y: 200 };
+    }
+    const rect = this.container.getBoundingClientRect();
+    const pan = this.cy.pan();
+    const zoom = this.cy.zoom();
+    return {
+      x: (clientX - rect.left - pan.x) / zoom,
+      y: (clientY - rect.top - pan.y) / zoom
+    };
+  }
+  async handleExternalFileDrop(fileList, position) {
+    const evidencePath = (0, import_obsidian8.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
+    await this.ensureFolderExists(evidencePath);
+    const tFiles = [];
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
+      const destPath = (0, import_obsidian8.normalizePath)(`${evidencePath}/${safeName}`);
+      try {
+        const buffer = await file.arrayBuffer();
+        const existing = this.app.vault.getAbstractFileByPath(destPath);
+        if (existing instanceof import_obsidian8.TFile) {
+          tFiles.push(existing);
+        } else {
+          const created = await this.app.vault.createBinary(destPath, buffer);
+          tFiles.push(created);
+        }
+      } catch (err) {
+        console.error(`[GraphView] Failed to import file ${file.name}:`, err);
+        new import_obsidian8.Notice(`Failed to import ${file.name}`);
+      }
+    }
+    if (tFiles.length > 0) {
+      await this.handleGraphFileDrop(tFiles, position);
+    }
+  }
+  async handleGraphFileDrop(files, basePosition) {
+    let offset = 0;
+    for (const file of files) {
+      const ext = (file.extension || "").toLowerCase();
+      const isImage = _GraphView.IMAGE_EXTENSIONS.has(ext);
+      const isDocument = _GraphView.DOCUMENT_EXTENSIONS.has(ext);
+      if (!isImage && !isDocument) {
+        new import_obsidian8.Notice(`Unsupported file type: .${ext}`);
+        continue;
+      }
+      const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
+      try {
+        let entity;
+        if (isImage) {
+          entity = await this.entityManager.createEntity("Image" /* Image */, {
+            title: file.basename,
+            filePath: file.path,
+            description: `Image: ${file.name}`
+          }, { skipAutoGeocode: true });
+        } else {
+          entity = await this.entityManager.createEntity("Evidence" /* Evidence */, {
+            name: file.basename,
+            filePath: file.path,
+            description: `Document: ${file.name}`
+          }, { skipAutoGeocode: true });
+        }
+        this.historyManager.recordEntityCreate(entity);
+        this.addEntityToGraphAtPosition(entity, dropPos);
+        new import_obsidian8.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
+        offset++;
+      } catch (err) {
+        console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
+        new import_obsidian8.Notice(`Failed to add ${file.name} to graph`);
+      }
+    }
+  }
+  addEntityToGraphAtPosition(entity, position) {
+    if (!this.cy)
+      return;
+    const existingNode = this.cy.getElementById(entity.id);
+    if (existingNode.length > 0)
+      return;
+    const config = ENTITY_CONFIGS[entity.type] || ENTITY_CONFIGS["Person" /* Person */];
+    const entityLabel = entity.label != null ? String(entity.label) : "";
+    const label = this.truncateLabel(entityLabel, 15);
+    const thumbUrl = this.resolveThumbUrl(entity);
+    this.cy.add({
+      data: {
+        id: entity.id,
+        label,
+        fullLabel: entityLabel,
+        type: entity.type,
+        color: config.color,
+        icon: getEntityIcon(entity.type),
+        thumbUrl: thumbUrl || void 0
+      },
+      position
+    });
+    this.nodePositionsCache.set(entity.id, position);
+    this.savePositionsDebounced();
+  }
+  resolveThumbUrl(entity) {
+    const fp = entity.properties.filePath;
+    if (!fp)
+      return void 0;
+    const ext = fp.split(".").pop()?.toLowerCase() || "";
+    if (!_GraphView.IMAGE_EXTENSIONS.has(ext))
+      return void 0;
+    const file = this.app.vault.getAbstractFileByPath(fp);
+    if (file instanceof import_obsidian8.TFile) {
+      return this.app.vault.getResourcePath(file);
+    }
+    return void 0;
+  }
+  async ensureFolderExists(path) {
+    const folder = this.app.vault.getAbstractFileByPath(path);
+    if (!folder) {
+      await this.app.vault.createFolder(path);
     }
   }
   async onClose() {
@@ -9726,6 +9900,28 @@ ${label}
         }
       },
       {
+        // Image nodes with a thumbnail show the image instead of a colored circle
+        selector: "node[?thumbUrl]",
+        style: {
+          "background-image": "data(thumbUrl)",
+          "background-fit": "cover",
+          "background-image-opacity": 1,
+          "background-color": "#333333",
+          "shape": "round-rectangle",
+          "width": 80,
+          "height": 80,
+          "border-width": 3,
+          "border-color": "#E9B96E",
+          "label": (ele) => {
+            const label = ele.data("label") || "";
+            return label;
+          },
+          "text-valign": "bottom",
+          "text-halign": "center",
+          "text-margin-y": 8
+        }
+      },
+      {
         // Location/Address nodes get a special pin-like shape
         selector: 'node[type = "Location"], node[type = "Address"]',
         style: {
@@ -9822,6 +10018,7 @@ ${label}
     const nodes = entities.map((entity, index) => {
       const hasCoordinates = entity.type === "Location" /* Location */ && entity.properties.latitude && entity.properties.longitude;
       const entityLabel = entity.label != null ? String(entity.label) : "";
+      const thumbUrl = this.resolveThumbUrl(entity);
       return {
         data: {
           id: entity.id,
@@ -9830,7 +10027,8 @@ ${label}
           type: entity.type,
           color: ENTITY_CONFIGS[entity.type]?.color || "#607D8B",
           icon: getEntityIcon(entity.type),
-          hasCoordinates
+          hasCoordinates,
+          thumbUrl: thumbUrl || void 0
         },
         position: this.getNodePosition(index, entities.length),
         classes: hasCoordinates ? "has-coordinates" : ""
@@ -9893,6 +10091,7 @@ ${label}
     const nodes = entities.map((entity, index) => {
       const hasCoordinates = entity.type === "Location" /* Location */ && entity.properties.latitude && entity.properties.longitude;
       const entityLabel = entity.label != null ? String(entity.label) : "";
+      const thumbUrl = this.resolveThumbUrl(entity);
       const savedPos = this.nodePositionsCache.get(entity.id);
       let position;
       if (savedPos) {
@@ -9910,7 +10109,8 @@ ${label}
           type: entity.type,
           color: ENTITY_CONFIGS[entity.type]?.color || "#607D8B",
           icon: getEntityIcon(entity.type),
-          hasCoordinates
+          hasCoordinates,
+          thumbUrl: thumbUrl || void 0
         },
         position,
         classes: hasCoordinates ? "has-coordinates" : ""
@@ -10533,6 +10733,7 @@ ${label}
     const config = ENTITY_CONFIGS[entity.type] || ENTITY_CONFIGS["Person" /* Person */];
     const entityLabel = entity.label != null ? String(entity.label) : "";
     const label = this.truncateLabel(entityLabel, 15);
+    const thumbUrl = this.resolveThumbUrl(entity);
     const cachedPos = this.nodePositionsCache.get(entity.id);
     const position = cachedPos || {
       x: Math.random() * 400 + 100,
@@ -10545,7 +10746,8 @@ ${label}
         fullLabel: entityLabel,
         type: entity.type,
         color: config.color,
-        icon: getEntityIcon(entity.type)
+        icon: getEntityIcon(entity.type),
+        thumbUrl: thumbUrl || void 0
       },
       position
     });
@@ -10670,6 +10872,9 @@ Confidence: ${result.confidence} `);
     }
   }
 };
+_GraphView.IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"]);
+_GraphView.DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set(["pdf", "docx", "doc", "txt", "md", "csv", "json", "html", "xml", "rtf"]);
+var GraphView = _GraphView;
 
 // src/views/timeline-view.ts
 var import_obsidian9 = require("obsidian");

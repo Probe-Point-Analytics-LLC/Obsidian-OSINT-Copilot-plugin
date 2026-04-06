@@ -30,6 +30,10 @@ export class EntityManager {
         this.basePath = path;
     }
 
+    getBasePath(): string {
+        return this.basePath;
+    }
+
     /**
      * Initialize the entity manager and load existing entities.
      */

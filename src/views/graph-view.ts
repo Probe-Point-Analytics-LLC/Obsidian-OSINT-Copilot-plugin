@@ -3,7 +3,7 @@
  * Custom Graph View using Cytoscape.js for interactive graph visualization.
  */
 
-import { App, ItemView, WorkspaceLeaf, Notice, TFile } from 'obsidian';
+import { App, ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian';
 import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
@@ -65,6 +65,8 @@ interface CytoscapeCore {
     edges(): Collection;
     getElementById(id: string): Collection;
     fit(): void;
+    pan(): { x: number; y: number };
+    zoom(): number;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     on(events: string, selector: string, handler: (evt: any) => void): void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +120,9 @@ export class GraphView extends ItemView {
 
     // Geocoding service for location entities
     private geocodingService: GeocodingService;
+
+    // Drag-and-drop overlay for file drops on the graph
+    private dropOverlay: HTMLElement | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -232,6 +237,11 @@ export class GraphView extends ItemView {
             left: '0'
         });
 
+        // Create drag-and-drop overlay
+        this.dropOverlay = container.createDiv({ cls: 'graph-drop-overlay' });
+        this.dropOverlay.createDiv({ text: 'Drop images or documents here', cls: 'graph-drop-overlay-text' });
+        this.setupGraphDropHandlers(container);
+
         // Create toolbar
         const toolbar = container.createDiv({ cls: 'graph_copilot-graph-toolbar' });
         this.createToolbar(toolbar);
@@ -306,6 +316,201 @@ export class GraphView extends ItemView {
             ol.createEl('li', { text: 'Verify plugin settings: enableGraphFeatures should be enabled' });
 
             new Notice('Graph failed to load. Check console for details.', 10000);
+        }
+    }
+
+    private static readonly IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico']);
+    private static readonly DOCUMENT_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt', 'md', 'csv', 'json', 'html', 'xml', 'rtf']);
+
+    private setupGraphDropHandlers(container: Element): void {
+        let dragCounter = 0;
+
+        container.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter++;
+            if (dragCounter === 1) {
+                this.dropOverlay?.addClass('active');
+            }
+        });
+
+        container.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter--;
+            if (dragCounter <= 0) {
+                dragCounter = 0;
+                this.dropOverlay?.removeClass('active');
+            }
+        });
+
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if ((e as DragEvent).dataTransfer) {
+                (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+            }
+        });
+
+        container.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter = 0;
+            this.dropOverlay?.removeClass('active');
+
+            const evt = e as DragEvent;
+            if (!evt.dataTransfer) return;
+
+            // Calculate drop position in Cytoscape model coordinates
+            const position = this.screenToModelPosition(evt.clientX, evt.clientY);
+
+            // Handle internal vault file drops
+            const internalPath = evt.dataTransfer.getData('text/plain');
+            if (internalPath) {
+                const tfile = this.app.vault.getAbstractFileByPath(internalPath);
+                if (tfile instanceof TFile) {
+                    await this.handleGraphFileDrop([tfile], position);
+                    return;
+                }
+            }
+
+            // Handle external OS file drops
+            if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
+                await this.handleExternalFileDrop(evt.dataTransfer.files, position);
+            }
+        });
+    }
+
+    private screenToModelPosition(clientX: number, clientY: number): { x: number; y: number } {
+        if (!this.cy || !this.container) {
+            return { x: 200, y: 200 };
+        }
+        const rect = this.container.getBoundingClientRect();
+        const pan = this.cy.pan();
+        const zoom = this.cy.zoom();
+        return {
+            x: (clientX - rect.left - pan.x) / zoom,
+            y: (clientY - rect.top - pan.y) / zoom
+        };
+    }
+
+    private async handleExternalFileDrop(fileList: FileList, position: { x: number; y: number }): Promise<void> {
+        const evidencePath = normalizePath(`${this.entityManager.getBasePath()}/Evidence`);
+        await this.ensureFolderExists(evidencePath);
+
+        const tFiles: TFile[] = [];
+        for (let i = 0; i < fileList.length; i++) {
+            const file = fileList[i];
+            const safeName = file.name.replace(/[\\/:*?"<>|]/g, '_');
+            const destPath = normalizePath(`${evidencePath}/${safeName}`);
+
+            try {
+                const buffer = await file.arrayBuffer();
+                const existing = this.app.vault.getAbstractFileByPath(destPath);
+                if (existing instanceof TFile) {
+                    tFiles.push(existing);
+                } else {
+                    const created = await this.app.vault.createBinary(destPath, buffer);
+                    tFiles.push(created);
+                }
+            } catch (err) {
+                console.error(`[GraphView] Failed to import file ${file.name}:`, err);
+                new Notice(`Failed to import ${file.name}`);
+            }
+        }
+
+        if (tFiles.length > 0) {
+            await this.handleGraphFileDrop(tFiles, position);
+        }
+    }
+
+    private async handleGraphFileDrop(files: TFile[], basePosition: { x: number; y: number }): Promise<void> {
+        let offset = 0;
+        for (const file of files) {
+            const ext = (file.extension || '').toLowerCase();
+            const isImage = GraphView.IMAGE_EXTENSIONS.has(ext);
+            const isDocument = GraphView.DOCUMENT_EXTENSIONS.has(ext);
+
+            if (!isImage && !isDocument) {
+                new Notice(`Unsupported file type: .${ext}`);
+                continue;
+            }
+
+            const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
+
+            try {
+                let entity: Entity;
+                if (isImage) {
+                    entity = await this.entityManager.createEntity(EntityType.Image, {
+                        title: file.basename,
+                        filePath: file.path,
+                        description: `Image: ${file.name}`
+                    }, { skipAutoGeocode: true });
+                } else {
+                    entity = await this.entityManager.createEntity(EntityType.Evidence, {
+                        name: file.basename,
+                        filePath: file.path,
+                        description: `Document: ${file.name}`
+                    }, { skipAutoGeocode: true });
+                }
+
+                this.historyManager.recordEntityCreate(entity);
+                this.addEntityToGraphAtPosition(entity, dropPos);
+                new Notice(`Added ${isImage ? 'image' : 'document'}: ${file.basename}`);
+                offset++;
+            } catch (err) {
+                console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
+                new Notice(`Failed to add ${file.name} to graph`);
+            }
+        }
+    }
+
+    private addEntityToGraphAtPosition(entity: Entity, position: { x: number; y: number }): void {
+        if (!this.cy) return;
+
+        const existingNode = this.cy.getElementById(entity.id);
+        if (existingNode.length > 0) return;
+
+        const config = ENTITY_CONFIGS[entity.type as EntityType] || ENTITY_CONFIGS[EntityType.Person];
+        const entityLabel = entity.label != null ? String(entity.label) : '';
+        const label = this.truncateLabel(entityLabel, 15);
+        const thumbUrl = this.resolveThumbUrl(entity);
+
+        this.cy.add({
+            data: {
+                id: entity.id,
+                label: label,
+                fullLabel: entityLabel,
+                type: entity.type,
+                color: config.color,
+                icon: getEntityIcon(entity.type),
+                thumbUrl: thumbUrl || undefined
+            },
+            position: position
+        });
+
+        this.nodePositionsCache.set(entity.id, position);
+        this.savePositionsDebounced();
+    }
+
+    private resolveThumbUrl(entity: Entity): string | undefined {
+        const fp = entity.properties.filePath as string;
+        if (!fp) return undefined;
+
+        const ext = fp.split('.').pop()?.toLowerCase() || '';
+        if (!GraphView.IMAGE_EXTENSIONS.has(ext)) return undefined;
+
+        const file = this.app.vault.getAbstractFileByPath(fp);
+        if (file instanceof TFile) {
+            return this.app.vault.getResourcePath(file);
+        }
+        return undefined;
+    }
+
+    private async ensureFolderExists(path: string): Promise<void> {
+        const folder = this.app.vault.getAbstractFileByPath(path);
+        if (!folder) {
+            await this.app.vault.createFolder(path);
         }
     }
 
@@ -2001,6 +2206,28 @@ export class GraphView extends ItemView {
                 }
             },
             {
+                // Image nodes with a thumbnail show the image instead of a colored circle
+                selector: 'node[?thumbUrl]',
+                style: {
+                    'background-image': 'data(thumbUrl)',
+                    'background-fit': 'cover',
+                    'background-image-opacity': 1,
+                    'background-color': '#333333',
+                    'shape': 'round-rectangle',
+                    'width': 80,
+                    'height': 80,
+                    'border-width': 3,
+                    'border-color': '#E9B96E',
+                    'label': (ele: NodeSingular) => {
+                        const label = ele.data('label') || '';
+                        return label;
+                    },
+                    'text-valign': 'bottom',
+                    'text-halign': 'center',
+                    'text-margin-y': 8
+                }
+            },
+            {
                 // Location/Address nodes get a special pin-like shape
                 selector: 'node[type = "Location"], node[type = "Address"]',
                 style: {
@@ -2103,13 +2330,12 @@ export class GraphView extends ItemView {
 
         // Add nodes
         const nodes = entities.map((entity, index) => {
-            // Check if Location entity has coordinates
             const hasCoordinates = entity.type === EntityType.Location &&
                 entity.properties.latitude &&
                 entity.properties.longitude;
 
-            // Ensure label is a string
             const entityLabel = entity.label != null ? String(entity.label) : '';
+            const thumbUrl = this.resolveThumbUrl(entity);
 
             return {
                 data: {
@@ -2119,7 +2345,8 @@ export class GraphView extends ItemView {
                     type: entity.type,
                     color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
                     icon: getEntityIcon(entity.type),
-                    hasCoordinates: hasCoordinates
+                    hasCoordinates: hasCoordinates,
+                    thumbUrl: thumbUrl || undefined
                 },
                 position: this.getNodePosition(index, entities.length),
                 classes: hasCoordinates ? 'has-coordinates' : ''
@@ -2203,8 +2430,8 @@ export class GraphView extends ItemView {
                 entity.properties.longitude;
 
             const entityLabel = entity.label != null ? String(entity.label) : '';
+            const thumbUrl = this.resolveThumbUrl(entity);
 
-            // Use saved position if available, otherwise use default and mark for layout
             const savedPos = this.nodePositionsCache.get(entity.id);
             let position: { x: number; y: number };
 
@@ -2212,7 +2439,6 @@ export class GraphView extends ItemView {
                 position = savedPos;
                 nodesWithSavedPositions.push(entity.id);
             } else {
-                // New node - use circular layout position and mark for layout
                 position = this.getNodePosition(index, entities.length);
                 nodesNeedingLayout.push(entity.id);
             }
@@ -2225,7 +2451,8 @@ export class GraphView extends ItemView {
                     type: entity.type,
                     color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
                     icon: getEntityIcon(entity.type),
-                    hasCoordinates: hasCoordinates
+                    hasCoordinates: hasCoordinates,
+                    thumbUrl: thumbUrl || undefined
                 },
                 position: position,
                 classes: hasCoordinates ? 'has-coordinates' : ''
@@ -2942,11 +3169,10 @@ export class GraphView extends ItemView {
         if (existingNode.length > 0) return;
 
         const config = ENTITY_CONFIGS[entity.type as EntityType] || ENTITY_CONFIGS[EntityType.Person];
-        // Ensure label is a string
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
+        const thumbUrl = this.resolveThumbUrl(entity);
 
-        // Get cached position or use random position
         const cachedPos = this.nodePositionsCache.get(entity.id);
         const position = cachedPos || {
             x: Math.random() * 400 + 100,
@@ -2960,12 +3186,12 @@ export class GraphView extends ItemView {
                 fullLabel: entityLabel,
                 type: entity.type,
                 color: config.color,
-                icon: getEntityIcon(entity.type)
+                icon: getEntityIcon(entity.type),
+                thumbUrl: thumbUrl || undefined
             },
             position: position
         });
 
-        // Update cache
         this.nodePositionsCache.set(entity.id, position);
     }
 

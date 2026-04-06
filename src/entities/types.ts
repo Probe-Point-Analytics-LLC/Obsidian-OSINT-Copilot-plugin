@@ -219,13 +219,13 @@ export const ENTITY_CONFIGS: Record<EntityType, EntityConfig> = {
     },
     [EntityType.Evidence]: {
         color: "#02bfd4",
-        properties: ["name", "description", "tampered"],
+        properties: ["name", "description", "tampered", "filePath"],
         labelField: "name",
         description: "Evidence in an investigation"
     },
     [EntityType.Image]: {
         color: "#E9B96E",
-        properties: ["title", "url", "description"],
+        properties: ["title", "url", "description", "filePath"],
         labelField: "title",
         description: "An image"
     },
