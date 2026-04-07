@@ -559,6 +559,16 @@ export class GraphApiService {
         );
     }
 
+    /**
+     * Extract text/information from an image file using Claude Code vision.
+     */
+    async extractTextFromImage(absolutePath: string, signal?: AbortSignal): Promise<string> {
+        if (!this.claudeCodeService) {
+            throw new Error('Claude Code service not initialized.');
+        }
+        return this.claudeCodeService.extractTextFromImage(absolutePath, signal);
+    }
+
     private readFileAsText(file: File): Promise<string> {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();

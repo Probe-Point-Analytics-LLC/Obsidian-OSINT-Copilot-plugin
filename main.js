@@ -4154,6 +4154,15 @@ Supported: text files, PDF (requires pdftotext/poppler), DOCX.
 Tip: paste the text content directly into the chat instead.`
     );
   }
+  /**
+   * Extract text/information from an image file using Claude Code vision.
+   */
+  async extractTextFromImage(absolutePath, signal) {
+    if (!this.claudeCodeService) {
+      throw new Error("Claude Code service not initialized.");
+    }
+    return this.claudeCodeService.extractTextFromImage(absolutePath, signal);
+  }
   readFileAsText(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -4678,7 +4687,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       return { success: false, error: err.message || String(err) };
     }
   }
-  invokeCLI(prompt, signal) {
+  invokeCLI(prompt, signal, maxTurns = 1) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
         reject(new DOMException("Aborted", "AbortError"));
@@ -4692,7 +4701,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         "--model",
         this.config.model,
         "--max-turns",
-        "1"
+        String(maxTurns)
       ];
       const child = execFile(
         this.config.cliPath,
@@ -4797,6 +4806,23 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
 
 ${userMessage}` : userMessage;
     return this.invokeCLI(prompt, signal);
+  }
+  /**
+   * Extract text and information from an image using Claude's vision capabilities.
+   * Uses --max-turns 5 to allow Claude to read the file with its built-in tools.
+   */
+  async extractTextFromImage(absolutePath, signal) {
+    const prompt = `Read the image file at "${absolutePath}" and extract ALL information from it.
+
+Extract and return:
+- All visible text (OCR), preserving structure
+- Names of people, organizations, places
+- Dates, phone numbers, email addresses, URLs, account numbers
+- Any other identifiable data (IDs, addresses, license plates, etc.)
+- A brief description of what the image shows
+
+Return ONLY the extracted information as plain text. No markdown formatting, no commentary about the extraction process.`;
+    return this.invokeCLI(prompt, signal, 5);
   }
   async isAvailable() {
     return new Promise((resolve) => {
@@ -15202,8 +15228,15 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
       this.inputEl.focus();
     }
   }
+  getVaultAbsolutePath() {
+    const adapter = this.app.vault.adapter;
+    return typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
+  }
   async handleDroppedImageFile(file) {
     try {
+      this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
+      this.inputEl.disabled = true;
+      new import_obsidian16.Notice(`Analyzing image: ${file.name}...`);
       const evidencePath = (0, import_obsidian16.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
       const folder = this.app.vault.getAbstractFileByPath(evidencePath);
       if (!folder) {
@@ -15219,16 +15252,19 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
       } else {
         tFile = await this.app.vault.createBinary(destPath, buffer);
       }
-      const entity = await this.plugin.entityManager.createEntity("Image" /* Image */, {
-        title: file.name.replace(/\.[^.]+$/, ""),
-        filePath: tFile.path,
-        description: `Image: ${file.name}`
-      }, { skipAutoGeocode: true });
-      new import_obsidian16.Notice(`Added image to graph: ${file.name}`);
-      this.plugin.refreshOrOpenGraphView();
+      const vaultBase = this.getVaultAbsolutePath();
+      const absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
+      const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+      this.appendExtractedText(`[Image: ${file.name}]
+${text}`);
+      new import_obsidian16.Notice(`Information extracted from ${file.name}`);
     } catch (error) {
-      console.error("Drop image error:", error);
-      new import_obsidian16.Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error("Image extraction error:", error);
+      new import_obsidian16.Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.inputEl.disabled = false;
+      this.updateInputPlaceholder();
+      this.inputEl.focus();
     }
   }
   /**
@@ -15240,16 +15276,22 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
     const imageExts = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"];
     if (imageExts.includes(file.extension.toLowerCase())) {
       try {
-        await this.plugin.entityManager.createEntity("Image" /* Image */, {
-          title: file.basename,
-          filePath: file.path,
-          description: `Image: ${file.name}`
-        }, { skipAutoGeocode: true });
-        new import_obsidian16.Notice(`Added image to graph: ${file.name}`);
-        this.plugin.refreshOrOpenGraphView();
+        this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
+        this.inputEl.disabled = true;
+        new import_obsidian16.Notice(`Analyzing image: ${file.name}...`);
+        const vaultBase = this.getVaultAbsolutePath();
+        const absolutePath = vaultBase ? `${vaultBase}/${file.path}` : file.path;
+        const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+        this.appendExtractedText(`[Image: ${file.name}]
+${text}`);
+        new import_obsidian16.Notice(`Information extracted from ${file.name}`);
       } catch (error) {
-        console.error("Drop image error:", error);
-        new import_obsidian16.Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+        console.error("Image extraction error:", error);
+        new import_obsidian16.Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.inputEl.disabled = false;
+        this.updateInputPlaceholder();
+        this.inputEl.focus();
       }
       return;
     }

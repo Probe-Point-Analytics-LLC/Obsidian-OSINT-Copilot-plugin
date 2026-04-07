@@ -2865,8 +2865,17 @@ export class ChatView extends ItemView {
     }
   }
 
+  private getVaultAbsolutePath(): string {
+    const adapter = this.app.vault.adapter as any;
+    return typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+  }
+
   private async handleDroppedImageFile(file: File): Promise<void> {
     try {
+      this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
+      this.inputEl.disabled = true;
+      new Notice(`Analyzing image: ${file.name}...`);
+
       const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
       const folder = this.app.vault.getAbstractFileByPath(evidencePath);
       if (!folder) {
@@ -2885,17 +2894,19 @@ export class ChatView extends ItemView {
         tFile = await this.app.vault.createBinary(destPath, buffer);
       }
 
-      const entity = await this.plugin.entityManager.createEntity(EntityType.Image, {
-        title: file.name.replace(/\.[^.]+$/, ''),
-        filePath: tFile.path,
-        description: `Image: ${file.name}`
-      }, { skipAutoGeocode: true });
+      const vaultBase = this.getVaultAbsolutePath();
+      const absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
 
-      new Notice(`Added image to graph: ${file.name}`);
-      this.plugin.refreshOrOpenGraphView();
+      const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+      this.appendExtractedText(`[Image: ${file.name}]\n${text}`);
+      new Notice(`Information extracted from ${file.name}`);
     } catch (error) {
-      console.error("Drop image error:", error);
-      new Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+      console.error("Image extraction error:", error);
+      new Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.inputEl.disabled = false;
+      this.updateInputPlaceholder();
+      this.inputEl.focus();
     }
   }
 
@@ -2908,17 +2919,23 @@ export class ChatView extends ItemView {
     const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
     if (imageExts.includes(file.extension.toLowerCase())) {
       try {
-        await this.plugin.entityManager.createEntity(EntityType.Image, {
-          title: file.basename,
-          filePath: file.path,
-          description: `Image: ${file.name}`
-        }, { skipAutoGeocode: true });
+        this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
+        this.inputEl.disabled = true;
+        new Notice(`Analyzing image: ${file.name}...`);
 
-        new Notice(`Added image to graph: ${file.name}`);
-        this.plugin.refreshOrOpenGraphView();
+        const vaultBase = this.getVaultAbsolutePath();
+        const absolutePath = vaultBase ? `${vaultBase}/${file.path}` : file.path;
+
+        const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+        this.appendExtractedText(`[Image: ${file.name}]\n${text}`);
+        new Notice(`Information extracted from ${file.name}`);
       } catch (error) {
-        console.error("Drop image error:", error);
-        new Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+        console.error("Image extraction error:", error);
+        new Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.inputEl.disabled = false;
+        this.updateInputPlaceholder();
+        this.inputEl.focus();
       }
       return;
     }

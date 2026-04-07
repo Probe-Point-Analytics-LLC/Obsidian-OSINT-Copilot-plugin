@@ -106,7 +106,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         }
     }
 
-    private invokeCLI(prompt: string, signal?: AbortSignal): Promise<string> {
+    private invokeCLI(prompt: string, signal?: AbortSignal, maxTurns: number = 1): Promise<string> {
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
                 reject(new DOMException('Aborted', 'AbortError'));
@@ -119,7 +119,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                 '--print',
                 '--output-format', 'text',
                 '--model', this.config.model,
-                '--max-turns', '1',
+                '--max-turns', String(maxTurns),
             ];
 
             const child = execFile(
@@ -232,6 +232,25 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             ? `${systemPrompt}\n\n---\n\n${userMessage}`
             : userMessage;
         return this.invokeCLI(prompt, signal);
+    }
+
+    /**
+     * Extract text and information from an image using Claude's vision capabilities.
+     * Uses --max-turns 5 to allow Claude to read the file with its built-in tools.
+     */
+    async extractTextFromImage(absolutePath: string, signal?: AbortSignal): Promise<string> {
+        const prompt = `Read the image file at "${absolutePath}" and extract ALL information from it.
+
+Extract and return:
+- All visible text (OCR), preserving structure
+- Names of people, organizations, places
+- Dates, phone numbers, email addresses, URLs, account numbers
+- Any other identifiable data (IDs, addresses, license plates, etc.)
+- A brief description of what the image shows
+
+Return ONLY the extracted information as plain text. No markdown formatting, no commentary about the extraction process.`;
+
+        return this.invokeCLI(prompt, signal, 5);
     }
 
     async isAvailable(): Promise<boolean> {
