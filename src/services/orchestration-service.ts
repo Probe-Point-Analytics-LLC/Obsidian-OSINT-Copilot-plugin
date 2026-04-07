@@ -56,33 +56,7 @@ export class OrchestrationService {
 
 
     private async verifyProviderAndCredits(): Promise<void> {
-        if (this.plugin.settings.orchestrationProvider === 'osint-copilot') {
-            try {
-                const base = (this.plugin.settings.graphApiUrl || "https://api.osint-copilot.com").replace(/\/+$/, "");
-                const response = await requestUrl({
-                    url: `${base}/api/key/info`,
-                    method: "GET",
-                    headers: {
-                        "Authorization": `Bearer ${this.plugin.settings.reportApiKey}`,
-                        "Content-Type": "application/json",
-                    },
-                    throw: false,
-                });
-
-                if (response.status >= 200 && response.status < 300) {
-                    const apiInfo = response.json;
-                    const quota = apiInfo?.remaining_credits ?? apiInfo?.remaining_quota ?? 0;
-                    if (quota <= 0) {
-                        throw new Error("Insufficient credits. Please upgrade your plan or check your quota to use the official OSINT Copilot Orchestration API.");
-                    }
-                } else {
-                    console.warn("[OrchestrationService] Failed to fetch quota info, but continuing...");
-                }
-            } catch (e) {
-                console.error("[OrchestrationService] Error verifying credits:", e);
-                // Non-blocking if the verification server itself is down
-            }
-        }
+        // All AI calls are routed through Claude Code CLI locally — no remote credits needed.
     }
 
     private mergeAbortSignals(global?: AbortSignal, perTool?: AbortSignal): AbortSignal | undefined {
@@ -298,8 +272,7 @@ export class OrchestrationService {
         conversationMemory: { role: string; content: string }[],
         routedIntent: OrchestrationIntent
     ): Promise<OrchestrationPlan> {
-        const systemPrompt = this.plugin.settings.orchestrationPrompt
-            || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
+        const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
 
         // Format memory for context
         const memoryContext =
@@ -364,14 +337,7 @@ Respond with this exact JSON structure:
             // Use the remote model for classification natively with JSON mode enforced
             const responseText = await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
-                true, // Enforce JSON object mode
-                this.plugin.settings.orchestrationModel,
-                undefined, // signal
-                {
-                    provider: this.plugin.settings.orchestrationProvider,
-                    url: this.plugin.settings.orchestrationLocalUrl,
-                    apiKey: this.plugin.settings.orchestrationApiKey
-                }
+                true
             );
 
             console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2000));
@@ -909,8 +875,7 @@ Respond with this exact JSON structure:
             return plan.directResponse;
         }
 
-        const systemPrompt = this.plugin.settings.orchestrationPrompt
-            || "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
+        const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
 
         // Format memory for context
         const memoryContext = conversationMemory && conversationMemory.length > 0
@@ -971,14 +936,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
         try {
             return await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
-                false,
-                this.plugin.settings.orchestrationModel,
-                undefined,
-                {
-                    provider: this.plugin.settings.orchestrationProvider,
-                    url: this.plugin.settings.orchestrationLocalUrl,
-                    apiKey: this.plugin.settings.orchestrationApiKey
-                }
+                false
             );
         } catch (error) {
             console.error("[OrchestrationService] Failed to generate final response:", error);

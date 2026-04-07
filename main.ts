@@ -21,23 +21,6 @@ import {
   normalizePath,
 } from "obsidian";
 
-interface ApiKeyInfo {
-  plan?: string;
-  remaining_quota?: number;
-  remaining_credits?: number;
-  active?: boolean;
-  expires_at?: string;
-  is_trial?: boolean;
-  permissions?: {
-    allow_web_access: boolean;
-    allow_plugin_access: boolean;
-    allow_chat_view: boolean;
-    allow_graph_automation: boolean;
-    allow_custom_chat_config: boolean;
-    allow_local_agent: boolean;
-  };
-}
-
 // Graph plugin imports
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
@@ -74,7 +57,7 @@ interface VaultAISettings {
   enableGraphFeatures: boolean;
   autoRefreshGraph: boolean;
   autoOpenGraphOnEntityCreation: boolean;
-  advancedGraphMode: boolean; // Enables the advanced search with precise knowledge extraction
+  advancedGraphMode: boolean;
   // Conversation settings
   conversationFolder: string;
   // Custom API settings
@@ -82,23 +65,8 @@ interface VaultAISettings {
   claudeCodeCliPath: string;
   claudeCodeModel: string;
   customCheckpoints: CustomCheckpoint[];
-  permissions?: {
-    allow_web_access: boolean;
-    allow_plugin_access: boolean;
-    allow_chat_view: boolean;
-    allow_graph_automation: boolean;
-    allow_custom_chat_config: boolean;
-    allow_local_agent: boolean;
-  };
   // --- Theme Mode ---
-  themeMode: 'system' | 'light' | 'dark'; // Add theme setting
-
-  // --- Orchestration Settings ---
-  orchestrationPrompt: string; // The system prompt for the Orchestration Agent
-  orchestrationProvider: 'osint-copilot' | 'local' | 'remote';
-  orchestrationLocalUrl: string;
-  orchestrationApiKey: string;
-  orchestrationModel: string;
+  themeMode: 'system' | 'light' | 'dark';
 }
 
 export interface CustomCheckpoint {
@@ -156,48 +124,9 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   claudeCodeModel: 'sonnet',
   customCheckpoints: [],
 
-  themeMode: 'system', // Default to system theme
-
-  orchestrationPrompt: `You are the OSINT Copilot Orchestrator. You are not a passive chatbot; you are an active investigative partner. Your primary directive is to synthesize global intelligence with local knowledge, mapping everything into a structured Knowledge Graph.
-
-MANDATORY GRAPH RULE: Every investigative finding MUST be mapped to the Knowledge Graph. Do not skip extraction.
-
-The Reasoning Loop (Think Before You Act):
-1. IDENTIFY the entities involved.
-2. AUDIT existing context (Current Graph nodes, Open Files, Chat History).
-3. SELECT the optimal tool(s) for the next step.
-4. EXECUTE operations.
-
-Tool Orchestration Protocol:
-- "OSINT_SEARCH" - For digital footprints (emails, phones, breaches).
-- "DARK_WEB" - For hidden service intelligence and underground leaks.
-- "CORPORATE_REPORTS" - For legal, financial, and ownership registry data.
-- "LOCAL_VAULT" - To query and retrieve information from the user's Obsidian notes.
-- "EXTRACT_TO_GRAPH" - To process raw text/links/files into the current graph.
-
-Knowledge Graph Modification Protocol:
-When the user's intent suggests creating, linking, or modifying entities (e.g. from an OSINT report or direct request), you MUST output valid graph commands in the graphCommands array. Do NOT ask for permission or state that you lack internal IDs. Just emit the commands. For connections, you can use the exact entity label instead of an ID.
-- @@create_entity {"type": "Person", "label": "John Doe", "properties": {}}
-- @@delete_entity {"id": "node_id_123"}
-- @@create_link {"from": "John Doe", "to": "Jane Smith", "relationship": "KNOWS"}
-- @@delete_link {"id": "edge_id_456"}
-
-Source & Attachment Handling:
-If the user provides a Link or File, prioritize it as "Ground Truth" and use EXTRACT_TO_GRAPH to visualize it.
-
-Investigative Creativity & Continuity:
-- Bridge the Gap: If you find an email in OSINT_SEARCH, suggest checking DARK_WEB for associated passwords.
-- Contextual Recall: Answer questions about the existing graph. Read the CURRENT GRAPH STATE below.
-- Narrative Investigation: Stay in the "investigator" persona.
-- PLANNING PROTOCOL: If any tools are needed, you MUST propose a plan first and set is_proposal=true. Do NOT execute tools until the user confirms or gives feedback.`,
-  orchestrationProvider: 'osint-copilot',
-  orchestrationLocalUrl: 'http://localhost:11434/v1',
-  orchestrationApiKey: '',
-  orchestrationModel: 'gpt-5.1'
+  themeMode: 'system',
 };
 
-const REPORT_API_BASE_URL = "https://api.osint-copilot.com";
-// const REPORT_API_BASE_URL = "http://localhost:8000";
 
 export const CHAT_VIEW_TYPE = "vault-ai-chat-view";
 
@@ -240,11 +169,6 @@ export default class VaultAIPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-
-    // Initialize permissions
-    if ((this.settings.reportApiKey || "").trim()) {
-      this.verifyPermissions();
-    }
 
     // Initialize custom types service (load schemas before entity manager)
     this.customTypesService = new CustomTypesService(this.app);
@@ -477,10 +401,6 @@ export default class VaultAIPlugin extends Plugin {
       id: "ask-vault",
       name: "Ask (remote)",
       callback: () => {
-        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new Notice("Your plan does not include plugin access.");
-          return;
-        }
         this.openAskModal();
       },
     });
@@ -489,10 +409,6 @@ export default class VaultAIPlugin extends Plugin {
       id: "reindex-vault",
       name: "Reindex vault",
       callback: () => {
-        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new Notice("Your plan does not include plugin access.");
-          return;
-        }
         void this.buildIndex().then(() => {
           new Notice("Vault reindexed successfully.");
         });
@@ -503,10 +419,6 @@ export default class VaultAIPlugin extends Plugin {
       id: "reload-entities",
       name: "Reload entities from notes",
       callback: () => {
-        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new Notice("Your plan does not include plugin access.");
-          return;
-        }
         void this.entityManager.loadEntitiesFromNotes().then(() => {
           new Notice("Entities reloaded from notes.");
         });
@@ -517,10 +429,6 @@ export default class VaultAIPlugin extends Plugin {
       id: "analyze-evidence",
       name: "Analyze vault evidence",
       callback: () => {
-        if (this.settings.permissions && this.settings.permissions.allow_plugin_access === false) {
-          new Notice("Your plan does not include plugin access.");
-          return;
-        }
         void this.runEvidenceAnalysis();
       },
     });
@@ -540,11 +448,6 @@ export default class VaultAIPlugin extends Plugin {
    * generated graph commands for user review.
    */
   async runEvidenceAnalysis(): Promise<void> {
-    if (!(this.settings.reportApiKey || "").trim()) {
-      new Notice("OSINT Copilot: license key is required for evidence analysis.");
-      return;
-    }
-
     const picker = new EvidencePickerModal(this.app);
     const result = await picker.pick();
     if (!result || result.files.length === 0) return;
@@ -622,46 +525,6 @@ export default class VaultAIPlugin extends Plugin {
     return true;
   }
 
-  /** Report API base URL (same as Graph API URL in settings). */
-  reportApiBaseUrl(): string {
-    return (this.settings.graphApiUrl || REPORT_API_BASE_URL).replace(/\/+$/, "");
-  }
-
-  async verifyPermissions() {
-    const key = (this.settings.reportApiKey || "").trim();
-    if (!key) return;
-
-    try {
-      const response = await requestUrl({
-        url: `${this.reportApiBaseUrl()}/api/key/info`,
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json'
-        },
-        throw: false,
-      });
-
-      if (response.status === 200) {
-        let data = response.json as ApiKeyInfo | null | undefined;
-        if (data == null) {
-          try {
-            data = JSON.parse(response.text || "{}") as ApiKeyInfo;
-          } catch {
-            return;
-          }
-        }
-        if (data.permissions) {
-          this.settings.permissions = data.permissions;
-          await this.saveData(this.settings);
-          console.debug('OSINTCopilot: Permissions updated', this.settings.permissions);
-        }
-      }
-    } catch (error) {
-      console.warn('OSINTCopilot: Failed to verify permissions', error);
-    }
-  }
-
   // ============================================================================
   // GRAPH VIEW METHODS
   // ============================================================================
@@ -722,11 +585,6 @@ export default class VaultAIPlugin extends Plugin {
    *                 This allows multiple views to be open simultaneously.
    */
   async openGraphView(forceNew: boolean = false) {
-    if (this.settings.permissions && this.settings.permissions.allow_graph_automation === false) {
-      new Notice("Your plan does not include access to graph automation features. Please upgrade.");
-      return;
-    }
-
     if (!this.settings.enableGraphFeatures) {
       new Notice('Graph features are disabled. Enable them in settings → osint copilot → enable graph features', 5000);
       console.warn('[VaultAIPlugin] Attempted to open graph view but graph features are disabled');
@@ -1243,7 +1101,7 @@ export default class VaultAIPlugin extends Plugin {
       throw new Error("License key required. Please configure it in settings.");
     }
 
-    const baseUrl = REPORT_API_BASE_URL;
+    const baseUrl = this.settings.graphApiUrl;
 
     try {
       // Step 1: Request report generation and get job_id with retry logic
@@ -1938,11 +1796,6 @@ export default class VaultAIPlugin extends Plugin {
    *                 This allows multiple views to be open simultaneously.
    */
   async openChatView(forceNew: boolean = false) {
-    if (this.settings.permissions && this.settings.permissions.allow_chat_view === false) {
-      new Notice("Chat view is disabled in permissions.");
-      return;
-    }
-
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
 
     // If not forcing new and one exists, reveal it
@@ -6581,7 +6434,7 @@ export class ChatView extends ItemView {
         updateProgress("Connecting to dark web API...", 10);
 
         // Start DarkWeb investigation
-        const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/investigate`;
+        const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`;
         const response: RequestUrlResponse = await requestUrl({
           url: endpoint,
           method: "POST",
@@ -6739,7 +6592,7 @@ export class ChatView extends ItemView {
       }
 
       try {
-        const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/status/${jobId}`;
+        const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`;
 
         // Use Obsidian's requestUrl to bypass CORS restrictions
         const response: RequestUrlResponse = await requestUrl({
@@ -6913,7 +6766,7 @@ export class ChatView extends ItemView {
     try {
       // Strip darkweb_ prefix if present (backend expects clean UUID)
       const cleanJobId = jobId.startsWith('darkweb_') ? jobId.replace('darkweb_', '') : jobId;
-      const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/summary/${cleanJobId}`;
+      const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${cleanJobId}`;
       const response: RequestUrlResponse = await requestUrl({
         url: endpoint,
         method: "GET",
@@ -7120,7 +6973,7 @@ class VaultAISettingTab extends PluginSettingTab {
       });
 
     // Custom Chat Configuration
-    if (this.plugin.settings.permissions && this.plugin.settings.permissions.allow_custom_chat_config) {
+    {
       new Setting(containerEl).setName("Custom chat configuration").setHeading();
       containerEl.createEl("p", {
         text: "Configure LLM providers for the 'Custom chat' mode. Add multiple checkpoints (e.g., local models, different providers) and select them in the chat view.", // eslint-disable-line obsidianmd/ui/sentence-case
@@ -7345,208 +7198,6 @@ class VaultAISettingTab extends PluginSettingTab {
           .onClick(() => {
             resetForm();
           }));
-    } else {
-      new Setting(containerEl).setName("Custom chat configuration").setHeading();
-      containerEl.createEl("p", {
-        text: "This feature is available in 'Plugin own data' plan.", // eslint-disable-line obsidianmd/ui/sentence-case
-        cls: "setting-item-description"
-      }).style.color = "var(--text-muted)";
-    }
-
-    new Setting(containerEl).setName("Backend API").setHeading();
-
-    // Dashboard Link
-    const dashboardSetting = new Setting(containerEl)
-      .setName("Account dashboard")
-      .setDesc("View your API usage, quota, and manage your subscription");
-
-    const linkEl = dashboardSetting.controlEl.createEl("a", {
-      text: "Open dashboard →",
-      href: "https://osint-copilot.com/dashboard/",
-      cls: "external-link",
-    });
-    linkEl.setCssProps({
-      color: "var(--interactive-accent)",
-      "text-decoration": "none",
-      "font-weight": "500"
-    });
-
-    // License Key
-    new Setting(containerEl)
-      .setName("License key")
-      .setDesc("License key for all operations (chat, reports, and investigations)")
-      .addText((text) => {
-        text
-          .setPlaceholder("Enter your license key")
-          .setValue((this.plugin.settings.reportApiKey || "").trim())
-          .onChange(async (value) => {
-            this.plugin.settings.reportApiKey = value.trim();
-            await this.plugin.saveSettings();
-            // Refresh license key info when key changes
-            await this.refreshApiInfo();
-          });
-        text.inputEl.type = "password";
-      });
-
-    // License Key Info Display (if key is configured)
-    const trimmedLicenseKey = (this.plugin.settings.reportApiKey || "").trim();
-    if (trimmedLicenseKey) {
-      const apiInfoContainer = containerEl.createDiv("api-info-container");
-      apiInfoContainer.setCssProps({
-        margin: "10px 0",
-        padding: "15px",
-        background: "var(--background-secondary)",
-        "border-radius": "5px"
-      });
-
-      const loadingEl = apiInfoContainer.createEl("p", {
-        text: "Loading license key information...",
-        cls: "setting-item-description",
-      });
-
-      const LICENSE_INFO_TIMEOUT_MS = 25000;
-
-      void (async () => {
-        try {
-          const info = await Promise.race([
-            this.fetchApiKeyInfo(),
-            new Promise<ApiKeyInfo | null>((_, reject) => {
-              window.setTimeout(
-                () => reject(new Error("OSINT_LICENSE_INFO_TIMEOUT")),
-                LICENSE_INFO_TIMEOUT_MS
-              );
-            }),
-          ]);
-          if (!loadingEl.isConnected) {
-            return;
-          }
-          loadingEl.remove();
-
-          if (info) {
-            const infoGrid = apiInfoContainer.createDiv();
-            infoGrid.setCssProps({
-              display: "grid",
-              "grid-template-columns": "1fr 1fr",
-              gap: "10px",
-              "font-size": "0.9em",
-            });
-
-            const quota = info.remaining_credits ?? info.remaining_quota ?? 0;
-            const isActive = info.active ?? false;
-            const isTrial = info.is_trial ?? false;
-
-            const planDiv = infoGrid.createDiv();
-            planDiv.createEl("strong", { text: "Plan: " });
-            planDiv.createSpan({ text: info.plan || "No Plan" });
-
-            const quotaDiv = infoGrid.createDiv();
-            quotaDiv.createEl("strong", { text: "Remaining credits: " });
-            const quotaSpan = quotaDiv.createSpan({ text: `${quota} credits` });
-            if (quota <= 0) {
-              quotaSpan.setCssProps({ color: "var(--text-error)", "font-weight": "bold" });
-            } else if (quota <= 5) {
-              quotaSpan.setCssProps({ color: "var(--text-warning)" });
-            }
-
-            const statusDiv = infoGrid.createDiv();
-            statusDiv.createEl("strong", { text: "Status: " });
-            const statusSpan = statusDiv.createSpan({
-              text: isActive ? "Active" : "Inactive",
-            });
-            statusSpan.setCssProps({ color: isActive ? "var(--text-success)" : "var(--text-error)" });
-
-            const expiryDiv = infoGrid.createDiv();
-            expiryDiv.createEl("strong", { text: "Expires: " });
-            if (info.expires_at) {
-              const expiryDate = new Date(info.expires_at);
-              expiryDiv.createSpan({ text: expiryDate.toLocaleDateString() });
-            } else {
-              expiryDiv.createSpan({ text: "N/A" });
-            }
-
-            if (isTrial) {
-              const trialBadge = apiInfoContainer.createEl("p", {
-                text: "🎁 trial account",
-                cls: "setting-item-description",
-              });
-              trialBadge.setCssProps({
-                "margin-top": "10px",
-                color: "var(--text-warning)",
-                "font-weight": "500",
-              });
-            }
-
-            if (quota <= 0) {
-              const quotaWarning = apiInfoContainer.createDiv();
-              quotaWarning.setCssProps({
-                "margin-top": "15px",
-                padding: "12px",
-                background: "var(--background-modifier-error)",
-                "border-radius": "5px",
-                "border-left": "4px solid var(--text-error)",
-              });
-              const text1 = quotaWarning.createEl("p", {
-                text: "⚠️ credits exhausted",
-              });
-              text1.setCssProps({
-                margin: "0 0 8px 0",
-                "font-weight": "bold",
-                color: "var(--text-error)",
-              });
-
-              const text2 = quotaWarning.createEl("p", {
-                text: "You have no remaining credits. Dark web investigations and report generation are unavailable until you upgrade or your quota renews.",
-              });
-              text2.setCssProps({ margin: "0 0 10px 0", "font-size": "0.9em" });
-              const upgradeLink = quotaWarning.createEl("a", {
-                text: "Upgrade your plan →",
-                href: "https://osint-copilot.com/dashboard/",
-              });
-              upgradeLink.setCssProps({
-                color: "var(--interactive-accent)",
-                "font-weight": "500",
-                "text-decoration": "none",
-              });
-            } else if (quota <= 5) {
-              const lowQuotaWarning = apiInfoContainer.createDiv();
-              lowQuotaWarning.setCssProps({
-                "margin-top": "15px",
-                padding: "10px",
-                background: "var(--background-modifier-warning)",
-                "border-radius": "5px",
-              });
-              const p = lowQuotaWarning.createEl("p", {
-                text: `⚠️ Low credits: Only ${quota} credits remaining.`,
-              });
-              p.setCssProps({
-                margin: "0",
-                "font-size": "0.9em",
-                color: "var(--text-warning)",
-              });
-            }
-          } else {
-            const errP = apiInfoContainer.createEl("p", {
-              text: "⚠️ could not load license key information. Please check your license key.",
-              cls: "setting-item-description",
-            });
-            errP.setCssProps({ color: "var(--text-error)" });
-          }
-        } catch (e: unknown) {
-          if (!loadingEl.isConnected) {
-            return;
-          }
-          loadingEl.remove();
-          const isTimeout =
-            e instanceof Error && e.message === "OSINT_LICENSE_INFO_TIMEOUT";
-          const errP2 = apiInfoContainer.createEl("p", {
-            text: isTimeout
-              ? "⚠️ Request timed out. Check your network connection or try again."
-              : "⚠️ failed to connect to API. Please check your internet connection.",
-            cls: "setting-item-description",
-          });
-          errP2.setCssProps({ color: "var(--text-error)" });
-        }
-      })();
     }
 
     // Companies&People Output Directory
@@ -7578,12 +7229,6 @@ class VaultAISettingTab extends PluginSettingTab {
             await this.plugin.conversationService.initialize();
           })
       );
-
-    const noteP = containerEl.createEl("p", {
-      text: "ℹ️ note: AI entity generation requires an active API connection. All other features (manual entity creation, editing, connections, map view) work locally without the API.",
-      cls: "setting-item-description",
-    });
-    noteP.setCssProps({ color: "var(--text-muted)" });
 
     // ── Graph Extraction (Claude Code) ─────────────────────────────────────
     new Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
@@ -7668,82 +7313,6 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
-    // Orchestration Agent Settings
-    new Setting(containerEl).setName("Main Copilot").setHeading();
-
-    new Setting(containerEl)
-      .setName("System Prompt")
-      .setDesc("The core instructions that guide the Main Copilot's decision making.")
-      .addTextArea((text) => {
-        text
-          .setPlaceholder("You are the Main Copilot...")
-          .setValue(this.plugin.settings.orchestrationPrompt)
-          .onChange(async (value) => {
-            this.plugin.settings.orchestrationPrompt = value;
-            await this.plugin.saveSettings();
-          });
-        text.inputEl.rows = 15;
-        text.inputEl.cols = 50;
-      });
-
-    new Setting(containerEl)
-      .setName("Provider")
-      .setDesc("Select the LLM provider for the Main Copilot.")
-      .addDropdown((dropdown) => {
-        dropdown
-          .addOption("osint-copilot", "OSINT Copilot API (Default)")
-          .addOption("remote", "OpenAI / Custom API")
-          .addOption("local", "Local Model (e.g. LM Studio/Ollama)")
-          .setValue(this.plugin.settings.orchestrationProvider)
-          .onChange(async (value) => {
-            this.plugin.settings.orchestrationProvider = value as 'osint-copilot' | 'local' | 'remote';
-            await this.plugin.saveSettings();
-            this.display(); // Refresh to show/hide relevant settings
-          });
-      });
-
-    if (this.plugin.settings.orchestrationProvider !== 'osint-copilot') {
-      new Setting(containerEl)
-        .setName("API Endpoint URL")
-        .setDesc("The base URL for the API (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)")
-        .addText((text) =>
-          text
-            .setPlaceholder("http://localhost:11434/v1")
-            .setValue(this.plugin.settings.orchestrationLocalUrl)
-            .onChange(async (value) => {
-              this.plugin.settings.orchestrationLocalUrl = value;
-              await this.plugin.saveSettings();
-            })
-        );
-
-      new Setting(containerEl)
-        .setName("API Key")
-        .setDesc("Leave blank for local unauthenticated models")
-        .addText((text) => {
-          text
-            .setPlaceholder("sk-...")
-            .setValue(this.plugin.settings.orchestrationApiKey)
-            .onChange(async (value) => {
-              this.plugin.settings.orchestrationApiKey = value;
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.type = "password";
-        });
-
-      new Setting(containerEl)
-        .setName("Model Name")
-        .setDesc("The exact string identifier for the model (e.g., gpt-4o, llama3)")
-        .addText((text) =>
-          text
-            .setPlaceholder("gpt-5.1")
-            .setValue(this.plugin.settings.orchestrationModel)
-            .onChange(async (value) => {
-              this.plugin.settings.orchestrationModel = value;
-              await this.plugin.saveSettings();
-            })
-        );
-    }
-
     this._settingsDisplayDepth--;
     if (this._settingsDisplayQueued) {
       this._settingsDisplayQueued = false;
@@ -7751,52 +7320,5 @@ class VaultAISettingTab extends PluginSettingTab {
     }
   }
 
-  async fetchApiKeyInfo(): Promise<ApiKeyInfo | null> {
-    const rawKey = (this.plugin.settings.reportApiKey || "").trim();
-    if (!rawKey) {
-      return null;
-    }
-
-    try {
-      const response: RequestUrlResponse = await requestUrl({
-        url: `${this.plugin.reportApiBaseUrl()}/api/key/info`,
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${rawKey}`,
-          "Content-Type": "application/json",
-        },
-        throw: false,
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        console.warn(
-          "[OSINT Copilot] License info request failed:",
-          response.status,
-          (response.text || "").slice(0, 300)
-        );
-        return null;
-      }
-
-      let data: unknown = response.json;
-      if (data == null) {
-        try {
-          data = JSON.parse(response.text || "{}");
-        } catch {
-          console.warn("[OSINT Copilot] License info: could not parse JSON body");
-          return null;
-        }
-      }
-
-      return data as ApiKeyInfo;
-    } catch (error) {
-      console.error("Failed to fetch license key info:", error);
-      return null;
-    }
-  }
-
-  async refreshApiInfo() {
-    // Trigger a re-render of the settings tab to show updated API info
-    this.display();
-  }
 }
 

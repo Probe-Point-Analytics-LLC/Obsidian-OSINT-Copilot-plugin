@@ -34,12 +34,7 @@ describe('ChatView Modes Integration', () => {
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
             themeMode: 'system',
-            customCheckpoints: [],
-            orchestrationPrompt: "You are the OSINT Copilot Orchestrator.",
-            orchestrationProvider: 'osint-copilot',
-            orchestrationLocalUrl: 'http://localhost:11434/v1',
-            orchestrationApiKey: '',
-            orchestrationModel: 'gpt-4o'
+            customCheckpoints: []
         };
 
         // Mock Plugin Services
