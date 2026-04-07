@@ -325,60 +325,71 @@ export class GraphView extends ItemView {
     private setupGraphDropHandlers(container: Element): void {
         let dragCounter = 0;
 
-        container.addEventListener('dragenter', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dragCounter++;
-            if (dragCounter === 1) {
-                this.dropOverlay?.addClass('active');
-            }
-        });
+        const targets = [container, this.container];
+        for (const target of targets) {
+            if (!target) continue;
 
-        container.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dragCounter--;
-            if (dragCounter <= 0) {
+            target.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dragCounter++;
+                if (dragCounter === 1) {
+                    this.dropOverlay?.addClass('active');
+                }
+            });
+
+            target.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    this.dropOverlay?.removeClass('active');
+                }
+            });
+
+            target.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if ((e as DragEvent).dataTransfer) {
+                    (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+                }
+            });
+
+            target.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 dragCounter = 0;
                 this.dropOverlay?.removeClass('active');
-            }
-        });
 
-        container.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if ((e as DragEvent).dataTransfer) {
-                (e as DragEvent).dataTransfer!.dropEffect = 'copy';
-            }
-        });
+                const evt = e as DragEvent;
+                if (!evt.dataTransfer) return;
 
-        container.addEventListener('drop', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dragCounter = 0;
-            this.dropOverlay?.removeClass('active');
+                const position = this.screenToModelPosition(evt.clientX, evt.clientY);
 
-            const evt = e as DragEvent;
-            if (!evt.dataTransfer) return;
-
-            // Calculate drop position in Cytoscape model coordinates
-            const position = this.screenToModelPosition(evt.clientX, evt.clientY);
-
-            // Handle internal vault file drops
-            const internalPath = evt.dataTransfer.getData('text/plain');
-            if (internalPath) {
-                const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-                if (tfile instanceof TFile) {
-                    await this.handleGraphFileDrop([tfile], position);
+                // Method 1: Internal vault drag via Obsidian dragManager
+                const dragManager = (this.app as any).dragManager;
+                if (dragManager?.draggable?.type === 'file' && dragManager.draggable.file instanceof TFile) {
+                    await this.handleGraphFileDrop([dragManager.draggable.file], position);
                     return;
                 }
-            }
 
-            // Handle external OS file drops
-            if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
-                await this.handleExternalFileDrop(evt.dataTransfer.files, position);
-            }
-        });
+                // Method 2: Internal vault file via text/plain path
+                const internalPath = evt.dataTransfer.getData('text/plain');
+                if (internalPath) {
+                    const tfile = this.app.vault.getAbstractFileByPath(internalPath);
+                    if (tfile instanceof TFile) {
+                        await this.handleGraphFileDrop([tfile], position);
+                        return;
+                    }
+                }
+
+                // Method 3: External OS file drops
+                if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
+                    await this.handleExternalFileDrop(evt.dataTransfer.files, position);
+                }
+            });
+        }
     }
 
     private screenToModelPosition(clientX: number, clientY: number): { x: number; y: number } {

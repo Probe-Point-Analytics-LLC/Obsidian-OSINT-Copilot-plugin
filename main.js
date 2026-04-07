@@ -4618,21 +4618,18 @@ var ClaudeCodeService = class {
     Object.assign(this.config, config);
   }
   getSkillContent() {
-    if (this.skillContent)
-      return this.skillContent;
     try {
       const nodePath = require("path");
       const nodeFs = require("fs");
       const skillPath = nodePath.join(this.pluginDir, SKILL_FILE);
-      this.skillContent = nodeFs.readFileSync(skillPath, "utf-8");
+      return nodeFs.readFileSync(skillPath, "utf-8");
     } catch {
-      this.skillContent = this.getFallbackSkill();
+      return this.getFallbackSkill();
     }
-    return this.skillContent;
   }
   getFallbackSkill() {
-    return `You are an OSINT investigator AI. Extract entities and relationships from text.
-Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
+    return `You are an entity extraction engine. Extract entities and relationships from the provided text. Do NOT answer questions, do NOT propose plans \u2014 just extract entities and return JSON.
+Output ONLY valid JSON: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
 Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
 Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
   }
@@ -4659,7 +4656,7 @@ ${existingContext}
 === TEXT TO ANALYZE ===
 ${text}
 
-Respond with ONLY the JSON object. No markdown fences, no explanation.`;
+CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no investigation plan, no explanation. Just the {"operations": [...]} JSON.`;
   }
   async extractEntities(text, existingEntities, onProgress, signal) {
     const prompt = this.buildPrompt(text, existingEntities);
@@ -8374,51 +8371,61 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
   }
   setupGraphDropHandlers(container) {
     let dragCounter = 0;
-    container.addEventListener("dragenter", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter++;
-      if (dragCounter === 1) {
-        this.dropOverlay?.addClass("active");
-      }
-    });
-    container.addEventListener("dragleave", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter--;
-      if (dragCounter <= 0) {
+    const targets = [container, this.container];
+    for (const target of targets) {
+      if (!target)
+        continue;
+      target.addEventListener("dragenter", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+        if (dragCounter === 1) {
+          this.dropOverlay?.addClass("active");
+        }
+      });
+      target.addEventListener("dragleave", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          this.dropOverlay?.removeClass("active");
+        }
+      });
+      target.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = "copy";
+        }
+      });
+      target.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         dragCounter = 0;
         this.dropOverlay?.removeClass("active");
-      }
-    });
-    container.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = "copy";
-      }
-    });
-    container.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter = 0;
-      this.dropOverlay?.removeClass("active");
-      const evt = e;
-      if (!evt.dataTransfer)
-        return;
-      const position = this.screenToModelPosition(evt.clientX, evt.clientY);
-      const internalPath = evt.dataTransfer.getData("text/plain");
-      if (internalPath) {
-        const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-        if (tfile instanceof import_obsidian8.TFile) {
-          await this.handleGraphFileDrop([tfile], position);
+        const evt = e;
+        if (!evt.dataTransfer)
+          return;
+        const position = this.screenToModelPosition(evt.clientX, evt.clientY);
+        const dragManager = this.app.dragManager;
+        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian8.TFile) {
+          await this.handleGraphFileDrop([dragManager.draggable.file], position);
           return;
         }
-      }
-      if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
-        await this.handleExternalFileDrop(evt.dataTransfer.files, position);
-      }
-    });
+        const internalPath = evt.dataTransfer.getData("text/plain");
+        if (internalPath) {
+          const tfile = this.app.vault.getAbstractFileByPath(internalPath);
+          if (tfile instanceof import_obsidian8.TFile) {
+            await this.handleGraphFileDrop([tfile], position);
+            return;
+          }
+        }
+        if (evt.dataTransfer.files && evt.dataTransfer.files.length > 0) {
+          await this.handleExternalFileDrop(evt.dataTransfer.files, position);
+        }
+      });
+    }
   }
   screenToModelPosition(clientX, clientY) {
     if (!this.cy || !this.container) {
@@ -14711,7 +14718,7 @@ var RenameConversationModal = class extends import_obsidian16.Modal {
     contentEl.empty();
   }
 };
-var ChatView = class extends import_obsidian16.ItemView {
+var _ChatView = class _ChatView extends import_obsidian16.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -15317,10 +15324,13 @@ var ChatView = class extends import_obsidian16.ItemView {
   async handleDroppedFile(file) {
     if (!file)
       return;
-    const allowedExtensions = [".md", ".txt", ".pdf", ".docx", ".doc"];
-    const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (!allowedExtensions.includes(ext)) {
-      new import_obsidian16.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+    const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
+    if (_ChatView.CHAT_IMAGE_EXTENSIONS.has(ext)) {
+      await this.handleDroppedImageFile(file);
+      return;
+    }
+    if (!_ChatView.CHAT_DOCUMENT_EXTENSIONS.has(ext)) {
+      new import_obsidian16.Notice(`File type ${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     try {
@@ -15339,15 +15349,60 @@ var ChatView = class extends import_obsidian16.ItemView {
       this.inputEl.focus();
     }
   }
+  async handleDroppedImageFile(file) {
+    try {
+      const evidencePath = (0, import_obsidian16.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+      const folder = this.app.vault.getAbstractFileByPath(evidencePath);
+      if (!folder) {
+        await this.app.vault.createFolder(evidencePath);
+      }
+      const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
+      const destPath = (0, import_obsidian16.normalizePath)(`${evidencePath}/${safeName}`);
+      const buffer = await file.arrayBuffer();
+      const existing = this.app.vault.getAbstractFileByPath(destPath);
+      let tFile;
+      if (existing instanceof import_obsidian16.TFile) {
+        tFile = existing;
+      } else {
+        tFile = await this.app.vault.createBinary(destPath, buffer);
+      }
+      const entity = await this.plugin.entityManager.createEntity("Image" /* Image */, {
+        title: file.name.replace(/\.[^.]+$/, ""),
+        filePath: tFile.path,
+        description: `Image: ${file.name}`
+      }, { skipAutoGeocode: true });
+      new import_obsidian16.Notice(`Added image to graph: ${file.name}`);
+      this.plugin.refreshOrOpenGraphView();
+    } catch (error) {
+      console.error("Drop image error:", error);
+      new import_obsidian16.Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   /**
    * Handle dropped internal file (TFile) from Obsidian Vault
    */
   async handleDroppedAbstractFile(file) {
     if (!file)
       return;
+    const imageExts = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"];
+    if (imageExts.includes(file.extension.toLowerCase())) {
+      try {
+        await this.plugin.entityManager.createEntity("Image" /* Image */, {
+          title: file.basename,
+          filePath: file.path,
+          description: `Image: ${file.name}`
+        }, { skipAutoGeocode: true });
+        new import_obsidian16.Notice(`Added image to graph: ${file.name}`);
+        this.plugin.refreshOrOpenGraphView();
+      } catch (error) {
+        console.error("Drop image error:", error);
+        new import_obsidian16.Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
     const allowedExtensions = ["md", "txt", "pdf", "docx", "doc"];
     if (!allowedExtensions.includes(file.extension)) {
-      new import_obsidian16.Notice(`File type .${file.extension} not supported.`);
+      new import_obsidian16.Notice(`File type .${file.extension} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
@@ -18643,6 +18698,9 @@ Please try again or contact support if the issue persists.`,
     this.pollingIntervals.clear();
   }
 };
+_ChatView.CHAT_IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico"]);
+_ChatView.CHAT_DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set([".md", ".txt", ".pdf", ".docx", ".doc"]);
+var ChatView = _ChatView;
 var VaultAISettingTab = class extends import_obsidian16.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);

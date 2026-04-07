@@ -31,21 +31,19 @@ export class ClaudeCodeService {
     }
 
     private getSkillContent(): string {
-        if (this.skillContent) return this.skillContent;
         try {
             const nodePath = require('path') as typeof import('path');
             const nodeFs = require('fs') as typeof import('fs');
             const skillPath = nodePath.join(this.pluginDir, SKILL_FILE);
-            this.skillContent = nodeFs.readFileSync(skillPath, 'utf-8');
+            return nodeFs.readFileSync(skillPath, 'utf-8');
         } catch {
-            this.skillContent = this.getFallbackSkill();
+            return this.getFallbackSkill();
         }
-        return this.skillContent;
     }
 
     private getFallbackSkill(): string {
-        return `You are an OSINT investigator AI. Extract entities and relationships from text.
-Output ONLY valid JSON with this structure: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
+        return `You are an entity extraction engine. Extract entities and relationships from the provided text. Do NOT answer questions, do NOT propose plans — just extract entities and return JSON.
+Output ONLY valid JSON: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
 Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
 Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
     }
@@ -75,7 +73,7 @@ ${existingContext}
 === TEXT TO ANALYZE ===
 ${text}
 
-Respond with ONLY the JSON object. No markdown fences, no explanation.`;
+CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no investigation plan, no explanation. Just the {"operations": [...]} JSON.`;
     }
 
     async extractEntities(

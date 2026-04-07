@@ -18,6 +18,7 @@ import {
   CachedMetadata,
   Component,
   ButtonComponent,
+  normalizePath,
 } from "obsidian";
 
 interface ApiKeyInfo {
@@ -2973,14 +2974,21 @@ export class ChatView extends ItemView {
     new Notice(`Attached: ${file.name}`);
   }
 
+  private static readonly CHAT_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico']);
+  private static readonly CHAT_DOCUMENT_EXTENSIONS = new Set(['.md', '.txt', '.pdf', '.docx', '.doc']);
+
   async handleDroppedFile(file: File) {
     if (!file) return;
 
-    const allowedExtensions = ['.md', '.txt', '.pdf', '.docx', '.doc'];
-    const ext = "." + file.name.split('.').pop()?.toLowerCase();
+    const ext = "." + (file.name.split('.').pop()?.toLowerCase() || '');
 
-    if (!allowedExtensions.includes(ext)) {
-      new Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+    if (ChatView.CHAT_IMAGE_EXTENSIONS.has(ext)) {
+      await this.handleDroppedImageFile(file);
+      return;
+    }
+
+    if (!ChatView.CHAT_DOCUMENT_EXTENSIONS.has(ext)) {
+      new Notice(`File type ${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
 
@@ -3004,19 +3012,70 @@ export class ChatView extends ItemView {
     }
   }
 
+  private async handleDroppedImageFile(file: File): Promise<void> {
+    try {
+      const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+      const folder = this.app.vault.getAbstractFileByPath(evidencePath);
+      if (!folder) {
+        await this.app.vault.createFolder(evidencePath);
+      }
+
+      const safeName = file.name.replace(/[\\/:*?"<>|]/g, '_');
+      const destPath = normalizePath(`${evidencePath}/${safeName}`);
+
+      const buffer = await file.arrayBuffer();
+      const existing = this.app.vault.getAbstractFileByPath(destPath);
+      let tFile: TFile;
+      if (existing instanceof TFile) {
+        tFile = existing;
+      } else {
+        tFile = await this.app.vault.createBinary(destPath, buffer);
+      }
+
+      const entity = await this.plugin.entityManager.createEntity(EntityType.Image, {
+        title: file.name.replace(/\.[^.]+$/, ''),
+        filePath: tFile.path,
+        description: `Image: ${file.name}`
+      }, { skipAutoGeocode: true });
+
+      new Notice(`Added image to graph: ${file.name}`);
+      this.plugin.refreshOrOpenGraphView();
+    } catch (error) {
+      console.error("Drop image error:", error);
+      new Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /**
    * Handle dropped internal file (TFile) from Obsidian Vault
    */
   async handleDroppedAbstractFile(file: TFile) {
     if (!file) return;
 
-    const allowedExtensions = ['md', 'txt', 'pdf', 'docx', 'doc'];
-    if (!allowedExtensions.includes(file.extension)) {
-      new Notice(`File type .${file.extension} not supported.`);
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+    if (imageExts.includes(file.extension.toLowerCase())) {
+      try {
+        await this.plugin.entityManager.createEntity(EntityType.Image, {
+          title: file.basename,
+          filePath: file.path,
+          description: `Image: ${file.name}`
+        }, { skipAutoGeocode: true });
+
+        new Notice(`Added image to graph: ${file.name}`);
+        this.plugin.refreshOrOpenGraphView();
+      } catch (error) {
+        console.error("Drop image error:", error);
+        new Notice(`Error adding image: ${error instanceof Error ? error.message : String(error)}`);
+      }
       return;
     }
 
-    // Store file for deferred extraction - do NOT extract now
+    const allowedExtensions = ['md', 'txt', 'pdf', 'docx', 'doc'];
+    if (!allowedExtensions.includes(file.extension)) {
+      new Notice(`File type .${file.extension} not supported. Use images or documents.`);
+      return;
+    }
+
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
     new Notice(`Attached: ${file.name}`);
