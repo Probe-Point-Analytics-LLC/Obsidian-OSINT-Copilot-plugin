@@ -2442,7 +2442,7 @@ export class ChatView extends ItemView {
       type: "file",
       cls: "vault-ai-file-upload",
       attr: {
-        "accept": ".md,.txt,.pdf,.docx,.doc",
+        "accept": ".md,.txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.ico",
         "style": "display: none;"
       }
     });
@@ -2809,105 +2809,47 @@ export class ChatView extends ItemView {
     if (!target.files || target.files.length === 0) return;
 
     const file = target.files[0];
-
-    // Clear input to allow re-uploading same file
     target.value = '';
 
-    // Validate file type
-    const allowedExtensions = ['.md', '.txt', '.pdf', '.docx', '.doc'];
-    const ext = "." + file.name.split('.').pop()?.toLowerCase();
-    if (!allowedExtensions.includes(ext)) {
-      new Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
 
-    // Store file for deferred extraction - do NOT extract now
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
     new Notice(`Attached: ${file.name}`);
   }
 
-  private static readonly CHAT_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico']);
-  private static readonly CHAT_DOCUMENT_EXTENSIONS = new Set(['.md', '.txt', '.pdf', '.docx', '.doc']);
+  private static readonly IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico']);
+  private static readonly ALLOWED_EXTENSIONS = new Set([
+    'md', 'txt', 'pdf', 'docx', 'doc',
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico',
+  ]);
+
+  static isImageFile(name: string): boolean {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    return ChatView.IMAGE_EXTENSIONS.has(ext);
+  }
 
   async handleDroppedFile(file: File) {
     if (!file) return;
 
-    const ext = "." + (file.name.split('.').pop()?.toLowerCase() || '');
-
-    if (ChatView.CHAT_IMAGE_EXTENSIONS.has(ext)) {
-      await this.handleDroppedImageFile(file);
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
 
-    if (!ChatView.CHAT_DOCUMENT_EXTENSIONS.has(ext)) {
-      new Notice(`File type ${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
-      return;
-    }
-
-    try {
-      this.inputEl.placeholder = `Extracting text from ${file.name}...`;
-      this.inputEl.disabled = true;
-
-      new Notice(`Extracting text from ${file.name}...`);
-
-      const text = await this.plugin.graphApiService.extractTextFromFile(file);
-      this.appendExtractedText(text);
-      new Notice(`Text extracted from ${file.name}`);
-
-    } catch (error) {
-      console.error("Drop file error:", error);
-      new Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
-    }
+    this.attachedFiles.push({ file, extracted: false });
+    this.renderAttachments();
+    new Notice(`Attached: ${file.name}`);
   }
 
   private getVaultAbsolutePath(): string {
     const adapter = this.app.vault.adapter as any;
     return typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
-  }
-
-  private async handleDroppedImageFile(file: File): Promise<void> {
-    try {
-      this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
-      this.inputEl.disabled = true;
-      new Notice(`Analyzing image: ${file.name}...`);
-
-      const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
-      const folder = this.app.vault.getAbstractFileByPath(evidencePath);
-      if (!folder) {
-        await this.app.vault.createFolder(evidencePath);
-      }
-
-      const safeName = file.name.replace(/[\\/:*?"<>|]/g, '_');
-      const destPath = normalizePath(`${evidencePath}/${safeName}`);
-
-      const buffer = await file.arrayBuffer();
-      const existing = this.app.vault.getAbstractFileByPath(destPath);
-      let tFile: TFile;
-      if (existing instanceof TFile) {
-        tFile = existing;
-      } else {
-        tFile = await this.app.vault.createBinary(destPath, buffer);
-      }
-
-      const vaultBase = this.getVaultAbsolutePath();
-      const absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
-
-      const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
-      this.appendExtractedText(`[Image: ${file.name}]\n${text}`);
-      new Notice(`Information extracted from ${file.name}`);
-    } catch (error) {
-      console.error("Image extraction error:", error);
-      new Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
-    }
   }
 
   /**
@@ -2916,33 +2858,9 @@ export class ChatView extends ItemView {
   async handleDroppedAbstractFile(file: TFile) {
     if (!file) return;
 
-    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-    if (imageExts.includes(file.extension.toLowerCase())) {
-      try {
-        this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
-        this.inputEl.disabled = true;
-        new Notice(`Analyzing image: ${file.name}...`);
-
-        const vaultBase = this.getVaultAbsolutePath();
-        const absolutePath = vaultBase ? `${vaultBase}/${file.path}` : file.path;
-
-        const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
-        this.appendExtractedText(`[Image: ${file.name}]\n${text}`);
-        new Notice(`Information extracted from ${file.name}`);
-      } catch (error) {
-        console.error("Image extraction error:", error);
-        new Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        this.inputEl.disabled = false;
-        this.updateInputPlaceholder();
-        this.inputEl.focus();
-      }
-      return;
-    }
-
-    const allowedExtensions = ['md', 'txt', 'pdf', 'docx', 'doc'];
-    if (!allowedExtensions.includes(file.extension)) {
-      new Notice(`File type .${file.extension} not supported. Use images or documents.`);
+    const ext = (file.extension || '').toLowerCase();
+    if (!ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
 
@@ -2965,12 +2883,11 @@ export class ChatView extends ItemView {
       const attachment = this.attachedFiles[i];
       const attachmentEl = this.attachmentsContainer.createDiv("vault-ai-attachment-item");
 
-      // File icon and name
+      const isImage = ChatView.isImageFile(attachment.file.name);
       const fileInfo = attachmentEl.createDiv("vault-ai-attachment-info");
-      fileInfo.createSpan({ text: "📄 ", cls: "vault-ai-attachment-icon" });
+      fileInfo.createSpan({ text: isImage ? "🖼️ " : "📄 ", cls: "vault-ai-attachment-icon" });
       fileInfo.createSpan({ text: attachment.file.name, cls: "vault-ai-attachment-name" });
 
-      // Preview snippet or pending extraction message
       if (attachment.extracted && attachment.content) {
         const preview = attachment.content.substring(0, 100).replace(/\n/g, ' ').trim();
         if (preview) {
@@ -2980,9 +2897,8 @@ export class ChatView extends ItemView {
           });
         }
       } else {
-        // Show pending message for deferred extraction
         attachmentEl.createDiv({
-          text: "📋 Ready to extract on send",
+          text: isImage ? "🔍 Will analyze with AI on send" : "📋 Ready to extract on send",
           cls: "vault-ai-attachment-preview"
         });
       }
@@ -4398,18 +4314,46 @@ export class ChatView extends ItemView {
 
         try {
           let text = "";
+          const isImage = ChatView.isImageFile(fileName);
 
           if (attachment.extracted && attachment.content) {
-            // Already extracted
             text = attachment.content;
+          } else if (isImage) {
+            this.chatHistory[extractionMsgIndex].content =
+              `🖼️ Analyzing image ${fileName} with AI...`;
+            await this.renderMessages();
+
+            let absolutePath: string;
+            if (attachment.file instanceof TFile) {
+              const vaultBase = this.getVaultAbsolutePath();
+              absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
+            } else {
+              const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const folder = this.app.vault.getAbstractFileByPath(evidencePath);
+              if (!folder) {
+                await this.app.vault.createFolder(evidencePath);
+              }
+              const safeName = fileName.replace(/[\\/:*?"<>|]/g, '_');
+              const destPath = normalizePath(`${evidencePath}/${safeName}`);
+              const buffer = await (attachment.file as File).arrayBuffer();
+              const existing = this.app.vault.getAbstractFileByPath(destPath);
+              let tFile: TFile;
+              if (existing instanceof TFile) {
+                tFile = existing;
+              } else {
+                tFile = await this.app.vault.createBinary(destPath, buffer);
+              }
+              const vaultBase = this.getVaultAbsolutePath();
+              absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
+            }
+
+            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
           } else if (attachment.file instanceof TFile) {
-            // TFile from Obsidian vault - read directly for text files, API for binary
             const ext = (attachment.file.extension || '').toLowerCase();
             const textExts = ['md', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'yaml', 'yml', 'toml', 'ini'];
             if (textExts.includes(ext)) {
               text = await this.app.vault.read(attachment.file);
             } else {
-              // Show special message for PDF/binary files
               this.chatHistory[extractionMsgIndex].content =
                 `📄 Processing ${fileName}... (this may take a moment for large files)`;
               await this.renderMessages();
@@ -4420,7 +4364,6 @@ export class ChatView extends ItemView {
               text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
             }
           } else {
-            // Native File object from upload button
             const ext = fileName.split('.').pop()?.toLowerCase() || '';
             if (!['md', 'txt'].includes(ext)) {
               this.chatHistory[extractionMsgIndex].content =
@@ -4474,17 +4417,18 @@ export class ChatView extends ItemView {
       // Add extracted content ONLY to processingValue (not displayed in chat)
       processingValue = processingValue + extractedContents.join('\n');
 
-      // For display, just show file names (not the content)
       if (processedFileNames.length > 0) {
-        const fileList = processedFileNames.map(f => `📎 ${f}`).join('\n');
+        const fileList = processedFileNames.map(f => {
+          const icon = ChatView.isImageFile(f) ? '🖼️' : '📎';
+          return `${icon} ${f}`;
+        }).join('\n');
         displayValue = displayValue ? `${displayValue}\n\n${fileList}` : fileList;
       }
 
-      // Show success notice if any files were processed
       if (extractedCount > 0 && failedCount === 0) {
-        new Notice(`Extracted text from ${extractedCount} file${extractedCount > 1 ? 's' : ''}`);
+        new Notice(`Processed ${extractedCount} file${extractedCount > 1 ? 's' : ''}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new Notice(`Extracted ${extractedCount} file${extractedCount > 1 ? 's' : ''}, ${failedCount} failed`);
+        new Notice(`Processed ${extractedCount} file${extractedCount > 1 ? 's' : ''}, ${failedCount} failed`);
       }
     }
 

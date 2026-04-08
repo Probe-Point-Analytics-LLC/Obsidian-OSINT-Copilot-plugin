@@ -14904,7 +14904,7 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
       type: "file",
       cls: "vault-ai-file-upload",
       attr: {
-        "accept": ".md,.txt,.pdf,.docx,.doc",
+        "accept": ".md,.txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.ico",
         "style": "display: none;"
       }
     });
@@ -15190,82 +15190,34 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
       return;
     const file = target.files[0];
     target.value = "";
-    const allowedExtensions = [".md", ".txt", ".pdf", ".docx", ".doc"];
-    const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (!allowedExtensions.includes(ext)) {
-      new import_obsidian16.Notice(`File type ${ext} not supported. Use .md, .txt, .pdf, .docx`);
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new import_obsidian16.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
     new import_obsidian16.Notice(`Attached: ${file.name}`);
   }
+  static isImageFile(name) {
+    const ext = (name.split(".").pop() || "").toLowerCase();
+    return _ChatView.IMAGE_EXTENSIONS.has(ext);
+  }
   async handleDroppedFile(file) {
     if (!file)
       return;
-    const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
-    if (_ChatView.CHAT_IMAGE_EXTENSIONS.has(ext)) {
-      await this.handleDroppedImageFile(file);
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new import_obsidian16.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
-    if (!_ChatView.CHAT_DOCUMENT_EXTENSIONS.has(ext)) {
-      new import_obsidian16.Notice(`File type ${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
-      return;
-    }
-    try {
-      this.inputEl.placeholder = `Extracting text from ${file.name}...`;
-      this.inputEl.disabled = true;
-      new import_obsidian16.Notice(`Extracting text from ${file.name}...`);
-      const text = await this.plugin.graphApiService.extractTextFromFile(file);
-      this.appendExtractedText(text);
-      new import_obsidian16.Notice(`Text extracted from ${file.name}`);
-    } catch (error) {
-      console.error("Drop file error:", error);
-      new import_obsidian16.Notice(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
-    }
+    this.attachedFiles.push({ file, extracted: false });
+    this.renderAttachments();
+    new import_obsidian16.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
     return typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
-  }
-  async handleDroppedImageFile(file) {
-    try {
-      this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
-      this.inputEl.disabled = true;
-      new import_obsidian16.Notice(`Analyzing image: ${file.name}...`);
-      const evidencePath = (0, import_obsidian16.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
-      const folder = this.app.vault.getAbstractFileByPath(evidencePath);
-      if (!folder) {
-        await this.app.vault.createFolder(evidencePath);
-      }
-      const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
-      const destPath = (0, import_obsidian16.normalizePath)(`${evidencePath}/${safeName}`);
-      const buffer = await file.arrayBuffer();
-      const existing = this.app.vault.getAbstractFileByPath(destPath);
-      let tFile;
-      if (existing instanceof import_obsidian16.TFile) {
-        tFile = existing;
-      } else {
-        tFile = await this.app.vault.createBinary(destPath, buffer);
-      }
-      const vaultBase = this.getVaultAbsolutePath();
-      const absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
-      const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
-      this.appendExtractedText(`[Image: ${file.name}]
-${text}`);
-      new import_obsidian16.Notice(`Information extracted from ${file.name}`);
-    } catch (error) {
-      console.error("Image extraction error:", error);
-      new import_obsidian16.Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.inputEl.disabled = false;
-      this.updateInputPlaceholder();
-      this.inputEl.focus();
-    }
   }
   /**
    * Handle dropped internal file (TFile) from Obsidian Vault
@@ -15273,31 +15225,9 @@ ${text}`);
   async handleDroppedAbstractFile(file) {
     if (!file)
       return;
-    const imageExts = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"];
-    if (imageExts.includes(file.extension.toLowerCase())) {
-      try {
-        this.inputEl.placeholder = `Analyzing image ${file.name} with Claude...`;
-        this.inputEl.disabled = true;
-        new import_obsidian16.Notice(`Analyzing image: ${file.name}...`);
-        const vaultBase = this.getVaultAbsolutePath();
-        const absolutePath = vaultBase ? `${vaultBase}/${file.path}` : file.path;
-        const text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
-        this.appendExtractedText(`[Image: ${file.name}]
-${text}`);
-        new import_obsidian16.Notice(`Information extracted from ${file.name}`);
-      } catch (error) {
-        console.error("Image extraction error:", error);
-        new import_obsidian16.Notice(`Error analyzing image: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        this.inputEl.disabled = false;
-        this.updateInputPlaceholder();
-        this.inputEl.focus();
-      }
-      return;
-    }
-    const allowedExtensions = ["md", "txt", "pdf", "docx", "doc"];
-    if (!allowedExtensions.includes(file.extension)) {
-      new import_obsidian16.Notice(`File type .${file.extension} not supported. Use images or documents.`);
+    const ext = (file.extension || "").toLowerCase();
+    if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+      new import_obsidian16.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
@@ -15315,8 +15245,9 @@ ${text}`);
     for (let i = 0; i < this.attachedFiles.length; i++) {
       const attachment = this.attachedFiles[i];
       const attachmentEl = this.attachmentsContainer.createDiv("vault-ai-attachment-item");
+      const isImage = _ChatView.isImageFile(attachment.file.name);
       const fileInfo = attachmentEl.createDiv("vault-ai-attachment-info");
-      fileInfo.createSpan({ text: "\u{1F4C4} ", cls: "vault-ai-attachment-icon" });
+      fileInfo.createSpan({ text: isImage ? "\u{1F5BC}\uFE0F " : "\u{1F4C4} ", cls: "vault-ai-attachment-icon" });
       fileInfo.createSpan({ text: attachment.file.name, cls: "vault-ai-attachment-name" });
       if (attachment.extracted && attachment.content) {
         const preview = attachment.content.substring(0, 100).replace(/\n/g, " ").trim();
@@ -15328,7 +15259,7 @@ ${text}`);
         }
       } else {
         attachmentEl.createDiv({
-          text: "\u{1F4CB} Ready to extract on send",
+          text: isImage ? "\u{1F50D} Will analyze with AI on send" : "\u{1F4CB} Ready to extract on send",
           cls: "vault-ai-attachment-preview"
         });
       }
@@ -16483,8 +16414,36 @@ ${text}`);
         }
         try {
           let text = "";
+          const isImage = _ChatView.isImageFile(fileName);
           if (attachment.extracted && attachment.content) {
             text = attachment.content;
+          } else if (isImage) {
+            this.chatHistory[extractionMsgIndex].content = `\u{1F5BC}\uFE0F Analyzing image ${fileName} with AI...`;
+            await this.renderMessages();
+            let absolutePath;
+            if (attachment.file instanceof import_obsidian16.TFile) {
+              const vaultBase = this.getVaultAbsolutePath();
+              absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
+            } else {
+              const evidencePath = (0, import_obsidian16.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const folder = this.app.vault.getAbstractFileByPath(evidencePath);
+              if (!folder) {
+                await this.app.vault.createFolder(evidencePath);
+              }
+              const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
+              const destPath = (0, import_obsidian16.normalizePath)(`${evidencePath}/${safeName}`);
+              const buffer = await attachment.file.arrayBuffer();
+              const existing = this.app.vault.getAbstractFileByPath(destPath);
+              let tFile;
+              if (existing instanceof import_obsidian16.TFile) {
+                tFile = existing;
+              } else {
+                tFile = await this.app.vault.createBinary(destPath, buffer);
+              }
+              const vaultBase = this.getVaultAbsolutePath();
+              absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
+            }
+            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
           } else if (attachment.file instanceof import_obsidian16.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
@@ -16543,15 +16502,18 @@ ${text}`);
       }
       processingValue = processingValue + extractedContents.join("\n");
       if (processedFileNames.length > 0) {
-        const fileList = processedFileNames.map((f) => `\u{1F4CE} ${f}`).join("\n");
+        const fileList = processedFileNames.map((f) => {
+          const icon = _ChatView.isImageFile(f) ? "\u{1F5BC}\uFE0F" : "\u{1F4CE}";
+          return `${icon} ${f}`;
+        }).join("\n");
         displayValue = displayValue ? `${displayValue}
 
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian16.Notice(`Extracted text from ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian16.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian16.Notice(`Extracted ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian16.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -18593,8 +18555,22 @@ Please try again or contact support if the issue persists.`,
     this.pollingIntervals.clear();
   }
 };
-_ChatView.CHAT_IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico"]);
-_ChatView.CHAT_DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set([".md", ".txt", ".pdf", ".docx", ".doc"]);
+_ChatView.IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"]);
+_ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
+  "md",
+  "txt",
+  "pdf",
+  "docx",
+  "doc",
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico"
+]);
 var ChatView = _ChatView;
 var VaultAISettingTab = class extends import_obsidian16.PluginSettingTab {
   constructor(app, plugin) {
