@@ -16492,25 +16492,42 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
       const extractionMsgIndex = this.chatHistory.length;
       this.chatHistory.push({
         role: "assistant",
-        content: `\u{1F4C4} Extracting text from ${fileCount} file${fileCount > 1 ? "s" : ""}...`
+        content: `\u{1F4C4} Extracting text from ${fileCount} file${fileCount > 1 ? "s" : ""}...`,
+        progress: { message: `Processing 1/${fileCount}...`, percent: 5 }
       });
       await this.renderMessages();
+      const extractionController = new AbortController();
+      this.activeAbortControllers.set(extractionMsgIndex, extractionController);
+      const updateExtractionProgress = (message, percent) => {
+        if (!this.activeAbortControllers.has(extractionMsgIndex))
+          return;
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = { message, percent };
+          this.updateProgressBar(extractionMsgIndex, { message, percent });
+        }
+      };
       let extractedCount = 0;
       let failedCount = 0;
+      let cancelled = false;
       for (const attachment of filesToProcess) {
-        const fileName = attachment.file.name;
-        if (this.chatHistory[extractionMsgIndex]) {
-          this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
-          await this.renderMessages();
+        if (extractionController.signal.aborted) {
+          cancelled = true;
+          break;
         }
+        const fileName = attachment.file.name;
+        const fileProgress = Math.round(5 + extractedCount / fileCount * 85);
+        const isImage = _ChatView.isImageFile(fileName);
+        const icon = isImage ? "\u{1F5BC}\uFE0F" : "\u{1F4C4}";
+        this.chatHistory[extractionMsgIndex].content = `${icon} Processing (${extractedCount + 1}/${fileCount}): ${fileName}...`;
+        updateExtractionProgress(
+          `${icon} ${extractedCount + 1}/${fileCount}: ${fileName}`,
+          fileProgress
+        );
         try {
           let text = "";
-          const isImage = _ChatView.isImageFile(fileName);
           if (attachment.extracted && attachment.content) {
             text = attachment.content;
           } else if (isImage) {
-            this.chatHistory[extractionMsgIndex].content = `\u{1F5BC}\uFE0F Analyzing image ${fileName} with AI...`;
-            await this.renderMessages();
             let absolutePath;
             if (attachment.file instanceof import_obsidian16.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
@@ -16534,26 +16551,19 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
-            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath, extractionController.signal);
           } else if (attachment.file instanceof import_obsidian16.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
               text = await this.app.vault.read(attachment.file);
             } else {
-              this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Processing ${fileName}... (this may take a moment for large files)`;
-              await this.renderMessages();
               const arrayBuffer = await this.app.vault.readBinary(attachment.file);
               const blob = new Blob([arrayBuffer]);
               const syntheticFile = new File([blob], attachment.file.name, { type: "application/octet-stream" });
               text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
             }
           } else {
-            const ext = fileName.split(".").pop()?.toLowerCase() || "";
-            if (!["md", "txt"].includes(ext)) {
-              this.chatHistory[extractionMsgIndex].content = `\u{1F4C4} Processing ${fileName}... (this may take a moment for large files)`;
-              await this.renderMessages();
-            }
             text = await this.plugin.graphApiService.extractTextFromFile(attachment.file);
           }
           extractedContents.push(`
@@ -16566,6 +16576,10 @@ ${text}`);
           failedCount++;
           console.error(`Error extracting ${fileName}:`, error);
           const errorStr = error instanceof Error ? error.message : String(error);
+          if (errorStr.includes("Aborted") || errorStr.includes("Cancelled")) {
+            cancelled = true;
+            break;
+          }
           let userMessage = `${fileName}: ${errorStr}`;
           if (errorStr.includes("poppler") || errorStr.includes("pdftotext")) {
             userMessage = `${fileName}: PDF extraction requires poppler-utils. Install with: sudo pacman -S poppler`;
@@ -16575,12 +16589,22 @@ ${text}`);
           new import_obsidian16.Notice(userMessage, 8e3);
         }
       }
+      this.activeAbortControllers.delete(extractionMsgIndex);
+      if (cancelled) {
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = void 0;
+          this.chatHistory[extractionMsgIndex].content = `\u274C **File extraction cancelled.**`;
+        }
+        await this.renderMessages();
+        return;
+      }
       if (extractedCount > 0) {
         if (extractionMsgIndex < this.chatHistory.length) {
           this.chatHistory.splice(extractionMsgIndex, 1);
         }
       } else {
         if (extractionMsgIndex < this.chatHistory.length && this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = void 0;
           this.chatHistory[extractionMsgIndex].content = `\u274C Failed to extract text from ${failedCount} file${failedCount > 1 ? "s" : ""}. Please try again.`;
         } else {
           this.chatHistory.push({

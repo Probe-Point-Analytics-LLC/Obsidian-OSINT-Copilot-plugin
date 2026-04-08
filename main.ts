@@ -4361,46 +4361,56 @@ export class ChatView extends ItemView {
     const extractedContents: string[] = []; // Extracted text
 
     if (this.attachedFiles.length > 0) {
-      // Store files for processing, then clear UI immediately for better feedback
       const filesToProcess = [...this.attachedFiles];
       this.attachedFiles = [];
-      this.renderAttachments(); // Clear attachment chips immediately
+      this.renderAttachments();
 
-      // Show extraction progress in a placeholder message
       const fileCount = filesToProcess.length;
       const extractionMsgIndex = this.chatHistory.length;
+
       this.chatHistory.push({
         role: "assistant",
-        content: `📄 Extracting text from ${fileCount} file${fileCount > 1 ? 's' : ''}...`
+        content: `📄 Extracting text from ${fileCount} file${fileCount > 1 ? 's' : ''}...`,
+        progress: { message: `Processing 1/${fileCount}...`, percent: 5 },
       });
       await this.renderMessages();
 
-      // Extract text from attached files NOW (deferred extraction)
+      const extractionController = new AbortController();
+      this.activeAbortControllers.set(extractionMsgIndex, extractionController);
+
+      const updateExtractionProgress = (message: string, percent: number) => {
+        if (!this.activeAbortControllers.has(extractionMsgIndex)) return;
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = { message, percent };
+          this.updateProgressBar(extractionMsgIndex, { message, percent });
+        }
+      };
+
       let extractedCount = 0;
       let failedCount = 0;
+      let cancelled = false;
 
-      // Process files sequentially to avoid rate limits
       for (const attachment of filesToProcess) {
-        const fileName = attachment.file.name;
+        if (extractionController.signal.aborted) { cancelled = true; break; }
 
-        // Update progress message
-        if (this.chatHistory[extractionMsgIndex]) {
-          this.chatHistory[extractionMsgIndex].content =
-            `📄 Extracting text (${extractedCount + 1}/${fileCount}): ${fileName}...`;
-          await this.renderMessages();
-        }
+        const fileName = attachment.file.name;
+        const fileProgress = Math.round(5 + (extractedCount / fileCount) * 85);
+        const isImage = ChatView.isImageFile(fileName);
+        const icon = isImage ? '🖼️' : '📄';
+
+        this.chatHistory[extractionMsgIndex].content =
+          `${icon} Processing (${extractedCount + 1}/${fileCount}): ${fileName}...`;
+        updateExtractionProgress(
+          `${icon} ${extractedCount + 1}/${fileCount}: ${fileName}`,
+          fileProgress
+        );
 
         try {
           let text = "";
-          const isImage = ChatView.isImageFile(fileName);
 
           if (attachment.extracted && attachment.content) {
             text = attachment.content;
           } else if (isImage) {
-            this.chatHistory[extractionMsgIndex].content =
-              `🖼️ Analyzing image ${fileName} with AI...`;
-            await this.renderMessages();
-
             let absolutePath: string;
             if (attachment.file instanceof TFile) {
               const vaultBase = this.getVaultAbsolutePath();
@@ -4425,29 +4435,19 @@ export class ChatView extends ItemView {
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
 
-            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath);
+            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath, extractionController.signal);
           } else if (attachment.file instanceof TFile) {
             const ext = (attachment.file.extension || '').toLowerCase();
             const textExts = ['md', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'yaml', 'yml', 'toml', 'ini'];
             if (textExts.includes(ext)) {
               text = await this.app.vault.read(attachment.file);
             } else {
-              this.chatHistory[extractionMsgIndex].content =
-                `📄 Processing ${fileName}... (this may take a moment for large files)`;
-              await this.renderMessages();
-
               const arrayBuffer = await this.app.vault.readBinary(attachment.file);
               const blob = new Blob([arrayBuffer]);
               const syntheticFile = new File([blob], attachment.file.name, { type: 'application/octet-stream' });
               text = await this.plugin.graphApiService.extractTextFromFile(syntheticFile);
             }
           } else {
-            const ext = fileName.split('.').pop()?.toLowerCase() || '';
-            if (!['md', 'txt'].includes(ext)) {
-              this.chatHistory[extractionMsgIndex].content =
-                `📄 Processing ${fileName}... (this may take a moment for large files)`;
-              await this.renderMessages();
-            }
             text = await this.plugin.graphApiService.extractTextFromFile(attachment.file);
           }
 
@@ -4460,8 +4460,12 @@ export class ChatView extends ItemView {
           console.error(`Error extracting ${fileName}:`, error);
 
           const errorStr = error instanceof Error ? error.message : String(error);
-          let userMessage = `${fileName}: ${errorStr}`;
+          if (errorStr.includes('Aborted') || errorStr.includes('Cancelled')) {
+            cancelled = true;
+            break;
+          }
 
+          let userMessage = `${fileName}: ${errorStr}`;
           if (errorStr.includes('poppler') || errorStr.includes('pdftotext')) {
             userMessage = `${fileName}: PDF extraction requires poppler-utils. Install with: sudo pacman -S poppler`;
           } else if (errorStr.includes('not yet supported')) {
@@ -4472,14 +4476,24 @@ export class ChatView extends ItemView {
         }
       }
 
-      // Update or remove the extraction message
+      this.activeAbortControllers.delete(extractionMsgIndex);
+
+      if (cancelled) {
+        if (this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = undefined;
+          this.chatHistory[extractionMsgIndex].content = `❌ **File extraction cancelled.**`;
+        }
+        await this.renderMessages();
+        return;
+      }
+
       if (extractedCount > 0) {
         if (extractionMsgIndex < this.chatHistory.length) {
           this.chatHistory.splice(extractionMsgIndex, 1);
         }
       } else {
-        // All failed - show error message
         if (extractionMsgIndex < this.chatHistory.length && this.chatHistory[extractionMsgIndex]) {
+          this.chatHistory[extractionMsgIndex].progress = undefined;
           this.chatHistory[extractionMsgIndex].content =
             `❌ Failed to extract text from ${failedCount} file${failedCount > 1 ? 's' : ''}. Please try again.`;
         } else {
@@ -4492,7 +4506,6 @@ export class ChatView extends ItemView {
         return;
       }
 
-      // Add extracted content ONLY to processingValue (not displayed in chat)
       processingValue = processingValue + extractedContents.join('\n');
 
       if (processedFileNames.length > 0) {
