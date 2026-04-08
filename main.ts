@@ -5246,7 +5246,6 @@ export class ChatView extends ItemView {
         return;
       }
 
-      // --- NEW UNIFIED LOGIC: Propose Changes (HITL) ---
       const proposedCommands: string[] = [];
 
       for (let opIdx = 0; opIdx < result.operations.length; opIdx++) {
@@ -5255,11 +5254,11 @@ export class ChatView extends ItemView {
 
         if (operation.action === "create" && operation.entities) {
           for (const ent of operation.entities) {
-            const name = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label || 'Unknown';
+            const label = getEntityLabel(ent.type as EntityType, ent.properties || {});
             proposedCommands.push(`@@create_entity ${JSON.stringify({
               type: ent.type,
               properties: ent.properties,
-              label: name
+              label
             })}`);
           }
         }
@@ -5269,14 +5268,13 @@ export class ChatView extends ItemView {
             let fromLabel = conn.from_label;
             let toLabel = conn.to_label;
 
-            // Resolve indices to labels if possible from the current operation's entities
             if (!fromLabel && opEntities[conn.from]) {
               const ent = opEntities[conn.from];
-              fromLabel = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label;
+              fromLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
             }
             if (!toLabel && opEntities[conn.to]) {
               const ent = opEntities[conn.to];
-              toLabel = ent.properties?.name || ent.properties?.title || ent.properties?.label || (ent as any).label;
+              toLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
             }
 
             if (fromLabel && toLabel) {

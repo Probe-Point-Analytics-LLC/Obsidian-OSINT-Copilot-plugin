@@ -1865,20 +1865,20 @@ var FTMSchemaServiceClass = class {
 var ftmSchemaService = new FTMSchemaServiceClass();
 
 // src/entities/types.ts
-var EntityType = /* @__PURE__ */ ((EntityType2) => {
-  EntityType2["Person"] = "Person";
-  EntityType2["Event"] = "Event";
-  EntityType2["Location"] = "Location";
-  EntityType2["Company"] = "Company";
-  EntityType2["Email"] = "Email";
-  EntityType2["Phone"] = "Phone";
-  EntityType2["Username"] = "Username";
-  EntityType2["Vehicle"] = "Vehicle";
-  EntityType2["Website"] = "Website";
-  EntityType2["Evidence"] = "Evidence";
-  EntityType2["Image"] = "Image";
-  EntityType2["Text"] = "Text";
-  return EntityType2;
+var EntityType = /* @__PURE__ */ ((EntityType3) => {
+  EntityType3["Person"] = "Person";
+  EntityType3["Event"] = "Event";
+  EntityType3["Location"] = "Location";
+  EntityType3["Company"] = "Company";
+  EntityType3["Email"] = "Email";
+  EntityType3["Phone"] = "Phone";
+  EntityType3["Username"] = "Username";
+  EntityType3["Vehicle"] = "Vehicle";
+  EntityType3["Website"] = "Website";
+  EntityType3["Evidence"] = "Evidence";
+  EntityType3["Image"] = "Image";
+  EntityType3["Text"] = "Text";
+  return EntityType3;
 })(EntityType || {});
 function getFTMEntityConfig(schemaName) {
   const schema = ftmSchemaService.getSchema(schemaName);
@@ -12386,7 +12386,7 @@ Respond with this exact JSON structure:
           commands.push(
             `@@create_entity ${JSON.stringify({
               type: entity.type,
-              label: entity.properties.name || entity.properties.title || entity.properties.label || entity.type,
+              label: getEntityLabel(entity.type, entity.properties || {}),
               properties: entity.properties
             })}`
           );
@@ -12394,13 +12394,25 @@ Respond with this exact JSON structure:
       }
       if (op.connections) {
         op.connections.forEach((conn) => {
-          commands.push(
-            `@@create_link ${JSON.stringify({
-              from: conn.from_label || conn.from.toString(),
-              to: conn.to_label || conn.to.toString(),
-              relationship: conn.relationship
-            })}`
-          );
+          let fromLabel = conn.from_label;
+          let toLabel = conn.to_label;
+          if (!fromLabel && op.entities && op.entities[conn.from]) {
+            const ent = op.entities[conn.from];
+            fromLabel = getEntityLabel(ent.type, ent.properties || {});
+          }
+          if (!toLabel && op.entities && op.entities[conn.to]) {
+            const ent = op.entities[conn.to];
+            toLabel = getEntityLabel(ent.type, ent.properties || {});
+          }
+          if (fromLabel && toLabel) {
+            commands.push(
+              `@@create_link ${JSON.stringify({
+                from: fromLabel,
+                to: toLabel,
+                relationship: conn.relationship
+              })}`
+            );
+          }
         });
       }
     }
@@ -12610,7 +12622,7 @@ ${result.summary || ""}
           const data = JSON.parse(jsonStr);
           if (data.type && data.properties) {
             await this.plugin.entityManager.createEntity(data.type, data.properties);
-            const name = data.label || data.properties && data.properties.name || data.type;
+            const name = data.label || getEntityLabel(data.type, data.properties || {});
             lines.push(`\u2713 Created ${data.type}: **${name}**`);
           }
         } else if (command.startsWith("@@delete_entity")) {
@@ -12676,7 +12688,7 @@ ${result.summary || ""}
       try {
         if (cmd.startsWith("@@create_entity")) {
           const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
-          const name = data.label || data.properties && data.properties.name || "Unknown";
+          const name = data.label || getEntityLabel(data.type, data.properties || {});
           labelText = `\u2795 Create ${data.type || "Entity"}: **${name}**`;
         } else if (cmd.startsWith("@@delete_entity")) {
           const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
@@ -17210,11 +17222,11 @@ No entities detected in the provided text.`;
         const opEntities = operation.entities || [];
         if (operation.action === "create" && operation.entities) {
           for (const ent of operation.entities) {
-            const name = ent.properties?.name || ent.properties?.title || ent.properties?.label || ent.label || "Unknown";
+            const label = getEntityLabel(ent.type, ent.properties || {});
             proposedCommands.push(`@@create_entity ${JSON.stringify({
               type: ent.type,
               properties: ent.properties,
-              label: name
+              label
             })}`);
           }
         }
@@ -17224,11 +17236,11 @@ No entities detected in the provided text.`;
             let toLabel = conn.to_label;
             if (!fromLabel && opEntities[conn.from]) {
               const ent = opEntities[conn.from];
-              fromLabel = ent.properties?.name || ent.properties?.title || ent.properties?.label || ent.label;
+              fromLabel = getEntityLabel(ent.type, ent.properties || {});
             }
             if (!toLabel && opEntities[conn.to]) {
               const ent = opEntities[conn.to];
-              toLabel = ent.properties?.name || ent.properties?.title || ent.properties?.label || ent.label;
+              toLabel = getEntityLabel(ent.type, ent.properties || {});
             }
             if (fromLabel && toLabel) {
               proposedCommands.push(`@@create_link ${JSON.stringify({

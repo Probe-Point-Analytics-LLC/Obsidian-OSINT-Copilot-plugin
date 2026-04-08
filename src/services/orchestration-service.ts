@@ -1,7 +1,7 @@
 import VaultAIPlugin from "../../main";
 import { App, Notice, requestUrl, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
-import { AIOperation } from '../entities/types';
+import { AIOperation, EntityType, getEntityLabel } from '../entities/types';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
 
@@ -449,11 +449,7 @@ Respond with this exact JSON structure:
                     commands.push(
                         `@@create_entity ${JSON.stringify({
                             type: entity.type,
-                            label:
-                                entity.properties.name ||
-                                entity.properties.title ||
-                                entity.properties.label ||
-                                entity.type,
+                            label: getEntityLabel(entity.type as EntityType, entity.properties || {}),
                             properties: entity.properties,
                         })}`
                     );
@@ -461,13 +457,27 @@ Respond with this exact JSON structure:
             }
             if (op.connections) {
                 op.connections.forEach((conn) => {
-                    commands.push(
-                        `@@create_link ${JSON.stringify({
-                            from: conn.from_label || conn.from.toString(),
-                            to: conn.to_label || conn.to.toString(),
-                            relationship: conn.relationship,
-                        })}`
-                    );
+                    let fromLabel = conn.from_label;
+                    let toLabel = conn.to_label;
+
+                    if (!fromLabel && op.entities && op.entities[conn.from]) {
+                        const ent = op.entities[conn.from];
+                        fromLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
+                    }
+                    if (!toLabel && op.entities && op.entities[conn.to]) {
+                        const ent = op.entities[conn.to];
+                        toLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
+                    }
+
+                    if (fromLabel && toLabel) {
+                        commands.push(
+                            `@@create_link ${JSON.stringify({
+                                from: fromLabel,
+                                to: toLabel,
+                                relationship: conn.relationship,
+                            })}`
+                        );
+                    }
                 });
             }
         }
@@ -741,10 +751,7 @@ Respond with this exact JSON structure:
                     const data = JSON.parse(jsonStr);
                     if (data.type && data.properties) {
                         await this.plugin.entityManager.createEntity(data.type, data.properties);
-                        const name =
-                            data.label ||
-                            (data.properties && (data.properties.name as string)) ||
-                            data.type;
+                        const name = data.label || getEntityLabel(data.type as EntityType, data.properties || {});
                         lines.push(`✓ Created ${data.type}: **${name}**`);
                     }
                 } else if (command.startsWith("@@delete_entity")) {
@@ -813,7 +820,7 @@ Respond with this exact JSON structure:
             try {
                 if (cmd.startsWith("@@create_entity")) {
                     const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
-                    const name = data.label || (data.properties && data.properties.name) || 'Unknown';
+                    const name = data.label || getEntityLabel(data.type as EntityType, data.properties || {});
                     labelText = `➕ Create ${data.type || 'Entity'}: **${name}**`;
                 } else if (cmd.startsWith("@@delete_entity")) {
                     const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
