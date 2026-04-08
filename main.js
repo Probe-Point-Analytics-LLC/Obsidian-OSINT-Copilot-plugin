@@ -15000,9 +15000,25 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
         return;
       }
       const dragManager = this.app.dragManager;
-      if (dragManager && dragManager.draggable && dragManager.draggable.type === "file" && dragManager.draggable.file instanceof import_obsidian16.TFile) {
-        await this.handleDroppedAbstractFile(dragManager.draggable.file);
-        return;
+      if (dragManager && dragManager.draggable) {
+        const draggable = dragManager.draggable;
+        if (draggable.type === "file" && draggable.file instanceof import_obsidian16.TFile) {
+          await this.handleDroppedAbstractFile(draggable.file);
+          return;
+        }
+        if (draggable.type === "folder" && draggable.file instanceof import_obsidian16.TFolder) {
+          await this.handleDroppedFolder(draggable.file);
+          return;
+        }
+        if (draggable.type === "files" && Array.isArray(draggable.files)) {
+          for (const f of draggable.files) {
+            if (f instanceof import_obsidian16.TFile)
+              await this.handleDroppedAbstractFile(f);
+            else if (f instanceof import_obsidian16.TFolder)
+              await this.handleDroppedFolder(f);
+          }
+          return;
+        }
       }
       if (e.dataTransfer) {
         const data = e.dataTransfer.getData("text/plain");
@@ -15010,6 +15026,10 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
           if (abstractFile instanceof import_obsidian16.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
+            return;
+          }
+          if (abstractFile instanceof import_obsidian16.TFolder) {
+            await this.handleDroppedFolder(abstractFile);
             return;
           }
         }
@@ -15245,6 +15265,37 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
     new import_obsidian16.Notice(`Attached: ${file.name}`);
+  }
+  /**
+   * Handle a dropped folder — recursively collect all allowed files and attach them.
+   */
+  async handleDroppedFolder(folder) {
+    if (!folder)
+      return;
+    const files = this.collectFilesFromFolder(folder);
+    if (files.length === 0) {
+      new import_obsidian16.Notice(`No supported files found in folder "${folder.name}"`);
+      return;
+    }
+    for (const file of files) {
+      this.attachedFiles.push({ file, extracted: false });
+    }
+    this.renderAttachments();
+    new import_obsidian16.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+  }
+  collectFilesFromFolder(folder) {
+    const results = [];
+    for (const child of folder.children) {
+      if (child instanceof import_obsidian16.TFile) {
+        const ext = (child.extension || "").toLowerCase();
+        if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+          results.push(child);
+        }
+      } else if (child instanceof import_obsidian16.TFolder) {
+        results.push(...this.collectFilesFromFolder(child));
+      }
+    }
+    return results;
   }
   /**
    * Render the attached files display.

@@ -9,6 +9,7 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
+  TFolder,
   ItemView,
   WorkspaceLeaf,
   MarkdownRenderer,
@@ -2546,24 +2547,39 @@ export class ChatView extends ItemView {
         return;
       }
 
-      // Handle internal Obsidian files (drag from sidebar)
+      // Handle internal Obsidian files/folders (drag from sidebar)
 
-      // Method 1: Check internal dragManager (Scanning for internal state)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const dragManager = (this.app as any).dragManager;
-      if (dragManager && dragManager.draggable && dragManager.draggable.type === 'file' && dragManager.draggable.file instanceof TFile) {
-        await this.handleDroppedAbstractFile(dragManager.draggable.file);
-        return;
+      if (dragManager && dragManager.draggable) {
+        const draggable = dragManager.draggable;
+        if (draggable.type === 'file' && draggable.file instanceof TFile) {
+          await this.handleDroppedAbstractFile(draggable.file);
+          return;
+        }
+        if (draggable.type === 'folder' && draggable.file instanceof TFolder) {
+          await this.handleDroppedFolder(draggable.file);
+          return;
+        }
+        if (draggable.type === 'files' && Array.isArray(draggable.files)) {
+          for (const f of draggable.files) {
+            if (f instanceof TFile) await this.handleDroppedAbstractFile(f);
+            else if (f instanceof TFolder) await this.handleDroppedFolder(f);
+          }
+          return;
+        }
       }
 
       if (e.dataTransfer) {
-        // Method 2: Check text/plain which often contains the file path
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
-          // Check if it's a file path in the vault
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
           if (abstractFile instanceof TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
+            return;
+          }
+          if (abstractFile instanceof TFolder) {
+            await this.handleDroppedFolder(abstractFile);
             return;
           }
         }
@@ -2867,6 +2883,40 @@ export class ChatView extends ItemView {
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
     new Notice(`Attached: ${file.name}`);
+  }
+
+  /**
+   * Handle a dropped folder — recursively collect all allowed files and attach them.
+   */
+  async handleDroppedFolder(folder: TFolder) {
+    if (!folder) return;
+
+    const files = this.collectFilesFromFolder(folder);
+    if (files.length === 0) {
+      new Notice(`No supported files found in folder "${folder.name}"`);
+      return;
+    }
+
+    for (const file of files) {
+      this.attachedFiles.push({ file, extracted: false });
+    }
+    this.renderAttachments();
+    new Notice(`Attached ${files.length} file${files.length > 1 ? 's' : ''} from folder "${folder.name}"`);
+  }
+
+  private collectFilesFromFolder(folder: TFolder): TFile[] {
+    const results: TFile[] = [];
+    for (const child of folder.children) {
+      if (child instanceof TFile) {
+        const ext = (child.extension || '').toLowerCase();
+        if (ChatView.ALLOWED_EXTENSIONS.has(ext)) {
+          results.push(child);
+        }
+      } else if (child instanceof TFolder) {
+        results.push(...this.collectFilesFromFolder(child));
+      }
+    }
+    return results;
   }
 
   /**
