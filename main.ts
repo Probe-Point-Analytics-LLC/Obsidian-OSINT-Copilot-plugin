@@ -2535,54 +2535,82 @@ export class ChatView extends ItemView {
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
 
-      // Only process drops in Graph Only mode
       if (!this.isGraphOnlyMode()) {
         new Notice("File drop only available in graph generation mode");
         return;
       }
 
-      // Handle external files (OS drag and drop)
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        this.handleDroppedFile(e.dataTransfer.files[0]);
-        return;
-      }
+      let handled = false;
 
-      // Handle internal Obsidian files/folders (drag from sidebar)
-
+      // 1) Internal Obsidian drag manager (check first — takes priority over dataTransfer)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const dragManager = (this.app as any).dragManager;
-      if (dragManager && dragManager.draggable) {
+      if (dragManager?.draggable) {
         const draggable = dragManager.draggable;
-        if (draggable.type === 'file' && draggable.file instanceof TFile) {
-          await this.handleDroppedAbstractFile(draggable.file);
-          return;
-        }
-        if (draggable.type === 'folder' && draggable.file instanceof TFolder) {
+        console.log('[OSINT Copilot] Drop: dragManager draggable type =', draggable.type,
+          'file =', draggable.file?.path || draggable.file,
+          'files =', draggable.files?.length);
+
+        // Single item: .file can be TFile or TFolder regardless of .type string
+        if (draggable.file instanceof TFolder) {
           await this.handleDroppedFolder(draggable.file);
-          return;
+          handled = true;
+        } else if (draggable.file instanceof TFile) {
+          await this.handleDroppedAbstractFile(draggable.file);
+          handled = true;
         }
-        if (draggable.type === 'files' && Array.isArray(draggable.files)) {
+
+        // Multi-select: .files array
+        if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof TFile) await this.handleDroppedAbstractFile(f);
-            else if (f instanceof TFolder) await this.handleDroppedFolder(f);
+            if (f instanceof TFolder) await this.handleDroppedFolder(f);
+            else if (f instanceof TFile) await this.handleDroppedAbstractFile(f);
           }
-          return;
+          handled = true;
+        }
+
+        // Some Obsidian versions put folder info under .info
+        if (!handled && draggable.info) {
+          const info = draggable.info;
+          if (typeof info === 'string') {
+            const resolved = this.app.vault.getAbstractFileByPath(info);
+            if (resolved instanceof TFolder) {
+              await this.handleDroppedFolder(resolved);
+              handled = true;
+            } else if (resolved instanceof TFile) {
+              await this.handleDroppedAbstractFile(resolved);
+              handled = true;
+            }
+          }
         }
       }
 
-      if (e.dataTransfer) {
+      // 2) text/plain data (Obsidian often puts the vault path here)
+      if (!handled && e.dataTransfer) {
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof TFile) {
-            await this.handleDroppedAbstractFile(abstractFile);
-            return;
-          }
           if (abstractFile instanceof TFolder) {
             await this.handleDroppedFolder(abstractFile);
-            return;
+            handled = true;
+          } else if (abstractFile instanceof TFile) {
+            await this.handleDroppedAbstractFile(abstractFile);
+            handled = true;
           }
         }
+      }
+
+      // 3) External OS files (only if nothing internal matched)
+      if (!handled && e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+          this.handleDroppedFile(e.dataTransfer.files[i]);
+        }
+        handled = true;
+      }
+
+      if (!handled) {
+        console.log('[OSINT Copilot] Drop: unhandled. dataTransfer types =',
+          e.dataTransfer ? Array.from(e.dataTransfer.types) : 'none');
       }
     });
 

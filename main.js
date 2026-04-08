@@ -14995,44 +14995,72 @@ var _ChatView = class _ChatView extends import_obsidian16.ItemView {
         new import_obsidian16.Notice("File drop only available in graph generation mode");
         return;
       }
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        this.handleDroppedFile(e.dataTransfer.files[0]);
-        return;
-      }
+      let handled = false;
       const dragManager = this.app.dragManager;
-      if (dragManager && dragManager.draggable) {
+      if (dragManager?.draggable) {
         const draggable = dragManager.draggable;
-        if (draggable.type === "file" && draggable.file instanceof import_obsidian16.TFile) {
-          await this.handleDroppedAbstractFile(draggable.file);
-          return;
-        }
-        if (draggable.type === "folder" && draggable.file instanceof import_obsidian16.TFolder) {
+        console.log(
+          "[OSINT Copilot] Drop: dragManager draggable type =",
+          draggable.type,
+          "file =",
+          draggable.file?.path || draggable.file,
+          "files =",
+          draggable.files?.length
+        );
+        if (draggable.file instanceof import_obsidian16.TFolder) {
           await this.handleDroppedFolder(draggable.file);
-          return;
+          handled = true;
+        } else if (draggable.file instanceof import_obsidian16.TFile) {
+          await this.handleDroppedAbstractFile(draggable.file);
+          handled = true;
         }
-        if (draggable.type === "files" && Array.isArray(draggable.files)) {
+        if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian16.TFile)
-              await this.handleDroppedAbstractFile(f);
-            else if (f instanceof import_obsidian16.TFolder)
+            if (f instanceof import_obsidian16.TFolder)
               await this.handleDroppedFolder(f);
+            else if (f instanceof import_obsidian16.TFile)
+              await this.handleDroppedAbstractFile(f);
           }
-          return;
+          handled = true;
+        }
+        if (!handled && draggable.info) {
+          const info = draggable.info;
+          if (typeof info === "string") {
+            const resolved = this.app.vault.getAbstractFileByPath(info);
+            if (resolved instanceof import_obsidian16.TFolder) {
+              await this.handleDroppedFolder(resolved);
+              handled = true;
+            } else if (resolved instanceof import_obsidian16.TFile) {
+              await this.handleDroppedAbstractFile(resolved);
+              handled = true;
+            }
+          }
         }
       }
-      if (e.dataTransfer) {
+      if (!handled && e.dataTransfer) {
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian16.TFile) {
-            await this.handleDroppedAbstractFile(abstractFile);
-            return;
-          }
           if (abstractFile instanceof import_obsidian16.TFolder) {
             await this.handleDroppedFolder(abstractFile);
-            return;
+            handled = true;
+          } else if (abstractFile instanceof import_obsidian16.TFile) {
+            await this.handleDroppedAbstractFile(abstractFile);
+            handled = true;
           }
         }
+      }
+      if (!handled && e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+          this.handleDroppedFile(e.dataTransfer.files[i]);
+        }
+        handled = true;
+      }
+      if (!handled) {
+        console.log(
+          "[OSINT Copilot] Drop: unhandled. dataTransfer types =",
+          e.dataTransfer ? Array.from(e.dataTransfer.types) : "none"
+        );
       }
     });
     this.inputEl.addEventListener("keydown", (e) => {
