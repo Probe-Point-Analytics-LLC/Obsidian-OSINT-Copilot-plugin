@@ -8,6 +8,7 @@ import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '.
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { ConfirmModal } from '../modals/confirm-modal';
+import { VaultUnlockModal } from '../modals/vault-unlock-modal';
 import { GraphWorkspaceNameModal } from '../modals/graph-workspace-name-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
@@ -119,6 +120,7 @@ export class GraphView extends ItemView {
     private deleteSelectedBtn: HTMLButtonElement | null = null;
     private clearSelectionBtn: HTMLButtonElement | null = null;
     private lockAreaBtn: HTMLButtonElement | null = null;
+    private unlockAreaBtn: HTMLButtonElement | null = null;
 
     // Box selection mode state
     private boxSelectMode: boolean = false;
@@ -708,6 +710,13 @@ export class GraphView extends ItemView {
         this.lockAreaBtn.setCssProps({ display: 'none' });
         this.lockAreaBtn.onclick = () => void this.lockSelectedArea();
 
+        this.unlockAreaBtn = toolbar.createEl('button', { text: '🔓 unlock area' });
+        this.unlockAreaBtn.title =
+            'Unlock selected entities and relationships (remove vault lock so notes can be edited again)';
+        this.unlockAreaBtn.addClass('graph_copilot-unlock-area-btn');
+        this.unlockAreaBtn.setCssProps({ display: 'none' });
+        this.unlockAreaBtn.onclick = () => void this.unlockSelectedArea();
+
         // Selection count indicator
         this.selectionCountEl = toolbar.createDiv({ cls: 'graph_copilot-selection-count' });
         this.selectionCountEl.setCssProps({
@@ -984,7 +993,8 @@ export class GraphView extends ItemView {
         new Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
     }
 
-    private async lockSelectedArea(): Promise<void> {
+    /** File paths for notes backing the current selection (entities + connections). */
+    private getSelectedNotePaths(): string[] {
         const paths: string[] = [];
         for (const id of this.selectedNodes) {
             const e = this.entityManager.getEntity(id);
@@ -994,8 +1004,34 @@ export class GraphView extends ItemView {
             const c = this.entityManager.getConnection(cid);
             if (c?.filePath) paths.push(c.filePath);
         }
-        const n = this.graphHost.vaultLockService.lockPaths(paths);
+        return paths;
+    }
+
+    private async lockSelectedArea(): Promise<void> {
+        const n = this.graphHost.vaultLockService.lockPaths(this.getSelectedNotePaths());
         new Notice(n > 0 ? `Locked ${n} note(s)` : 'Selected items were already locked');
+    }
+
+    private unlockSelectedArea(): void {
+        const lock = this.graphHost.vaultLockService;
+        const lockedPaths = this.getSelectedNotePaths().filter((p) => lock.isPathLocked(p));
+        if (lockedPaths.length === 0) {
+            new Notice('No locked notes in the selection');
+            return;
+        }
+        new ConfirmModal(
+            this.app,
+            'Unlock selected notes?',
+            `Remove the vault lock from ${lockedPaths.length} note(s) so they can be edited again.`,
+            () => {
+                for (const p of lockedPaths) {
+                    lock.unlockPath(p);
+                }
+                new Notice(`Unlocked ${lockedPaths.length} note(s)`);
+            },
+            undefined,
+            false,
+        ).open();
     }
 
     /**
@@ -1526,6 +1562,10 @@ export class GraphView extends ItemView {
             const showLock = this.boxSelectMode && totalCount > 0;
             this.lockAreaBtn.setCssProps({ display: showLock ? 'block' : 'none' });
         }
+        if (this.unlockAreaBtn) {
+            const showUnlock = this.boxSelectMode && totalCount > 0;
+            this.unlockAreaBtn.setCssProps({ display: showUnlock ? 'block' : 'none' });
+        }
     }
 
     /**
@@ -1897,6 +1937,20 @@ export class GraphView extends ItemView {
         });
         menu.appendChild(openNoteItem);
 
+        const entityForLock = this.entityManager.getEntity(entityId);
+        const lock = this.graphHost.vaultLockService;
+        if (entityForLock?.filePath && lock.isPathLocked(entityForLock.filePath)) {
+            const unlockNoteItem = this.createMenuItem('🔓 Unlock note', () => {
+                menu.remove();
+                const fp = entityForLock.filePath as string;
+                new VaultUnlockModal(this.app, () => {
+                    lock.unlockPath(fp);
+                    new Notice('Note unlocked');
+                }, 'Unlock entity note').open();
+            });
+            menu.appendChild(unlockNoteItem);
+        }
+
         // Edit Entity option (for all entity types) - uses FTM format
         const editItem = this.createMenuItem('✏️ Edit Entity', () => {
             const entity = this.entityManager.getEntity(entityId);
@@ -2124,6 +2178,20 @@ export class GraphView extends ItemView {
             menu.remove();
         });
         menu.appendChild(editItem);
+
+        const connectionForLock = this.entityManager.getConnection(connectionId);
+        const edgeLock = this.graphHost.vaultLockService;
+        if (connectionForLock?.filePath && edgeLock.isPathLocked(connectionForLock.filePath)) {
+            const unlockConnItem = this.createMenuItem('🔓 Unlock note', () => {
+                menu.remove();
+                const fp = connectionForLock.filePath as string;
+                new VaultUnlockModal(this.app, () => {
+                    edgeLock.unlockPath(fp);
+                    new Notice('Note unlocked');
+                }, 'Unlock relationship note').open();
+            });
+            menu.appendChild(unlockConnItem);
+        }
 
         // Delete selected (if there are multiple selections including this edge)
         const totalSelected = this.selectedNodes.size + this.selectedEdges.size;
@@ -2465,6 +2533,18 @@ export class GraphView extends ItemView {
     }
 
     /**
+     * Default workspace shows all vault entities; other workspaces only show entities
+     * that have a saved position on that graph (membership = keys in nodePositionsCache).
+     */
+    private getEntitiesForActiveWorkspace(allEntities: Entity[]): Entity[] {
+        if (this.graphHost.getActiveGraphId() === 'default') {
+            return allEntities;
+        }
+        const allowed = new Set(this.nodePositionsCache.keys());
+        return allEntities.filter((e) => allowed.has(e.id));
+    }
+
+    /**
      * Refresh the graph with current data.
      * Reloads entities from disk to ensure persistence across Obsidian restarts.
      */
@@ -2479,7 +2559,9 @@ export class GraphView extends ItemView {
             console.error('[GraphView] Failed to reload entities from notes:', error);
         }
 
-        const { entities, connections } = this.entityManager.getGraphData();
+        const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
+        const entities = this.getEntitiesForActiveWorkspace(allEntities);
+        const isDefaultWorkspace = this.graphHost.getActiveGraphId() === 'default';
 
         // Clear existing elements
         this.cy.elements().remove();
@@ -2505,7 +2587,7 @@ export class GraphView extends ItemView {
                     hasCoordinates: hasCoordinates,
                     thumbUrl: thumbUrl || undefined
                 },
-                position: this.getNodePosition(index, entities.length),
+                position: this.getNodePosition(index, Math.max(entities.length, 1)),
                 classes: hasCoordinates ? 'has-coordinates' : ''
             };
         });
@@ -2515,43 +2597,61 @@ export class GraphView extends ItemView {
 
         const unknownEntityIds = new Set<string>();
 
-        // Add edges - if source or target is missing, mark for adding an "Unknown" node
-        const edges = connections.map(conn => {
-            const hasSource = entityIds.has(conn.fromEntityId);
-            const hasTarget = entityIds.has(conn.toEntityId);
+        let edges: Array<{ data: { id: string; source: string; target: string; label: string } }>;
 
-            if (!hasSource) unknownEntityIds.add(conn.fromEntityId);
-            if (!hasTarget) unknownEntityIds.add(conn.toEntityId);
+        if (isDefaultWorkspace) {
+            edges = allConnections.map(conn => {
+                const hasSource = entityIds.has(conn.fromEntityId);
+                const hasTarget = entityIds.has(conn.toEntityId);
 
-            return {
-                data: {
-                    id: conn.id,
-                    source: conn.fromEntityId,
-                    target: conn.toEntityId,
-                    label: conn.relationship
-                }
-            };
-        });
+                if (!hasSource) unknownEntityIds.add(conn.fromEntityId);
+                if (!hasTarget) unknownEntityIds.add(conn.toEntityId);
 
-        // Create "Unknown" nodes for missing entities
-        const unknownNodes = Array.from(unknownEntityIds).map((id, index) => {
-            return {
-                data: {
-                    id: id,
-                    label: "Unknown",
-                    fullLabel: "Unknown Entity (" + id.substring(0, 8) + ")",
-                    type: "Unknown",
-                    color: "#9E9E9E",
-                    icon: "help-circle",
-                    isUnknown: true
-                },
-                position: this.getNodePosition(nodes.length + index, nodes.length + unknownEntityIds.size),
-                classes: 'is-unknown'
-            };
-        });
+                return {
+                    data: {
+                        id: conn.id,
+                        source: conn.fromEntityId,
+                        target: conn.toEntityId,
+                        label: conn.relationship
+                    }
+                };
+            });
+        } else {
+            edges = allConnections
+                .filter((conn) => entityIds.has(conn.fromEntityId) && entityIds.has(conn.toEntityId))
+                .map((conn) => ({
+                    data: {
+                        id: conn.id,
+                        source: conn.fromEntityId,
+                        target: conn.toEntityId,
+                        label: conn.relationship
+                    }
+                }));
+        }
+
+        // Create "Unknown" nodes for missing entities (default workspace only)
+        const unknownNodes = isDefaultWorkspace
+            ? Array.from(unknownEntityIds).map((id, index) => {
+                return {
+                    data: {
+                        id: id,
+                        label: "Unknown",
+                        fullLabel: "Unknown Entity (" + id.substring(0, 8) + ")",
+                        type: "Unknown",
+                        color: "#9E9E9E",
+                        icon: "help-circle",
+                        isUnknown: true
+                    },
+                    position: this.getNodePosition(nodes.length + index, nodes.length + unknownEntityIds.size),
+                    classes: 'is-unknown'
+                };
+            })
+            : [];
 
         this.cy.add([...nodes, ...unknownNodes, ...edges]);
-        this.runLayout();
+        if (nodes.length > 0 || unknownNodes.length > 0) {
+            this.runLayout();
+        }
     }
 
     /**
@@ -2570,8 +2670,10 @@ export class GraphView extends ItemView {
             console.error('[GraphView] Failed to reload entities from notes:', error);
         }
 
-        const { entities, connections } = this.entityManager.getGraphData();
-        console.debug(`[GraphView] Found ${entities.length} entities and ${connections.length} connections`);
+        const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
+        const entities = this.getEntitiesForActiveWorkspace(allEntities);
+        const isDefaultWorkspace = this.graphHost.getActiveGraphId() === 'default';
+        console.debug(`[GraphView] Found ${entities.length} workspace entities (${allEntities.length} in vault) and ${allConnections.length} connections`);
 
         // Clear existing elements
         this.cy.elements().remove();
@@ -2597,7 +2699,7 @@ export class GraphView extends ItemView {
                 position = savedPos;
                 nodesWithSavedPositions.push(entity.id);
             } else {
-                position = this.getNodePosition(index, entities.length);
+                position = this.getNodePosition(index, Math.max(entities.length, 1));
                 nodesNeedingLayout.push(entity.id);
             }
 
@@ -2628,15 +2730,15 @@ export class GraphView extends ItemView {
         // Build a set of valid entity IDs for edge validation
         const entityIds = new Set(entities.map(e => e.id));
 
-        // Add edges - filter out connections with missing source or target entities
-        const validConnections = connections.filter(conn => {
+        // Add edges — both ends must be visible on this workspace
+        const validConnections = allConnections.filter(conn => {
             const hasSource = entityIds.has(conn.fromEntityId);
             const hasTarget = entityIds.has(conn.toEntityId);
-            if (!hasSource || !hasTarget) {
+            if (isDefaultWorkspace && (!hasSource || !hasTarget)) {
                 console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? 'source' : 'target'} entity`);
                 return false;
             }
-            return true;
+            return hasSource && hasTarget;
         });
 
         const edges = validConnections.map(conn => ({
@@ -2694,8 +2796,10 @@ export class GraphView extends ItemView {
             }, 600);
         }
 
-        // Fit view
-        this.cy.fit();
+        // Fit view (empty secondary workspaces: no-op zoom)
+        if (this.cy.nodes().length > 0) {
+            this.cy.fit();
+        }
     }
 
     /**
@@ -2967,6 +3071,7 @@ export class GraphView extends ItemView {
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const visual = this.getNodeVisual(entity);
 
+        const pos = { x: 400, y: 300 };
         this.cy.add({
             data: {
                 id: entity.id,
@@ -2976,9 +3081,11 @@ export class GraphView extends ItemView {
                 color: visual.color,
                 icon: visual.icon
             },
-            position: { x: 400, y: 300 }
+            position: pos
         });
 
+        this.nodePositionsCache.set(entity.id, pos);
+        this.savePositionsDebounced();
         this.runLayout();
     }
 

@@ -4836,7 +4836,7 @@ var ConversationService = class {
 };
 
 // src/views/graph-view.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/modals/entity-modal.ts
 var import_obsidian6 = require("obsidian");
@@ -5094,7 +5094,16 @@ var CustomTypeCreationModal = class extends import_obsidian5.Modal {
 
 // src/modals/entity-modal.ts
 function getOsintCopilotPlugin(app) {
-  return app.plugins?.plugins?.["osint-copilot"] ?? null;
+  const plug = app;
+  const mgr = plug.plugins;
+  if (!mgr)
+    return null;
+  if (typeof mgr.getPlugin === "function") {
+    const p = mgr.getPlugin("osint-copilot");
+    if (p)
+      return p;
+  }
+  return mgr.plugins?.["osint-copilot"] ?? null;
 }
 function familyBadgeLabel(family) {
   switch (family) {
@@ -5108,6 +5117,21 @@ function familyBadgeLabel(family) {
       return "USER";
     default:
       return String(family);
+  }
+}
+var CATALOG_FAMILY_ORDER = ["ftm", "stix2", "mitre", "user"];
+function familySectionTitle(family) {
+  switch (family) {
+    case "ftm":
+      return "FollowTheMoney (bundled + custom JSON)";
+    case "stix2":
+      return "STIX 2 (vault YAML)";
+    case "mitre":
+      return "MITRE ATT&CK (vault YAML)";
+    case "user":
+      return "User definitions (schemas/user)";
+    default:
+      return family;
   }
 }
 var COMMON_RELATIONSHIPS = [
@@ -6249,83 +6273,101 @@ var FTMEntityTypeSelectorModal = class _FTMEntityTypeSelectorModal extends impor
         return fa;
       return a.label.localeCompare(b.label);
     });
+    const byFam = /* @__PURE__ */ new Map();
     for (const cat of sorted) {
-      const typeBtn = this.gridContainer.createDiv({ cls: "graph_copilot-entity-type-btn" });
-      typeBtn.style.borderLeftColor = cat.color;
-      typeBtn.style.position = "relative";
-      const icon = typeBtn.createDiv({ cls: "graph_copilot-entity-type-icon" });
-      icon.style.backgroundColor = cat.color;
-      icon.style.fontSize = "20px";
-      icon.style.display = "flex";
-      icon.style.alignItems = "center";
-      icon.style.justifyContent = "center";
-      icon.textContent = getEntityIcon(cat.name);
-      const badge = typeBtn.createDiv();
-      badge.textContent = familyBadgeLabel(cat.family);
-      badge.style.cssText = "position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;";
-      const info = typeBtn.createDiv({ cls: "graph_copilot-entity-type-info" });
-      info.createEl("strong", { text: cat.label });
-      info.createEl("small", { text: cat.description });
-      const isCustom = plugin && plugin.customTypesService && cat.family === "ftm" && plugin.customTypesService.getCustomSchema(cat.name);
-      if (isCustom) {
-        const actionsDiv = typeBtn.createDiv({ cls: "graph_copilot-type-actions" });
-        actionsDiv.style.cssText = "position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;";
-        typeBtn.onmouseenter = () => {
-          actionsDiv.style.display = "flex";
-        };
-        typeBtn.onmouseleave = () => {
-          actionsDiv.style.display = "none";
-        };
-        const editBtn = actionsDiv.createEl("button", { text: "\u270E" });
-        editBtn.title = "Edit type";
-        editBtn.style.cssText = "padding: 4px 8px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;";
-        editBtn.onclick = (e) => {
-          e.stopPropagation();
-          this.close();
-          new CustomTypeCreationModal(
-            this.app,
-            plugin.customTypesService,
-            plugin.customTypesService.getCustomSchema(cat.name),
-            () => {
-              new _FTMEntityTypeSelectorModal(
-                this.app,
-                this.entityManager,
-                this.onEntityCreated || void 0
-              ).open();
+      if (!byFam.has(cat.family))
+        byFam.set(cat.family, []);
+      byFam.get(cat.family).push(cat);
+    }
+    for (const fam of CATALOG_FAMILY_ORDER) {
+      const list = byFam.get(fam);
+      if (!list?.length)
+        continue;
+      const head = this.gridContainer.createEl("h4", {
+        text: familySectionTitle(fam),
+        cls: "graph_copilot-section-header"
+      });
+      head.style.gridColumn = "1 / -1";
+      head.style.marginTop = "8px";
+      head.style.marginBottom = "4px";
+      for (const cat of list) {
+        const typeBtn = this.gridContainer.createDiv({ cls: "graph_copilot-entity-type-btn" });
+        typeBtn.style.borderLeftColor = cat.color;
+        typeBtn.style.position = "relative";
+        const icon = typeBtn.createDiv({ cls: "graph_copilot-entity-type-icon" });
+        icon.style.backgroundColor = cat.color;
+        icon.style.fontSize = "20px";
+        icon.style.display = "flex";
+        icon.style.alignItems = "center";
+        icon.style.justifyContent = "center";
+        icon.textContent = getEntityIcon(cat.name);
+        const badge = typeBtn.createDiv();
+        badge.textContent = familyBadgeLabel(cat.family);
+        badge.style.cssText = "position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;";
+        const info = typeBtn.createDiv({ cls: "graph_copilot-entity-type-info" });
+        info.createEl("strong", { text: cat.label });
+        info.createEl("small", { text: cat.description });
+        const isCustom = plugin && plugin.customTypesService && cat.family === "ftm" && plugin.customTypesService.getCustomSchema(cat.name);
+        if (isCustom) {
+          const actionsDiv = typeBtn.createDiv({ cls: "graph_copilot-type-actions" });
+          actionsDiv.style.cssText = "position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;";
+          typeBtn.onmouseenter = () => {
+            actionsDiv.style.display = "flex";
+          };
+          typeBtn.onmouseleave = () => {
+            actionsDiv.style.display = "none";
+          };
+          const editBtn = actionsDiv.createEl("button", { text: "\u270E" });
+          editBtn.title = "Edit type";
+          editBtn.style.cssText = "padding: 4px 8px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;";
+          editBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.close();
+            new CustomTypeCreationModal(
+              this.app,
+              plugin.customTypesService,
+              plugin.customTypesService.getCustomSchema(cat.name),
+              () => {
+                new _FTMEntityTypeSelectorModal(
+                  this.app,
+                  this.entityManager,
+                  this.onEntityCreated || void 0
+                ).open();
+              }
+            ).open();
+          };
+          const delBtn = actionsDiv.createEl("button", { text: "\u{1F5D1}" });
+          delBtn.title = "Delete type";
+          delBtn.style.cssText = "padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;";
+          delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (confirm(`Delete custom type "${cat.label}"?`)) {
+              await plugin.customTypesService.deleteCustomType(cat.name);
+              this.syncTypesFromPlugin();
+              this.filterEntityTypes();
             }
-          ).open();
-        };
-        const delBtn = actionsDiv.createEl("button", { text: "\u{1F5D1}" });
-        delBtn.title = "Delete type";
-        delBtn.style.cssText = "padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;";
-        delBtn.onclick = async (e) => {
-          e.stopPropagation();
-          if (confirm(`Delete custom type "${cat.label}"?`)) {
-            await plugin.customTypesService.deleteCustomType(cat.name);
-            this.syncTypesFromPlugin();
-            this.filterEntityTypes();
+          };
+        }
+        typeBtn.onclick = () => {
+          this.close();
+          if (cat.family === "ftm") {
+            new FTMEntityCreationModal(
+              this.app,
+              this.entityManager,
+              cat.name,
+              this.onEntityCreated || void 0
+            ).open();
+          } else {
+            new FTMEntityCreationModal(
+              this.app,
+              this.entityManager,
+              cat.name,
+              this.onEntityCreated || void 0,
+              cat
+            ).open();
           }
         };
       }
-      typeBtn.onclick = () => {
-        this.close();
-        if (cat.family === "ftm") {
-          new FTMEntityCreationModal(
-            this.app,
-            this.entityManager,
-            cat.name,
-            this.onEntityCreated || void 0
-          ).open();
-        } else {
-          new FTMEntityCreationModal(
-            this.app,
-            this.entityManager,
-            cat.name,
-            this.onEntityCreated || void 0,
-            cat
-          ).open();
-        }
-      };
     }
   }
   renderEntityTypes(types) {
@@ -7266,82 +7308,100 @@ var FTMIntervalTypeSelectorModal = class _FTMIntervalTypeSelectorModal extends i
         return fa;
       return a.label.localeCompare(b.label);
     });
+    const byFam = /* @__PURE__ */ new Map();
     for (const rel of sorted) {
-      const typeBtn = this.gridContainer.createDiv({ cls: "graph_copilot-entity-type-btn" });
-      typeBtn.style.borderLeftColor = rel.color;
-      typeBtn.style.position = "relative";
-      const icon = typeBtn.createDiv({ cls: "graph_copilot-entity-type-icon" });
-      icon.style.backgroundColor = rel.color;
-      icon.textContent = "\u{1F517}";
-      const badge = typeBtn.createDiv();
-      badge.textContent = familyBadgeLabel(rel.family);
-      badge.style.cssText = "position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;";
-      const info = typeBtn.createDiv({ cls: "graph_copilot-entity-type-info" });
-      info.createEl("strong", { text: rel.label });
-      info.createEl("small", { text: rel.description });
-      const isCustom = plugin && plugin.customTypesService && rel.family === "ftm" && plugin.customTypesService.getCustomSchema(rel.name);
-      if (isCustom) {
-        const actionsDiv = typeBtn.createDiv({ cls: "graph_copilot-type-actions" });
-        actionsDiv.style.cssText = "position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;";
-        typeBtn.onmouseenter = () => {
-          actionsDiv.style.display = "flex";
-        };
-        typeBtn.onmouseleave = () => {
-          actionsDiv.style.display = "none";
-        };
-        const editBtn = actionsDiv.createEl("button", { text: "\u270E" });
-        editBtn.onclick = (e) => {
-          e.stopPropagation();
+      if (!byFam.has(rel.family))
+        byFam.set(rel.family, []);
+      byFam.get(rel.family).push(rel);
+    }
+    for (const fam of CATALOG_FAMILY_ORDER) {
+      const list = byFam.get(fam);
+      if (!list?.length)
+        continue;
+      const head = this.gridContainer.createEl("h4", {
+        text: familySectionTitle(fam),
+        cls: "graph_copilot-section-header"
+      });
+      head.style.gridColumn = "1 / -1";
+      head.style.marginTop = "8px";
+      head.style.marginBottom = "4px";
+      for (const rel of list) {
+        const typeBtn = this.gridContainer.createDiv({ cls: "graph_copilot-entity-type-btn" });
+        typeBtn.style.borderLeftColor = rel.color;
+        typeBtn.style.position = "relative";
+        const icon = typeBtn.createDiv({ cls: "graph_copilot-entity-type-icon" });
+        icon.style.backgroundColor = rel.color;
+        icon.textContent = "\u{1F517}";
+        const badge = typeBtn.createDiv();
+        badge.textContent = familyBadgeLabel(rel.family);
+        badge.style.cssText = "position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;";
+        const info = typeBtn.createDiv({ cls: "graph_copilot-entity-type-info" });
+        info.createEl("strong", { text: rel.label });
+        info.createEl("small", { text: rel.description });
+        const isCustom = plugin && plugin.customTypesService && rel.family === "ftm" && plugin.customTypesService.getCustomSchema(rel.name);
+        if (isCustom) {
+          const actionsDiv = typeBtn.createDiv({ cls: "graph_copilot-type-actions" });
+          actionsDiv.style.cssText = "position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;";
+          typeBtn.onmouseenter = () => {
+            actionsDiv.style.display = "flex";
+          };
+          typeBtn.onmouseleave = () => {
+            actionsDiv.style.display = "none";
+          };
+          const editBtn = actionsDiv.createEl("button", { text: "\u270E" });
+          editBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.close();
+            new CustomTypeCreationModal(
+              this.app,
+              plugin.customTypesService,
+              plugin.customTypesService.getCustomSchema(rel.name),
+              () => {
+                new _FTMIntervalTypeSelectorModal(
+                  this.app,
+                  this.entityManager,
+                  this.onConnectionCreated || void 0,
+                  this.sourceEntityId || void 0,
+                  this.targetEntityId || void 0
+                ).open();
+              },
+              "Interval"
+            ).open();
+          };
+          const delBtn = actionsDiv.createEl("button", { text: "\u{1F5D1}" });
+          delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (confirm(`Delete custom relationship type "${rel.label}"?`)) {
+              await plugin.customTypesService.deleteCustomType(rel.name);
+              this.syncIntervalTypesFromPlugin();
+              this.filterIntervalTypes();
+            }
+          };
+        }
+        typeBtn.onclick = () => {
           this.close();
-          new CustomTypeCreationModal(
-            this.app,
-            plugin.customTypesService,
-            plugin.customTypesService.getCustomSchema(rel.name),
-            () => {
-              new _FTMIntervalTypeSelectorModal(
-                this.app,
-                this.entityManager,
-                this.onConnectionCreated || void 0,
-                this.sourceEntityId || void 0,
-                this.targetEntityId || void 0
-              ).open();
-            },
-            "Interval"
-          ).open();
-        };
-        const delBtn = actionsDiv.createEl("button", { text: "\u{1F5D1}" });
-        delBtn.onclick = async (e) => {
-          e.stopPropagation();
-          if (confirm(`Delete custom relationship type "${rel.label}"?`)) {
-            await plugin.customTypesService.deleteCustomType(rel.name);
-            this.syncIntervalTypesFromPlugin();
-            this.filterIntervalTypes();
+          if (rel.family === "ftm") {
+            new FTMIntervalCreationModal(
+              this.app,
+              this.entityManager,
+              rel.name,
+              this.onConnectionCreated || void 0,
+              this.sourceEntityId || void 0,
+              this.targetEntityId || void 0
+            ).open();
+          } else {
+            new FTMIntervalCreationModal(
+              this.app,
+              this.entityManager,
+              rel.name,
+              this.onConnectionCreated || void 0,
+              this.sourceEntityId || void 0,
+              this.targetEntityId || void 0,
+              rel
+            ).open();
           }
         };
       }
-      typeBtn.onclick = () => {
-        this.close();
-        if (rel.family === "ftm") {
-          new FTMIntervalCreationModal(
-            this.app,
-            this.entityManager,
-            rel.name,
-            this.onConnectionCreated || void 0,
-            this.sourceEntityId || void 0,
-            this.targetEntityId || void 0
-          ).open();
-        } else {
-          new FTMIntervalCreationModal(
-            this.app,
-            this.entityManager,
-            rel.name,
-            this.onConnectionCreated || void 0,
-            this.sourceEntityId || void 0,
-            this.targetEntityId || void 0,
-            rel
-          ).open();
-        }
-      };
     }
   }
   renderIntervalTypes(types) {
@@ -8147,9 +8207,36 @@ var ConfirmModal = class extends import_obsidian7.Modal {
   }
 };
 
-// src/modals/graph-workspace-name-modal.ts
+// src/modals/vault-unlock-modal.ts
 var import_obsidian8 = require("obsidian");
-var GraphWorkspaceNameModal = class extends import_obsidian8.Modal {
+var VaultUnlockModal = class extends import_obsidian8.Modal {
+  constructor(app, onUnlock, titleText = "Locked note", message = "This note is locked from the OSINT graph. Unlocking allows editing and agent changes.") {
+    super(app);
+    this.onUnlock = onUnlock;
+    this.titleText = titleText;
+    this.message = message;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: this.titleText });
+    contentEl.createEl("p", { text: this.message });
+    contentEl.createEl("p", { text: "Are you sure you want to unlock?" });
+    new import_obsidian8.Setting(contentEl).addButton(
+      (btn) => btn.setButtonText("Unlock").setCta().onClick(() => {
+        this.onUnlock();
+        this.close();
+      })
+    ).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close()));
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// src/modals/graph-workspace-name-modal.ts
+var import_obsidian9 = require("obsidian");
+var GraphWorkspaceNameModal = class extends import_obsidian9.Modal {
   constructor(app, onCreate) {
     super(app);
     this.onCreate = onCreate;
@@ -8162,11 +8249,11 @@ var GraphWorkspaceNameModal = class extends import_obsidian8.Modal {
       text: "Each workspace saves its own node layout in the vault.",
       cls: "setting-item-description"
     });
-    new import_obsidian8.Setting(contentEl).setName("Name").addText((text) => {
+    new import_obsidian9.Setting(contentEl).setName("Name").addText((text) => {
       this.textInput = text;
       text.setPlaceholder("My investigation graph");
     });
-    new import_obsidian8.Setting(contentEl).addButton(
+    new import_obsidian9.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => {
         void this.handleCreate();
       })
@@ -8175,7 +8262,7 @@ var GraphWorkspaceNameModal = class extends import_obsidian8.Modal {
   async handleCreate() {
     const name = this.textInput?.getValue().trim() ?? "";
     if (!name) {
-      new import_obsidian8.Notice("Enter a name for the graph workspace.");
+      new import_obsidian9.Notice("Enter a name for the graph workspace.");
       return;
     }
     await Promise.resolve(this.onCreate(name));
@@ -8581,7 +8668,7 @@ var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
 var NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
-var _GraphView = class _GraphView extends import_obsidian9.ItemView {
+var _GraphView = class _GraphView extends import_obsidian10.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap, graphHost) {
     super(leaf);
     this.cy = null;
@@ -8602,6 +8689,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     this.deleteSelectedBtn = null;
     this.clearSelectionBtn = null;
     this.lockAreaBtn = null;
+    this.unlockAreaBtn = null;
     // Box selection mode state
     this.boxSelectMode = false;
     this.boxSelectBtn = null;
@@ -8761,7 +8849,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       ol.createEl("li", { text: "Check console tab for errors" });
       ol.createEl("li", { text: "Check network tab for failed requests to unpkg.com" });
       ol.createEl("li", { text: "Verify plugin settings: enableGraphFeatures should be enabled" });
-      new import_obsidian9.Notice("Graph failed to load. Check console for details.", 1e4);
+      new import_obsidian10.Notice("Graph failed to load. Check console for details.", 1e4);
     }
   }
   setupGraphDropHandlers(container) {
@@ -8804,14 +8892,14 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
           return;
         const position = this.screenToModelPosition(evt.clientX, evt.clientY);
         const dragManager = this.app.dragManager;
-        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian9.TFile) {
+        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian10.TFile) {
           await this.handleGraphFileDrop([dragManager.draggable.file], position);
           return;
         }
         const internalPath = evt.dataTransfer.getData("text/plain");
         if (internalPath) {
           const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-          if (tfile instanceof import_obsidian9.TFile) {
+          if (tfile instanceof import_obsidian10.TFile) {
             await this.handleGraphFileDrop([tfile], position);
             return;
           }
@@ -8835,17 +8923,17 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     };
   }
   async handleExternalFileDrop(fileList, position) {
-    const evidencePath = (0, import_obsidian9.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
+    const evidencePath = (0, import_obsidian10.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
     await this.ensureFolderExists(evidencePath);
     const tFiles = [];
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
-      const destPath = (0, import_obsidian9.normalizePath)(`${evidencePath}/${safeName}`);
+      const destPath = (0, import_obsidian10.normalizePath)(`${evidencePath}/${safeName}`);
       try {
         const buffer = await file.arrayBuffer();
         const existing = this.app.vault.getAbstractFileByPath(destPath);
-        if (existing instanceof import_obsidian9.TFile) {
+        if (existing instanceof import_obsidian10.TFile) {
           tFiles.push(existing);
         } else {
           const created = await this.app.vault.createBinary(destPath, buffer);
@@ -8853,7 +8941,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
         }
       } catch (err) {
         console.error(`[GraphView] Failed to import file ${file.name}:`, err);
-        new import_obsidian9.Notice(`Failed to import ${file.name}`);
+        new import_obsidian10.Notice(`Failed to import ${file.name}`);
       }
     }
     if (tFiles.length > 0) {
@@ -8867,7 +8955,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       const isImage = _GraphView.IMAGE_EXTENSIONS.has(ext);
       const isDocument2 = _GraphView.DOCUMENT_EXTENSIONS.has(ext);
       if (!isImage && !isDocument2) {
-        new import_obsidian9.Notice(`Unsupported file type: .${ext}`);
+        new import_obsidian10.Notice(`Unsupported file type: .${ext}`);
         continue;
       }
       const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
@@ -8888,11 +8976,11 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
         }
         this.historyManager.recordEntityCreate(entity);
         this.addEntityToGraphAtPosition(entity, dropPos);
-        new import_obsidian9.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
+        new import_obsidian10.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
         offset++;
       } catch (err) {
         console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
-        new import_obsidian9.Notice(`Failed to add ${file.name} to graph`);
+        new import_obsidian10.Notice(`Failed to add ${file.name} to graph`);
       }
     }
   }
@@ -8929,7 +9017,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     if (!_GraphView.IMAGE_EXTENSIONS.has(ext))
       return void 0;
     const file = this.app.vault.getAbstractFileByPath(fp);
-    if (file instanceof import_obsidian9.TFile) {
+    if (file instanceof import_obsidian10.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return void 0;
@@ -9033,7 +9121,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     delGraphBtn.onclick = () => {
       const id = this.graphHost.getActiveGraphId();
       if (id === "default") {
-        new import_obsidian9.Notice("Cannot delete the default graph workspace.");
+        new import_obsidian10.Notice("Cannot delete the default graph workspace.");
         return;
       }
       const label = this.graphHost.listGraphWorkspaces().find((g) => g.id === id)?.name ?? id;
@@ -9067,6 +9155,11 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     this.lockAreaBtn.addClass("graph_copilot-lock-area-btn");
     this.lockAreaBtn.setCssProps({ display: "none" });
     this.lockAreaBtn.onclick = () => void this.lockSelectedArea();
+    this.unlockAreaBtn = toolbar.createEl("button", { text: "\u{1F513} unlock area" });
+    this.unlockAreaBtn.title = "Unlock selected entities and relationships (remove vault lock so notes can be edited again)";
+    this.unlockAreaBtn.addClass("graph_copilot-unlock-area-btn");
+    this.unlockAreaBtn.setCssProps({ display: "none" });
+    this.unlockAreaBtn.onclick = () => void this.unlockSelectedArea();
     this.selectionCountEl = toolbar.createDiv({ cls: "graph_copilot-selection-count" });
     this.selectionCountEl.setCssProps({
       padding: "4px 8px",
@@ -9111,14 +9204,14 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
         refreshBtn.textContent = "\u21BB refreshing...";
         try {
           await this.refreshWithSavedPositions();
-          new import_obsidian9.Notice("Graph refreshed successfully");
+          new import_obsidian10.Notice("Graph refreshed successfully");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-success)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
           }, 300);
         } catch (error) {
           console.error("[GraphView] Manual refresh failed:", error);
-          new import_obsidian9.Notice("Failed to refresh graph. Check console for details.");
+          new import_obsidian10.Notice("Failed to refresh graph. Check console for details.");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-error)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
@@ -9152,10 +9245,10 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       a.download = `osint-investigation-${timestamp2}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      new import_obsidian9.Notice("Investigation exported successfully");
+      new import_obsidian10.Notice("Investigation exported successfully");
     } catch (error) {
       console.error("[GraphView] Export failed:", error);
-      new import_obsidian9.Notice("Failed to export investigation");
+      new import_obsidian10.Notice("Failed to export investigation");
     }
   }
   /**
@@ -9187,7 +9280,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     if (this.container) {
       this.container.addClass("graph_copilot-connection-mode");
     }
-    new import_obsidian9.Notice("Connection mode: click the source node");
+    new import_obsidian10.Notice("Connection mode: click the source node");
   }
   /**
    * Exit connection mode.
@@ -9241,7 +9334,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       this.container.addClass("graph_copilot-box-select-mode");
     }
     this.updateSelectionUI();
-    new import_obsidian9.Notice("Box select mode: drag to select multiple items");
+    new import_obsidian10.Notice("Box select mode: drag to select multiple items");
   }
   /**
    * Exit box selection mode.
@@ -9284,9 +9377,10 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     const slice = this.allGraphPositions[newId] || {};
     this.nodePositionsCache = new Map(Object.entries(slice));
     await this.refreshWithSavedPositions();
-    new import_obsidian9.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
+    new import_obsidian10.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
   }
-  async lockSelectedArea() {
+  /** File paths for notes backing the current selection (entities + connections). */
+  getSelectedNotePaths() {
     const paths = [];
     for (const id of this.selectedNodes) {
       const e = this.entityManager.getEntity(id);
@@ -9298,8 +9392,32 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       if (c?.filePath)
         paths.push(c.filePath);
     }
-    const n = this.graphHost.vaultLockService.lockPaths(paths);
-    new import_obsidian9.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
+    return paths;
+  }
+  async lockSelectedArea() {
+    const n = this.graphHost.vaultLockService.lockPaths(this.getSelectedNotePaths());
+    new import_obsidian10.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
+  }
+  unlockSelectedArea() {
+    const lock = this.graphHost.vaultLockService;
+    const lockedPaths = this.getSelectedNotePaths().filter((p) => lock.isPathLocked(p));
+    if (lockedPaths.length === 0) {
+      new import_obsidian10.Notice("No locked notes in the selection");
+      return;
+    }
+    new ConfirmModal(
+      this.app,
+      "Unlock selected notes?",
+      `Remove the vault lock from ${lockedPaths.length} note(s) so they can be edited again.`,
+      () => {
+        for (const p of lockedPaths) {
+          lock.unlockPath(p);
+        }
+        new import_obsidian10.Notice(`Unlocked ${lockedPaths.length} note(s)`);
+      },
+      void 0,
+      false
+    ).open();
   }
   /**
    * Handle double-click on an edge to open its note.
@@ -9310,12 +9428,12 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       return;
     if (connection.filePath) {
       const file = this.app.vault.getAbstractFileByPath(connection.filePath);
-      if (file instanceof import_obsidian9.TFile) {
+      if (file instanceof import_obsidian10.TFile) {
         await this.app.workspace.getLeaf().openFile(file);
         return;
       }
     }
-    new import_obsidian9.Notice("No note file found for this relationship");
+    new import_obsidian10.Notice("No note file found for this relationship");
   }
   /**
    * Handle node click in connection mode.
@@ -9330,10 +9448,10 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       if (this.statusIndicator) {
         this.statusIndicator.textContent = `Source: ${nodeLabel} \u2192 Click target...`;
       }
-      new import_obsidian9.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
+      new import_obsidian10.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
     } else {
       if (nodeId === this.sourceNodeId) {
-        new import_obsidian9.Notice("Cannot connect a node to itself. Click a different node.");
+        new import_obsidian10.Notice("Cannot connect a node to itself. Click a different node.");
         return;
       }
       const modal = new FTMIntervalTypeSelectorModal(
@@ -9519,7 +9637,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       if (evt.target === this.cy) {
         if (this.connectionMode) {
           this.exitConnectionMode();
-          new import_obsidian9.Notice("Connection mode cancelled");
+          new import_obsidian10.Notice("Connection mode cancelled");
         } else if (!this.boxSelectMode && (this.selectedNodes.size > 0 || this.selectedEdges.size > 0)) {
           this.clearSelection();
         }
@@ -9663,7 +9781,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     });
     this.updateSelectionUI();
     const totalCount = this.selectedNodes.size + this.selectedEdges.size;
-    new import_obsidian9.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
+    new import_obsidian10.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
   }
   /**
    * Clear all selections (nodes and edges).
@@ -9711,6 +9829,10 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     if (this.lockAreaBtn) {
       const showLock = this.boxSelectMode && totalCount > 0;
       this.lockAreaBtn.setCssProps({ display: showLock ? "block" : "none" });
+    }
+    if (this.unlockAreaBtn) {
+      const showUnlock = this.boxSelectMode && totalCount > 0;
+      this.unlockAreaBtn.setCssProps({ display: showUnlock ? "block" : "none" });
     }
   }
   /**
@@ -9840,14 +9962,14 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     for (const entityId of this.selectedNodes) {
       const e = this.entityManager.getEntity(entityId);
       if (e?.filePath && lock.isPathLocked(e.filePath)) {
-        new import_obsidian9.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
+        new import_obsidian10.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
         return;
       }
     }
     for (const connectionId of this.selectedEdges) {
       const c = this.entityManager.getConnection(connectionId);
       if (c?.filePath && lock.isPathLocked(c.filePath)) {
-        new import_obsidian9.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
+        new import_obsidian10.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
         return;
       }
     }
@@ -9910,9 +10032,9 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
     if (failedRelationships > 0)
       failParts.push(`${failedRelationships} ${failedRelationships === 1 ? "relationship" : "relationships"}`);
     if (failParts.length === 0) {
-      new import_obsidian9.Notice(`Successfully deleted ${successParts.join(" and ")}`);
+      new import_obsidian10.Notice(`Successfully deleted ${successParts.join(" and ")}`);
     } else {
-      new import_obsidian9.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
+      new import_obsidian10.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
     }
   }
   /**
@@ -9983,13 +10105,13 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
           }
           this.selectedNodes.delete(entityId);
           this.updateSelectionUI();
-          new import_obsidian9.Notice(`Deleted entity: ${label}`);
+          new import_obsidian10.Notice(`Deleted entity: ${label}`);
         } else {
-          new import_obsidian9.Notice(`Failed to delete entity: ${label}`);
+          new import_obsidian10.Notice(`Failed to delete entity: ${label}`);
         }
       } catch (error) {
         console.error(`Failed to delete entity ${entityId}:`, error);
-        new import_obsidian9.Notice(`Error deleting entity: ${label}`);
+        new import_obsidian10.Notice(`Error deleting entity: ${label}`);
       }
     };
     buttonContainer.appendChild(deleteBtn);
@@ -10027,6 +10149,19 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
       menu.remove();
     });
     menu.appendChild(openNoteItem);
+    const entityForLock = this.entityManager.getEntity(entityId);
+    const lock = this.graphHost.vaultLockService;
+    if (entityForLock?.filePath && lock.isPathLocked(entityForLock.filePath)) {
+      const unlockNoteItem = this.createMenuItem("\u{1F513} Unlock note", () => {
+        menu.remove();
+        const fp = entityForLock.filePath;
+        new VaultUnlockModal(this.app, () => {
+          lock.unlockPath(fp);
+          new import_obsidian10.Notice("Note unlocked");
+        }, "Unlock entity note").open();
+      });
+      menu.appendChild(unlockNoteItem);
+    }
     const editItem = this.createMenuItem("\u270F\uFE0F Edit Entity", () => {
       const entity = this.entityManager.getEntity(entityId);
       if (entity) {
@@ -10045,7 +10180,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian9.Notice("Entity not found");
+        new import_obsidian10.Notice("Entity not found");
       }
       menu.remove();
     });
@@ -10057,7 +10192,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
           if (this.onShowOnMap) {
             this.onShowOnMap(entityId);
           } else {
-            new import_obsidian9.Notice("Map view not available");
+            new import_obsidian10.Notice("Map view not available");
           }
           menu.remove();
         });
@@ -10085,14 +10220,14 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
               await this.entityManager.updateEntity(entityId, {
                 add_to_timeline: !isOnTimeline
               });
-              new import_obsidian9.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
+              new import_obsidian10.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
               const updatedEntity = this.entityManager.getEntity(entityId);
               if (updatedEntity) {
                 this.updateEntityInGraph(updatedEntity);
               }
             } catch (error) {
               console.error("[GraphView] Failed to toggle timeline status:", error);
-              new import_obsidian9.Notice("Failed to update timeline status");
+              new import_obsidian10.Notice("Failed to update timeline status");
             }
             menu.remove();
           })();
@@ -10212,11 +10347,24 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian9.Notice("Connection not found");
+        new import_obsidian10.Notice("Connection not found");
       }
       menu.remove();
     });
     menu.appendChild(editItem);
+    const connectionForLock = this.entityManager.getConnection(connectionId);
+    const edgeLock = this.graphHost.vaultLockService;
+    if (connectionForLock?.filePath && edgeLock.isPathLocked(connectionForLock.filePath)) {
+      const unlockConnItem = this.createMenuItem("\u{1F513} Unlock note", () => {
+        menu.remove();
+        const fp = connectionForLock.filePath;
+        new VaultUnlockModal(this.app, () => {
+          edgeLock.unlockPath(fp);
+          new import_obsidian10.Notice("Note unlocked");
+        }, "Unlock relationship note").open();
+      });
+      menu.appendChild(unlockConnItem);
+    }
     const totalSelected = this.selectedNodes.size + this.selectedEdges.size;
     if (totalSelected > 1 && this.selectedEdges.has(connectionId)) {
       const deleteSelectedItem = this.createMenuItem(`\u{1F5D1} Delete Selected (${totalSelected})`, () => {
@@ -10247,7 +10395,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
   async deleteRelationship(connectionId, relationship, sourceLabel, targetLabel) {
     const connection = this.entityManager.getConnection(connectionId);
     if (!connection) {
-      new import_obsidian9.Notice("Relationship not found");
+      new import_obsidian10.Notice("Relationship not found");
       return;
     }
     new ConfirmModal(
@@ -10261,7 +10409,7 @@ var _GraphView = class _GraphView extends import_obsidian9.ItemView {
           if (this.cy) {
             this.cy.getElementById(connectionId).remove();
           }
-          new import_obsidian9.Notice(`Deleted relationship: ${relationship}`);
+          new import_obsidian10.Notice(`Deleted relationship: ${relationship}`);
         })();
       },
       void 0,
@@ -10517,6 +10665,17 @@ ${label}
     ];
   }
   /**
+   * Default workspace shows all vault entities; other workspaces only show entities
+   * that have a saved position on that graph (membership = keys in nodePositionsCache).
+   */
+  getEntitiesForActiveWorkspace(allEntities) {
+    if (this.graphHost.getActiveGraphId() === "default") {
+      return allEntities;
+    }
+    const allowed = new Set(this.nodePositionsCache.keys());
+    return allEntities.filter((e) => allowed.has(e.id));
+  }
+  /**
    * Refresh the graph with current data.
    * Reloads entities from disk to ensure persistence across Obsidian restarts.
    */
@@ -10528,7 +10687,9 @@ ${label}
     } catch (error) {
       console.error("[GraphView] Failed to reload entities from notes:", error);
     }
-    const { entities, connections } = this.entityManager.getGraphData();
+    const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
+    const entities = this.getEntitiesForActiveWorkspace(allEntities);
+    const isDefaultWorkspace = this.graphHost.getActiveGraphId() === "default";
     this.cy.elements().remove();
     const nodes = entities.map((entity, index) => {
       const hasCoordinates = entity.type === "Location" /* Location */ && entity.properties.latitude && entity.properties.longitude;
@@ -10546,29 +10707,41 @@ ${label}
           hasCoordinates,
           thumbUrl: thumbUrl || void 0
         },
-        position: this.getNodePosition(index, entities.length),
+        position: this.getNodePosition(index, Math.max(entities.length, 1)),
         classes: hasCoordinates ? "has-coordinates" : ""
       };
     });
     const entityIds = new Set(entities.map((e) => e.id));
     const unknownEntityIds = /* @__PURE__ */ new Set();
-    const edges = connections.map((conn) => {
-      const hasSource = entityIds.has(conn.fromEntityId);
-      const hasTarget = entityIds.has(conn.toEntityId);
-      if (!hasSource)
-        unknownEntityIds.add(conn.fromEntityId);
-      if (!hasTarget)
-        unknownEntityIds.add(conn.toEntityId);
-      return {
+    let edges;
+    if (isDefaultWorkspace) {
+      edges = allConnections.map((conn) => {
+        const hasSource = entityIds.has(conn.fromEntityId);
+        const hasTarget = entityIds.has(conn.toEntityId);
+        if (!hasSource)
+          unknownEntityIds.add(conn.fromEntityId);
+        if (!hasTarget)
+          unknownEntityIds.add(conn.toEntityId);
+        return {
+          data: {
+            id: conn.id,
+            source: conn.fromEntityId,
+            target: conn.toEntityId,
+            label: conn.relationship
+          }
+        };
+      });
+    } else {
+      edges = allConnections.filter((conn) => entityIds.has(conn.fromEntityId) && entityIds.has(conn.toEntityId)).map((conn) => ({
         data: {
           id: conn.id,
           source: conn.fromEntityId,
           target: conn.toEntityId,
           label: conn.relationship
         }
-      };
-    });
-    const unknownNodes = Array.from(unknownEntityIds).map((id, index) => {
+      }));
+    }
+    const unknownNodes = isDefaultWorkspace ? Array.from(unknownEntityIds).map((id, index) => {
       return {
         data: {
           id,
@@ -10582,9 +10755,11 @@ ${label}
         position: this.getNodePosition(nodes.length + index, nodes.length + unknownEntityIds.size),
         classes: "is-unknown"
       };
-    });
+    }) : [];
     this.cy.add([...nodes, ...unknownNodes, ...edges]);
-    this.runLayout();
+    if (nodes.length > 0 || unknownNodes.length > 0) {
+      this.runLayout();
+    }
   }
   /**
    * Refresh the graph using saved positions (no automatic layout).
@@ -10599,8 +10774,10 @@ ${label}
     } catch (error) {
       console.error("[GraphView] Failed to reload entities from notes:", error);
     }
-    const { entities, connections } = this.entityManager.getGraphData();
-    console.debug(`[GraphView] Found ${entities.length} entities and ${connections.length} connections`);
+    const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
+    const entities = this.getEntitiesForActiveWorkspace(allEntities);
+    const isDefaultWorkspace = this.graphHost.getActiveGraphId() === "default";
+    console.debug(`[GraphView] Found ${entities.length} workspace entities (${allEntities.length} in vault) and ${allConnections.length} connections`);
     this.cy.elements().remove();
     const nodesNeedingLayout = [];
     const nodesWithSavedPositions = [];
@@ -10615,7 +10792,7 @@ ${label}
         position = savedPos;
         nodesWithSavedPositions.push(entity.id);
       } else {
-        position = this.getNodePosition(index, entities.length);
+        position = this.getNodePosition(index, Math.max(entities.length, 1));
         nodesNeedingLayout.push(entity.id);
       }
       return {
@@ -10641,14 +10818,14 @@ ${label}
       console.debug(`[GraphView] Nodes with saved positions:`, nodesWithSavedPositions);
     }
     const entityIds = new Set(entities.map((e) => e.id));
-    const validConnections = connections.filter((conn) => {
+    const validConnections = allConnections.filter((conn) => {
       const hasSource = entityIds.has(conn.fromEntityId);
       const hasTarget = entityIds.has(conn.toEntityId);
-      if (!hasSource || !hasTarget) {
+      if (isDefaultWorkspace && (!hasSource || !hasTarget)) {
         console.warn(`[GraphView] Skipping connection ${conn.id}: missing ${!hasSource ? "source" : "target"} entity`);
         return false;
       }
-      return true;
+      return hasSource && hasTarget;
     });
     const edges = validConnections.map((conn) => ({
       data: {
@@ -10694,7 +10871,9 @@ ${label}
         }
       }, 600);
     }
-    this.cy.fit();
+    if (this.cy.nodes().length > 0) {
+      this.cy.fit();
+    }
   }
   /**
    * Rearrange all nodes using automatic layout (resets positions).
@@ -10714,7 +10893,7 @@ ${label}
             this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
           });
           this.savePositions();
-          new import_obsidian9.Notice("Graph rearranged");
+          new import_obsidian10.Notice("Graph rearranged");
         }
         resolve();
       }, 600);
@@ -10811,7 +10990,7 @@ ${label}
     try {
       console.debug(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE} `);
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian9.TFile) {
+      if (file instanceof import_obsidian10.TFile) {
         const content = await this.app.vault.read(file);
         const raw = JSON.parse(content);
         if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === "object") {
@@ -10856,7 +11035,7 @@ ${label}
       } catch (e) {
       }
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian9.TFile) {
+      if (file instanceof import_obsidian10.TFile) {
         await this.app.vault.modify(file, content);
         console.debug("[GraphView] Positions saved successfully (modified existing file)");
       } else {
@@ -10867,7 +11046,7 @@ ${label}
           const errorMessage = createError.message;
           if (errorMessage?.includes("already exists")) {
             const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-            if (existingFile instanceof import_obsidian9.TFile) {
+            if (existingFile instanceof import_obsidian10.TFile) {
               await this.app.vault.modify(existingFile, content);
               console.debug("[GraphView] Positions saved successfully (modified after race condition)");
             }
@@ -10924,6 +11103,7 @@ ${label}
       return;
     const entityLabel = entity.label != null ? String(entity.label) : "";
     const visual = this.getNodeVisual(entity);
+    const pos = { x: 400, y: 300 };
     this.cy.add({
       data: {
         id: entity.id,
@@ -10933,8 +11113,10 @@ ${label}
         color: visual.color,
         icon: visual.icon
       },
-      position: { x: 400, y: 300 }
+      position: pos
     });
+    this.nodePositionsCache.set(entity.id, pos);
+    this.savePositionsDebounced();
     this.runLayout();
   }
   /**
@@ -10984,15 +11166,15 @@ ${label}
    */
   async performUndo() {
     if (!this.historyManager.canUndo()) {
-      new import_obsidian9.Notice("Nothing to undo");
+      new import_obsidian10.Notice("Nothing to undo");
       return;
     }
     const description = this.historyManager.getLastUndoDescription();
     const success = await this.historyManager.undo();
     if (success) {
-      new import_obsidian9.Notice(`Undo: ${description} `);
+      new import_obsidian10.Notice(`Undo: ${description} `);
     } else {
-      new import_obsidian9.Notice("Undo failed");
+      new import_obsidian10.Notice("Undo failed");
     }
   }
   /**
@@ -11000,15 +11182,15 @@ ${label}
    */
   async performRedo() {
     if (!this.historyManager.canRedo()) {
-      new import_obsidian9.Notice("Nothing to redo");
+      new import_obsidian10.Notice("Nothing to redo");
       return;
     }
     const description = this.historyManager.getLastRedoDescription();
     const success = await this.historyManager.redo();
     if (success) {
-      new import_obsidian9.Notice(`Redo: ${description} `);
+      new import_obsidian10.Notice(`Redo: ${description} `);
     } else {
-      new import_obsidian9.Notice("Redo failed");
+      new import_obsidian10.Notice("Redo failed");
     }
   }
   /**
@@ -11331,7 +11513,7 @@ ${label}
   async geolocateEntity(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian9.Notice("Entity not found");
+      new import_obsidian10.Notice("Entity not found");
       return;
     }
     let address;
@@ -11349,18 +11531,18 @@ ${label}
       country = entity.properties.country;
     }
     if (!address && !city && !country) {
-      new import_obsidian9.Notice("No address information found. Please add address details to the entity first.");
+      new import_obsidian10.Notice("No address information found. Please add address details to the entity first.");
       return;
     }
     try {
-      new import_obsidian9.Notice("Geocoding address...");
+      new import_obsidian10.Notice("Geocoding address...");
       const result = await this.geocodingService.geocodeAddressWithRetry(
         address,
         city,
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian9.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
+          new import_obsidian10.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
         }
       );
       const updates = {
@@ -11384,15 +11566,15 @@ ${label}
       if (updatedEntity) {
         this.updateEntityInGraph(updatedEntity);
       }
-      new import_obsidian9.Notice(`\u2713 Geocoded: ${result.displayName} 
+      new import_obsidian10.Notice(`\u2713 Geocoded: ${result.displayName} 
 Lat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)} 
 Confidence: ${result.confidence} `);
     } catch (error) {
       if (error instanceof GeocodingError) {
-        new import_obsidian9.Notice(`Geocoding failed: ${error.message} `);
+        new import_obsidian10.Notice(`Geocoding failed: ${error.message} `);
       } else {
         console.error("[GraphView] Geocoding error:", error);
-        new import_obsidian9.Notice("Failed to geocode address. Please try again.");
+        new import_obsidian10.Notice("Failed to geocode address. Please try again.");
       }
     }
   }
@@ -11402,9 +11584,9 @@ _GraphView.DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set(["pdf", "docx", "doc", 
 var GraphView = _GraphView;
 
 // src/views/timeline-view.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 var TIMELINE_VIEW_TYPE = "graph_copilot-timeline-view";
-var TimelineView = class extends import_obsidian10.ItemView {
+var TimelineView = class extends import_obsidian11.ItemView {
   constructor(leaf, entityManager, onEventClick) {
     super(leaf);
     this.container = null;
@@ -11740,7 +11922,7 @@ var TimelineView = class extends import_obsidian10.ItemView {
       }
     };
     card.addEventListener("contextmenu", (e) => {
-      const menu = new import_obsidian10.Menu();
+      const menu = new import_obsidian11.Menu();
       menu.addItem((item) => {
         item.setTitle("Edit").setIcon("pencil").onClick(() => {
           const entity = this.entityManager.getEntity(event.id);
@@ -11756,7 +11938,7 @@ var TimelineView = class extends import_obsidian10.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian10.Notice("Entity not found");
+            new import_obsidian11.Notice("Entity not found");
           }
         });
       });
@@ -11813,9 +11995,9 @@ var TimelineView = class extends import_obsidian10.ItemView {
 };
 
 // src/views/map-view.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 var MAP_VIEW_TYPE = "graph_copilot-map-view";
-var MapView = class extends import_obsidian11.ItemView {
+var MapView = class extends import_obsidian12.ItemView {
   constructor(leaf, entityManager, onLocationClick) {
     super(leaf);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet map instance
@@ -11989,7 +12171,7 @@ var MapView = class extends import_obsidian11.ItemView {
       this.map?.invalidateSize();
     }, 100);
     this.map.on("contextmenu", (e) => {
-      const menu = new import_obsidian11.Menu();
+      const menu = new import_obsidian12.Menu();
       menu.addItem((item) => {
         item.setTitle("Create location here").setIcon("map-pin").onClick(() => {
           const modal = new EntityCreationModal(
@@ -12113,7 +12295,7 @@ var MapView = class extends import_obsidian11.ItemView {
       }
     });
     marker.on("contextmenu", (e) => {
-      const menu = new import_obsidian11.Menu();
+      const menu = new import_obsidian12.Menu();
       menu.addItem((item) => {
         item.setTitle("Open note").setIcon("file-text").onClick(() => {
           this.entityManager.openEntityNote(location.id);
@@ -12134,7 +12316,7 @@ var MapView = class extends import_obsidian11.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian11.Notice("Entity not found");
+            new import_obsidian12.Notice("Entity not found");
           }
         });
       });
@@ -12255,7 +12437,7 @@ var MapView = class extends import_obsidian11.ItemView {
       return isLocationOrAddress && hasNoCoords && hasAddress;
     });
     if (locationsWithoutCoords.length === 0) {
-      new import_obsidian11.Notice("No locations found that need geocoding");
+      new import_obsidian12.Notice("No locations found that need geocoding");
       return;
     }
     const modal = new GeolocateMissingModal(
@@ -12270,7 +12452,7 @@ var MapView = class extends import_obsidian11.ItemView {
     modal.open();
   }
 };
-var GeolocateMissingModal = class extends import_obsidian11.Modal {
+var GeolocateMissingModal = class extends import_obsidian12.Modal {
   constructor(app, locations, geocodingService2, entityManager, onComplete) {
     super(app);
     this.locations = locations;
@@ -12355,7 +12537,7 @@ var GeolocateMissingModal = class extends import_obsidian11.Modal {
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian11.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+          new import_obsidian12.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
         }
       );
       const updates = {
@@ -12379,9 +12561,9 @@ var GeolocateMissingModal = class extends import_obsidian11.Modal {
       btn.textContent = "\u2717 failed";
       btn.setCssProps({ color: "var(--text-error)" });
       if (error instanceof GeocodingError) {
-        new import_obsidian11.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
+        new import_obsidian12.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
       } else {
-        new import_obsidian11.Notice(`Failed to geocode ${entity.label}`);
+        new import_obsidian12.Notice(`Failed to geocode ${entity.label}`);
       }
       btn.disabled = false;
     }
@@ -12411,7 +12593,7 @@ var GeolocateMissingModal = class extends import_obsidian11.Modal {
           state,
           country,
           (attempt, maxAttempts, delaySeconds) => {
-            new import_obsidian11.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+            new import_obsidian12.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
           }
         );
         const updates = {
@@ -12434,7 +12616,7 @@ var GeolocateMissingModal = class extends import_obsidian11.Modal {
         failed++;
       }
     }
-    new import_obsidian11.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
+    new import_obsidian12.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
     await this.onComplete();
     this.close();
   }
@@ -12445,7 +12627,7 @@ var GeolocateMissingModal = class extends import_obsidian11.Modal {
 };
 
 // src/services/custom-types-service.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 var CustomTypesService = class {
   constructor(app) {
     this.customSchemas = /* @__PURE__ */ new Map();
@@ -12458,7 +12640,7 @@ var CustomTypesService = class {
   }
   async ensureConfigDir() {
     try {
-      const norm = (0, import_obsidian12.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
+      const norm = (0, import_obsidian13.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
       const parts = norm.split("/").filter(Boolean);
       let acc = "";
       for (const p of parts) {
@@ -12489,7 +12671,7 @@ var CustomTypesService = class {
         console.debug(`[CustomTypesService] Loaded ${this.customSchemas.size} custom entity types.`);
       } catch (e) {
         console.error("[CustomTypesService] Failed to load custom types:", e);
-        new import_obsidian12.Notice("Failed to load custom entity types config.");
+        new import_obsidian13.Notice("Failed to load custom entity types config.");
       }
     }
   }
@@ -12503,7 +12685,7 @@ var CustomTypesService = class {
       await this.vault.adapter.write(configPath, JSON.stringify(config, null, 2));
     } catch (e) {
       console.error("[CustomTypesService] Failed to save custom types:", e);
-      new import_obsidian12.Notice("Failed to save custom entity types config.");
+      new import_obsidian13.Notice("Failed to save custom entity types config.");
     }
   }
   async addCustomType(schema4) {
@@ -12512,7 +12694,7 @@ var CustomTypesService = class {
     this.customSchemas.set(schema4.name, schema4);
     ftmSchemaService.registerSchema(schema4);
     await this.saveCustomTypes();
-    new import_obsidian12.Notice(`Custom entity type '${schema4.label}' added.`);
+    new import_obsidian13.Notice(`Custom entity type '${schema4.label}' added.`);
   }
   async updateCustomType(schema4) {
     if (!schema4.name || !this.customSchemas.has(schema4.name)) {
@@ -12523,7 +12705,7 @@ var CustomTypesService = class {
   async deleteCustomType(name) {
     if (this.customSchemas.delete(name)) {
       await this.saveCustomTypes();
-      new import_obsidian12.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
+      new import_obsidian13.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
     }
   }
   getCustomSchemas() {
@@ -12535,7 +12717,7 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/services/intent-router.ts
 function detectOrchestrationIntent(query) {
@@ -13116,7 +13298,7 @@ Respond with this exact JSON structure:
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian13.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian14.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -13457,7 +13639,7 @@ ${r.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian13.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian14.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -13507,18 +13689,18 @@ ${r.summary || ""}
       ).open();
     });
     if (!confirmedValues) {
-      new import_obsidian13.Notice("Graph modifications cancelled by user.");
+      new import_obsidian14.Notice("Graph modifications cancelled by user.");
       return;
     }
     const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
     if (cmdsToExecute.length === 0) {
-      new import_obsidian13.Notice("No graph modifications selected.");
+      new import_obsidian14.Notice("No graph modifications selected.");
       return;
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian13.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian14.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -13589,7 +13771,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian13.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian14.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -13611,7 +13793,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -13625,7 +13807,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian14.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian15.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -13652,7 +13834,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian14.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian15.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -13679,7 +13861,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian14.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian15.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -13709,7 +13891,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian14.requestUrl)({ url });
+      const response = await (0, import_obsidian15.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -13743,7 +13925,7 @@ var UpdaterService = class {
 };
 
 // src/services/vault-prompt-loader.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 function parseMarkdownWithFrontmatter(raw) {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed.startsWith("---")) {
@@ -13797,10 +13979,10 @@ var VaultPromptLoader = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim());
+      const root = (0, import_obsidian16.normalizePath)(this.getPromptsRoot().trim());
       if (!root)
         return;
-      const norm = (0, import_obsidian15.normalizePath)(p);
+      const norm = (0, import_obsidian16.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.invalidateAll();
       }
@@ -13812,10 +13994,10 @@ var VaultPromptLoader = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim());
+          const root = (0, import_obsidian16.normalizePath)(this.getPromptsRoot().trim());
           if (!root)
             return;
-          const op = (0, import_obsidian15.normalizePath)(oldPath);
+          const op = (0, import_obsidian16.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.invalidateAll();
           }
@@ -13828,15 +14010,15 @@ var VaultPromptLoader = class {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian15.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
+    return (0, import_obsidian16.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
-    const path = (0, import_obsidian15.normalizePath)(`${this.root()}/${relativePath}`);
+    const path = (0, import_obsidian16.normalizePath)(`${this.root()}/${relativePath}`);
     const hit = this.cache.get(path);
     if (hit !== void 0)
       return hit;
     const f = this.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof import_obsidian15.TFile)) {
+    if (!(f instanceof import_obsidian16.TFile)) {
       this.cache.set(path, "");
       return null;
     }
@@ -13889,13 +14071,13 @@ var VaultPromptLoader = class {
   }
   /** List agent files under agents/ (for future UI). */
   async listAgents() {
-    const agentsPath = (0, import_obsidian15.normalizePath)(`${this.root()}/agents`);
+    const agentsPath = (0, import_obsidian16.normalizePath)(`${this.root()}/agents`);
     const folder = this.app.vault.getAbstractFileByPath(agentsPath);
-    if (!(folder instanceof import_obsidian15.TFolder))
+    if (!(folder instanceof import_obsidian16.TFolder))
       return [];
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian15.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian16.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -13924,7 +14106,7 @@ var VaultPromptLoader = class {
 };
 
 // src/services/vault-prompt-bootstrap.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 
 // src/data/vault-prompt-defaults.ts
 var VAULT_PROMPT_DEFAULT_FILES = [
@@ -14021,11 +14203,11 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian16.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
+    const root = (0, import_obsidian17.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
-      const path = (0, import_obsidian16.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian17.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian16.TFile)
+      if (existing instanceof import_obsidian17.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -14034,7 +14216,7 @@ var VaultPromptBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian16.normalizePath)(path);
+    const norm = (0, import_obsidian17.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -14054,7 +14236,7 @@ var VaultPromptBootstrapService = class {
 };
 
 // src/task-agents/task-agent-registry.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 
 // src/task-agents/normalize-vault-path.ts
 function normalizeVaultPath(p) {
@@ -14132,10 +14314,10 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+      const root = (0, import_obsidian18.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian17.normalizePath)(p);
+      const norm = (0, import_obsidian18.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -14147,10 +14329,10 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+          const root = (0, import_obsidian18.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian17.normalizePath)(oldPath);
+          const op = (0, import_obsidian18.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -14164,15 +14346,15 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+    const root = (0, import_obsidian18.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian17.TFolder)) {
+    if (!(folder instanceof import_obsidian18.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian17.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian18.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -14196,11 +14378,11 @@ var TaskAgentRegistry = class {
 };
 
 // src/task-agents/context-assembler.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 async function assembleTaskAgentContext(app, contextRoots, pluginIndex, maxNotes, maxChars, query) {
   if (contextRoots.length === 0)
     return "";
-  const roots = contextRoots.map((r) => (0, import_obsidian18.normalizePath)(r.trim())).filter(Boolean);
+  const roots = contextRoots.map((r) => (0, import_obsidian19.normalizePath)(r.trim())).filter(Boolean);
   const queryTerms = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   const candidates = [];
   for (const [, note] of pluginIndex) {
@@ -14380,7 +14562,7 @@ function parseVaultFilesJson(raw) {
 }
 
 // src/task-agents/write-applier.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 function buildNoteContent(entry) {
   const fm = (entry.frontmatter || "").trim();
   if (fm) {
@@ -14403,7 +14585,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
       result.errors.push("Skipping entry: missing path");
       continue;
     }
-    const rel = (0, import_obsidian19.normalizePath)(file.path.replace(/\\/g, "/"));
+    const rel = (0, import_obsidian20.normalizePath)(file.path.replace(/\\/g, "/"));
     if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
       result.errors.push(`Not allowed: ${rel}`);
       continue;
@@ -14415,7 +14597,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
     const content = buildNoteContent(file);
     try {
       const existing = app.vault.getAbstractFileByPath(rel);
-      if (existing instanceof import_obsidian19.TFile) {
+      if (existing instanceof import_obsidian20.TFile) {
         await app.vault.modify(existing, content);
         result.updated.push(rel);
       } else if (existing) {
@@ -14447,10 +14629,10 @@ function formatApplyNotice(res) {
   if (res.errors.length)
     parts.push(`Errors: ${res.errors.length}`);
   if (parts.length === 0) {
-    new import_obsidian19.Notice("Task agent: no files applied.");
+    new import_obsidian20.Notice("Task agent: no files applied.");
     return;
   }
-  new import_obsidian19.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
+  new import_obsidian20.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
   if (res.errors.length) {
     console.warn("[TaskAgent] apply errors:", res.errors);
   }
@@ -14563,7 +14745,7 @@ ${paths.map((p) => `- \`${p}\``).join("\n")}`;
 };
 
 // src/task-agents/task-agent-bootstrap.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/data/task-agent-defaults.ts
 var TASK_AGENT_DEFAULT_FILES = [
@@ -14695,13 +14877,13 @@ var TaskAgentBootstrapService = class {
     this.getTaskAgentsRoot = getTaskAgentsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian20.normalizePath)(
+    const root = (0, import_obsidian21.normalizePath)(
       this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
-      const path = (0, import_obsidian20.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian21.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian20.TFile)
+      if (existing instanceof import_obsidian21.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -14710,7 +14892,7 @@ var TaskAgentBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian20.normalizePath)(path);
+    const norm = (0, import_obsidian21.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -14742,7 +14924,7 @@ function isTaskAgentRunnable(manifest, settings) {
 }
 
 // src/skills/skill-registry.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/skills/parse-skill-markdown.ts
 function parseSkillMarkdown(raw, sourcePath) {
@@ -14780,10 +14962,10 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+      const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian21.normalizePath)(p);
+      const norm = (0, import_obsidian22.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -14795,10 +14977,10 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+          const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian21.normalizePath)(oldPath);
+          const op = (0, import_obsidian22.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -14812,15 +14994,15 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian21.TFolder)) {
+    if (!(folder instanceof import_obsidian22.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian21.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian22.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -14844,7 +15026,7 @@ var SkillRegistry = class {
 };
 
 // src/skills/skill-bootstrap.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/data/skill-defaults.ts
 var SKILL_DEFAULT_FILES = [
@@ -14892,11 +15074,11 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian22.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian23.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
-      const path = (0, import_obsidian22.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian23.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian22.TFile)
+      if (existing instanceof import_obsidian23.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -14905,7 +15087,7 @@ var SkillBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian22.normalizePath)(path);
+    const norm = (0, import_obsidian23.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -14925,7 +15107,7 @@ var SkillBootstrapService = class {
 };
 
 // src/services/vault-lock-service.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 var VaultLockService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -14934,12 +15116,12 @@ var VaultLockService = class {
   /** Call after loadSettings(). */
   initializeFromSettings() {
     const paths = this.plugin.settings.lockedVaultPaths ?? [];
-    this.locked = new Set(paths.map((p) => (0, import_obsidian23.normalizePath)(p)));
+    this.locked = new Set(paths.map((p) => (0, import_obsidian24.normalizePath)(p)));
   }
   isPathLocked(path) {
     if (!path)
       return false;
-    return this.locked.has((0, import_obsidian23.normalizePath)(path));
+    return this.locked.has((0, import_obsidian24.normalizePath)(path));
   }
   /**
    * Add paths to the lock set. Returns count of newly added paths.
@@ -14949,7 +15131,7 @@ var VaultLockService = class {
     for (const p of paths) {
       if (!p)
         continue;
-      const np = (0, import_obsidian23.normalizePath)(p);
+      const np = (0, import_obsidian24.normalizePath)(p);
       if (!this.locked.has(np)) {
         this.locked.add(np);
         n++;
@@ -14960,7 +15142,7 @@ var VaultLockService = class {
     return n;
   }
   unlockPath(path) {
-    const np = (0, import_obsidian23.normalizePath)(path);
+    const np = (0, import_obsidian24.normalizePath)(path);
     if (!this.locked.has(np))
       return;
     this.locked.delete(np);
@@ -14980,43 +15162,16 @@ var VaultLockService = class {
   }
   /** Migrate lock entry when a file is renamed (same as Note Locker). */
   onVaultRename(_file, oldPath) {
-    const op = (0, import_obsidian23.normalizePath)(oldPath);
+    const op = (0, import_obsidian24.normalizePath)(oldPath);
     if (!this.locked.has(op))
       return;
     this.locked.delete(op);
-    this.locked.add((0, import_obsidian23.normalizePath)(_file.path));
+    this.locked.add((0, import_obsidian24.normalizePath)(_file.path));
     this.persist();
   }
   persist() {
     this.plugin.settings.lockedVaultPaths = Array.from(this.locked).sort();
     void this.plugin.saveSettings();
-  }
-};
-
-// src/modals/vault-unlock-modal.ts
-var import_obsidian24 = require("obsidian");
-var VaultUnlockModal = class extends import_obsidian24.Modal {
-  constructor(app, onUnlock, titleText = "Locked note", message = "This note is locked from the OSINT graph. Unlocking allows editing and agent changes.") {
-    super(app);
-    this.onUnlock = onUnlock;
-    this.titleText = titleText;
-    this.message = message;
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h2", { text: this.titleText });
-    contentEl.createEl("p", { text: this.message });
-    contentEl.createEl("p", { text: "Are you sure you want to unlock?" });
-    new import_obsidian24.Setting(contentEl).addButton(
-      (btn) => btn.setButtonText("Unlock").setCta().onClick(() => {
-        this.onUnlock();
-        this.close();
-      })
-    ).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close()));
-  }
-  onClose() {
-    this.contentEl.empty();
   }
 };
 

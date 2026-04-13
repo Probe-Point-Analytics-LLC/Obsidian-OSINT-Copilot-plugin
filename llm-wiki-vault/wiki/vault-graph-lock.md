@@ -6,7 +6,7 @@ Atomic note: **2026-04-13**
 
 - Locked paths live in plugin settings `lockedVaultPaths` (sorted).
 - `VaultLockService` — lock/unlock, rename migration.
-- Graph: box select → **Lock area**; multi-graph positions in `graph-positions.json` v2 `byGraph`.
+- Graph: box select → **Lock area** / **Unlock area** (toolbar); right-click a node or edge → **Unlock note** when that note is locked (uses `VaultUnlockModal`). Multi-graph positions in `graph-positions.json` v2 `byGraph`.
 - Editor: preview + unlock modal (`VaultUnlockModal`).
 - `EntityManager`, orchestration deletes, `applyVaultFilesV1` respect locks.
 

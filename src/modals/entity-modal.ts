@@ -11,10 +11,17 @@ import { ftmSchemaService, FTMPropertyDefinition } from '../services/ftm-schema-
 import { CustomTypeCreationModal } from './custom-type-modal';
 import type { CatalogEntityType, CatalogRelationshipType, EnabledSchemaFamilies, SchemaFamily } from '../services/schema-catalog-types';
 
-/** Access plugin instance for schema catalog and settings (id: osint-copilot). */
+/** Access plugin instance for schema catalog and settings (manifest id: osint-copilot). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getOsintCopilotPlugin(app: App): any {
-	return (app as any).plugins?.plugins?.['osint-copilot'] ?? null;
+	const plug = app as any;
+	const mgr = plug.plugins;
+	if (!mgr) return null;
+	if (typeof mgr.getPlugin === 'function') {
+		const p = mgr.getPlugin('osint-copilot');
+		if (p) return p;
+	}
+	return mgr.plugins?.['osint-copilot'] ?? null;
 }
 
 function familyBadgeLabel(family: SchemaFamily): string {
@@ -29,6 +36,23 @@ function familyBadgeLabel(family: SchemaFamily): string {
 			return 'USER';
 		default:
 			return String(family);
+	}
+}
+
+const CATALOG_FAMILY_ORDER: SchemaFamily[] = ['ftm', 'stix2', 'mitre', 'user'];
+
+function familySectionTitle(family: SchemaFamily): string {
+	switch (family) {
+		case 'ftm':
+			return 'FollowTheMoney (bundled + custom JSON)';
+		case 'stix2':
+			return 'STIX 2 (vault YAML)';
+		case 'mitre':
+			return 'MITRE ATT&CK (vault YAML)';
+		case 'user':
+			return 'User definitions (schemas/user)';
+		default:
+			return family;
 	}
 }
 
@@ -2293,7 +2317,25 @@ export class FTMEntityTypeSelectorModal extends Modal {
             return a.label.localeCompare(b.label);
         });
 
+        const byFam = new Map<SchemaFamily, CatalogEntityType[]>();
         for (const cat of sorted) {
+            if (!byFam.has(cat.family)) byFam.set(cat.family, []);
+            byFam.get(cat.family)!.push(cat);
+        }
+
+        for (const fam of CATALOG_FAMILY_ORDER) {
+            const list = byFam.get(fam);
+            if (!list?.length) continue;
+
+            const head = this.gridContainer.createEl('h4', {
+                text: familySectionTitle(fam),
+                cls: 'graph_copilot-section-header',
+            });
+            head.style.gridColumn = '1 / -1';
+            head.style.marginTop = '8px';
+            head.style.marginBottom = '4px';
+
+            for (const cat of list) {
             const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
             typeBtn.style.borderLeftColor = cat.color;
             typeBtn.style.position = 'relative';
@@ -2387,6 +2429,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                     ).open();
                 }
             };
+            }
         }
     }
 
@@ -3579,7 +3622,25 @@ export class FTMIntervalTypeSelectorModal extends Modal {
             return a.label.localeCompare(b.label);
         });
 
+        const byFam = new Map<SchemaFamily, CatalogRelationshipType[]>();
         for (const rel of sorted) {
+            if (!byFam.has(rel.family)) byFam.set(rel.family, []);
+            byFam.get(rel.family)!.push(rel);
+        }
+
+        for (const fam of CATALOG_FAMILY_ORDER) {
+            const list = byFam.get(fam);
+            if (!list?.length) continue;
+
+            const head = this.gridContainer.createEl('h4', {
+                text: familySectionTitle(fam),
+                cls: 'graph_copilot-section-header',
+            });
+            head.style.gridColumn = '1 / -1';
+            head.style.marginTop = '8px';
+            head.style.marginBottom = '4px';
+
+            for (const rel of list) {
             const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
             typeBtn.style.borderLeftColor = rel.color;
             typeBtn.style.position = 'relative';
@@ -3667,6 +3728,7 @@ export class FTMIntervalTypeSelectorModal extends Modal {
                     ).open();
                 }
             };
+            }
         }
     }
 
