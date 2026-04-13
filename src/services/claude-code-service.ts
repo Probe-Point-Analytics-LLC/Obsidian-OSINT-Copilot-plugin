@@ -18,19 +18,32 @@ const SKILL_FILE = '.claude/GRAPH_EXTRACTION.md';
 
 export class ClaudeCodeService {
     private config: ClaudeCodeConfig;
-    private skillContent: string | null = null;
     private pluginDir: string;
+    /** When set, tried first for graph extraction skill (vault-editable). */
+    private vaultSkillResolver: (() => Promise<string | null>) | null = null;
 
     constructor(pluginDir: string, config?: Partial<ClaudeCodeConfig>) {
         this.config = { ...DEFAULT_CONFIG, ...config };
         this.pluginDir = pluginDir;
     }
 
+    setVaultSkillResolver(resolver: (() => Promise<string | null>) | null): void {
+        this.vaultSkillResolver = resolver;
+    }
+
     updateConfig(config: Partial<ClaudeCodeConfig>) {
         Object.assign(this.config, config);
     }
 
-    private getSkillContent(): string {
+    private async resolveSkillContent(): Promise<string> {
+        if (this.vaultSkillResolver) {
+            try {
+                const v = await this.vaultSkillResolver();
+                if (v && v.trim().length > 0) return v.trim();
+            } catch (e) {
+                console.warn('[ClaudeCodeService] vault skill resolver failed:', e);
+            }
+        }
         try {
             const nodePath = require('path') as typeof import('path');
             const nodeFs = require('fs') as typeof import('fs');
@@ -48,8 +61,8 @@ Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQ
 Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
     }
 
-    private buildPrompt(text: string, existingEntities?: Entity[]): string {
-        const skill = this.getSkillContent();
+    private async buildPrompt(text: string, existingEntities?: Entity[]): Promise<string> {
+        const skill = await this.resolveSkillContent();
         const now = new Date();
         const refTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
@@ -82,7 +95,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         onProgress?: (message: string, percent: number) => void,
         signal?: AbortSignal,
     ): Promise<ProcessTextResponse> {
-        const prompt = this.buildPrompt(text, existingEntities);
+        const prompt = await this.buildPrompt(text, existingEntities);
 
         onProgress?.('Invoking Claude Code CLI...', 30);
 

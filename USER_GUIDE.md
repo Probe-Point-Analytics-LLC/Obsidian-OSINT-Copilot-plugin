@@ -14,161 +14,121 @@
 
 ## Introduction
 
-**OSINT Copilot** is a plugin for Obsidian designed specifically for SOC analysts and threat intelligence researchers. It transforms your Obsidian vault into an intelligent threat research workspace by combining:
+**OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
-**AI-Powered Features (License Key Required):**
-- **AI-Powered Q&A**: Ask natural language questions about your research notes and get contextual answers
-- **Entity Extraction**: Automatically identify and create structured entities (people, companies, locations, events, etc.) from your research
-- **Dark Web Investigation**: Conduct automated searches across 15+ dark web engines via Tor
-- **Report Generation**: Generate comprehensive threat intelligence reports with AI assistance
+1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
+2. **Local AI** — **Entity extraction**, **vault Q&A**, and **orchestration** (planner + follow-up) use the **Claude Code CLI** (`claude`) on your machine. You control prompts partly via **vault Markdown** under `.osint-copilot/prompts/`.
+3. **Optional hosted API** — **Report**, **dark web**, **digital footprint / OSINT search**, and **evidence analysis** use your configured **Graph API URL** and **license/API key** when you enable those modes.
 
-**Free Visualization Features (No License Required):**
-- **Entity Graph View**: Build visual graphs showing connections between threat actors, infrastructure, and campaigns
-- **Timeline View**: Visualize events chronologically
-- **Map View**: Display locations geographically
+### Who is this for?
 
-### Who Is This For?
-
-- **SOC Analysts** investigating security incidents
-- **Threat Intelligence Researchers** tracking threat actors and campaigns
-- **Security Investigators** conducting OSINT research
-- **Incident Responders** documenting and analyzing threats
+- SOC analysts and IR teams documenting cases in Obsidian  
+- Threat intel researchers building entity-centric notes  
+- Anyone who wants **graph + timeline + map** on top of structured investigation notes  
 
 ---
 
 ## Installation
 
-### Method 1: Manual Installation (Recommended)
+### Method 1: BRAT (recommended)
 
-1. **Download the Plugin**
-   - Obtain the plugin files (`main.js`, `manifest.json`, `styles.css`)
-   - You may also receive a `prompts` folder with system prompts
+1. **Settings → Community plugins** — disable **Restricted mode** / safe mode so third-party plugins are allowed.  
+2. **Browse** — install and enable **BRAT** (TfTHacker).  
+3. **Settings → BRAT → Add Beta plugin** — paste:
 
-2. **Locate Your Vault's Plugin Folder**
-   ```
-   <your-vault>/.obsidian/plugins/
-   ```
+   `https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
 
-3. **Create the Plugin Directory**
-   ```bash
-   mkdir -p <your-vault>/.obsidian/plugins/OSINT-copilot-plugin
-   ```
+4. **Settings → Community plugins** — enable **OSINT Copilot**.  
+5. BRAT stores files under `.obsidian/plugins/` (folder name may be `osint-copilot` or similar). Ensure `main.js`, `manifest.json`, and `styles.css` are present, then restart if the plugin does not load.
 
-4. **Copy Plugin Files**
-   - Copy all plugin files into the newly created directory
+### Method 2: Manual install
 
-5. **Enable the Plugin**
-   - Open Obsidian
-   - Go to **Settings** → **Community plugins**
-   - Click **Reload plugins** (refresh icon)
-   - Find "OSINT Copilot" in the list and toggle it **ON**
+1. Download **`main.js`**, **`manifest.json`**, and **`styles.css`** from [GitHub Releases](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases).  
+2. Create **one** folder under `<vault>/.obsidian/plugins/`, e.g. `osint-copilot` or `Obsidian-OSINT-Copilot-plugin`.  
+3. Copy the **three files** into that folder (not nested deeper).  
+4. **Reload** plugins or restart Obsidian, then enable **OSINT Copilot**.
 
-### Method 2: Build from Source
-
-If you have the source code:
+### Method 3: Build from source
 
 ```bash
-# Navigate to the plugin directory
-cd <your-vault>/.obsidian/plugins/OSINT-copilot-plugin
-
-# Install dependencies
+git clone https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin.git
+cd Obsidian-OSINT-Copilot-plugin
 npm install
-
-# Build the plugin
 npm run build
 ```
 
-### Verify Installation
+Copy `main.js`, `manifest.json`, and `styles.css` from the repo root into your vault’s plugin folder as in Method 2.
 
-After enabling, you should see:
-- A new **OSINT Copilot** icon in the left ribbon
-- New commands available in the Command Palette (Ctrl/Cmd + P)
-- A settings tab under **Settings** → **OSINT Copilot**
+### Verify installation
+
+- Ribbon icons for **chat**, **graph**, **timeline**, **map** (when graph features are enabled)  
+- **Command Palette** (`Ctrl/Cmd + P`) — commands starting with **OSINT Copilot**  
+- **Settings → OSINT Copilot**  
 
 ---
 
 ## Configuration
 
-### Essential Settings
+Open **Settings → OSINT Copilot**.
 
-Access settings via **Settings** → **OSINT Copilot**.
+### 1. Claude Code CLI (local AI)
 
-#### 1. License Key (Required for AI Features)
+- **Claude Code CLI path** — Default `claude` if the binary is on your `PATH`; otherwise the full path to the executable.  
+- **Model** — Passed through to the CLI (e.g. `sonnet`).  
 
-```
-License Key: [Your API Key]
-```
+Install and authenticate per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). Without a working CLI, **entity extraction** and most **vault Q&A / orchestration** paths will not run.
 
-- **Required** for all AI-powered features (Q&A, entity extraction, dark web, reports)
-- Obtain your key from [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/)
-- The plugin validates your key on startup
+### 2. Vault prompts (first run + edits)
 
-#### 2. Entity Base Path
+On load, the plugin creates missing files under **`.osint-copilot/prompts/`** (path configurable):
 
-```
-Entity Base Path: Entities
-```
+| Path | Purpose |
+|------|---------|
+| `rules/global.md` | Extra instructions for the **orchestration planner** |
+| `agents/<id>.md` | **Agent** body + YAML frontmatter (`id`, `name`, …) |
+| `skills/graph-extraction.md` | Instructions for **entity/graph extraction** |
 
-- Folder where entity notes are created
-- Default: `Entities` (creates `Entities/Person/`, `Entities/Company/`, etc.)
-- Customize to match your vault organization
+**Settings:** **Prompts folder**, **Active agent id** (matches `agents/<id>.md`).
 
-#### 3. Conversation Folder
+**Commands:** **Reload vault prompts**; **Install missing vault prompt files** (adds defaults without overwriting your edits).
 
-```
-Conversation Folder: OSINT-Copilot-Conversations
-```
+### 3. License / Graph API (optional hosted modes)
 
-- Where chat conversation history is saved
-- Each conversation is stored as a JSON file
-- Enables conversation persistence across sessions
+- **Graph API URL** — Base URL for hosted report / dark web / footprint / evidence endpoints (default may point to the vendor cloud).  
+- **License or API key** — Sent as `Authorization: Bearer …` for those modes only.  
 
-#### 4. Report Output Directory
+Not required for **graph / timeline / map** or for **local Claude** extraction and Q&A.
 
-```
-Report Output Directory: Reports
-```
+### 4. Entity base path
 
-- Destination folder for generated reports
-- Reports are saved as Markdown files with timestamps
+Default **`OSINTCopilot`**. Entity types become subfolders; **`Connections/`** holds relationship notes.
 
-#### 5. Maximum Notes for Context
+### 5. Conversation folder
 
-```
-Max Notes: 10
-```
+Default **`.osint-copilot/conversations`**. Chat sessions as JSON.
 
-- Number of notes to include when answering questions
-- Higher values provide more context but may slow responses
-- Recommended: 5-15 for optimal performance
+### 6. Report output directory
 
-### Advanced Settings
+Default **`Reports`**. Used when **Report** mode completes successfully.
 
-#### Custom System Prompt
+### 7. Max notes
 
-Customize the AI's behavior by modifying the system prompt:
+Caps how many notes are pulled into context for Q&A-style flows (typical range **5–30**).
 
-```
-System Prompt: You are an OSINT research assistant...
-```
+### 8. System prompt
 
-This controls how the AI responds to your queries and can be tailored for specific research domains.
+Default text for vault-oriented answers; combine with **vault rules/agents** for orchestration.
 
-### Feature Access Overview
+### What needs what?
 
-#### Free Features (No License Key Required)
-- **Entity Graph View**: Visualize relationships between entities
-- **Timeline View**: See events in chronological order
-- **Map View**: Display locations on an interactive map
-- **Manual Entity Creation**: Create and manage entities manually
-- **Note Organization**: Use the entity base path structure
+| Capability | License/API | Claude CLI |
+|------------|-------------|------------|
+| Graph / timeline / map | No | No |
+| Entity extraction from chat | No | Yes |
+| Vault Q&A / local orchestration | No | Yes |
+| Report / dark web / footprint / evidence | Yes (hosted) | No* |
 
-#### AI Features (License Key Required)
-- **Vault Q&A**: Ask questions about your research notes
-- **Entity Extraction**: Automatically extract entities from text
-- **Dark Web Investigation**: Search dark web engines via Tor
-- **Report Generation**: Generate AI-powered threat intelligence reports
-- **Relationship Detection**: Automatically identify connections between entities
+\*Hosted modes use the remote service; local Claude is separate.
 
 ---
 
@@ -180,34 +140,30 @@ Access the main chat interface via:
 - **Ribbon Icon**: Click the OSINT Copilot icon in the left sidebar
 - **Command Palette**: `Ctrl/Cmd + P` → "OSINT Copilot: Open Chat"
 
-### Operating Modes
+### Operating modes
 
-The plugin offers four operating modes, accessible via toggles in the chat header:
+Toggles in the chat header (labels may vary slightly by version):
 
-| Mode | Icon | Description |
-|------|------|-------------|
-| **Lookup Mode** | 🔍 | Query your vault notes with AI assistance (default) |
-| **Dark Web Mode** | 🕵️ | Search dark web sources via Tor |
-| **Report Mode** | 📄 | Generate comprehensive threat reports |
-| **Entity Mode** | 🏷️ | Extract entities from text (can combine with other modes) |
+| Mode | Role |
+|------|------|
+| **Lookup** | Vault-oriented Q&A — uses **local Claude** + indexed notes |
+| **Dark web** | **Hosted API** — requires URL + key |
+| **Report** | **Hosted API** — job-based reports |
+| **Entity generation** | **Local Claude** — extract entities from pasted text or responses |
 
-> **Note**: Lookup, Dark Web, and Report modes are mutually exclusive. Entity Mode can be enabled alongside any other mode.
+Lookup, dark web, and report are mutually exclusive as “main” modes; **entity** can stack with others.
 
 ---
 
-### Feature 1: Vault Q&A (Lookup Mode)
+### Feature 1: Vault Q&A (lookup / local search)
 
-**Purpose**: Ask natural language questions about your research notes and receive AI-powered answers with source citations.
+**Purpose:** Ask questions over your vault; answers use **Claude Code CLI** and selected note context.
 
-**How It Works**:
-1. Enable **🔍 Lookup** mode (default)
-2. Type your question in the chat input
-3. The plugin:
-   - Indexes your vault's markdown files
-   - Extracts relevant entities from your query
-   - Retrieves matching notes
-   - Generates a contextual answer using AI
-4. View the response with clickable links to source notes
+**How it works**
+1. Enable **Lookup** (or equivalent local mode).
+2. Type your question.
+3. The plugin indexes/selects notes, then calls **local** `claude` with that context.
+4. Use **Reload vault prompts** after editing rules under `.osint-copilot/prompts/`.
 
 **Example Queries**:
 ```
@@ -262,48 +218,28 @@ What TTPs are associated with Lazarus Group?
 
 ---
 
-### Feature 3: Dark Web Investigation
+### Feature 3: Dark web investigation (hosted)
 
-**Purpose**: Conduct automated searches across 15+ dark web engines via Tor to find threat intelligence.
+**Purpose:** Run a **remote** dark-web investigation job when your **Graph API URL** and **key** are configured.
 
-**How to Use**:
-1. Enable **🕵️ Dark Web** mode
-2. Enter your investigation query
-3. Wait for results (typically 2-3 minutes)
-4. Review the AI-generated summary
+**How to use**
+1. Set **Graph API URL** and license/API key in settings.
+2. Enable **Dark web** mode.
+3. Submit the query and wait for server-driven progress in chat.
 
-**Example Queries**:
-```
-Find mentions of "company-name" data breach
-Search for leaked credentials related to domain.com
-Investigate ransomware group "LockBit" recent activity
-```
-
-**What Happens Behind the Scenes**:
-1. Query is sent to the OSINT Copilot API
-2. Tor-based searches across dark web engines
-3. Results are collected and analyzed
-4. AI generates a summary report
-5. Report is saved to your vault
-
-**Progress Tracking**:
-- Real-time progress bar showing search status
-- Engine count and results found
-- Estimated completion time
-
-> **Note**: Dark web investigations consume quota. Check your usage at [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/)
+Quota and billing depend on **your** API operator (e.g. vendor dashboard if you use the default cloud).
 
 ---
 
-### Feature 4: Report Generation
+### Feature 4: Report generation (hosted)
 
-**Purpose**: Generate comprehensive threat intelligence reports using AI and web research.
+**Purpose:** Long-form reports via the **remote** job API.
 
-**How to Use**:
-1. Enable **📄 Report** mode
-2. Describe the report you want
-3. Wait for generation (shows progress and intermediate results)
-4. Report is automatically saved to your vault
+**How to use**
+1. Configure **Graph API URL** and key.
+2. Enable **Report** mode.
+3. Describe the report; wait for job completion.
+4. Markdown is saved under your **Report output directory** when the job finishes.
 
 **Example Prompts**:
 ```
@@ -321,21 +257,12 @@ Write a vulnerability assessment for CVE-2024-XXXX
 
 ---
 
-### Feature 5: Entity Extraction Mode
+### Feature 5: Entity extraction (local Claude)
 
-**Purpose**: Automatically extract structured entities from any text and create linked notes.
+**Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`.osint-copilot/prompts/skills/graph-extraction.md`**.
 
-**Two Ways to Use**:
-
-**A. Entity-Only Mode** (All main modes OFF, Entity Mode ON):
-- Paste raw text directly into the chat
-- AI extracts all entities and relationships
-- Creates entity notes automatically
-
-**B. Combined Mode** (Any main mode + Entity Mode ON):
-- Perform a lookup, dark web search, or report generation
-- Entities are automatically extracted from the AI response
-- Creates entity notes linked to your research
+**A. Entity-focused** — Turn off other main modes, enable **entity generation**, paste text.  
+**B. Combined** — Enable **entity** with lookup/report/dark web where supported; extraction still uses **local** Claude for the text pipeline (hosted modes add their own remote steps).
 
 **Extracted Information**:
 - Entity type and properties
@@ -427,15 +354,15 @@ owns, operates, communicates_with, targets, and more...
    - Query: "What do we know about APT29?"
    - Review AI response and auto-created entities
 
-2. **Conduct Dark Web Research**
-   - Switch to **🕵️ Dark Web** mode
-   - Query: "APT29 Cozy Bear recent operations 2024"
-   - Wait for results and review summary
+2. **Conduct dark web research** *(requires **Graph API URL** + key)*  
+   - Switch to **Dark web** mode  
+   - Query: "APT29 Cozy Bear recent operations 2024"  
+   - Wait for hosted job results  
 
-3. **Generate Report**
-   - Switch to **📄 Report** mode
-   - Prompt: "Generate a comprehensive threat actor profile for APT29 including TTPs, infrastructure, and recent campaigns"
-   - Review and edit the generated report
+3. **Generate report** *(requires **Graph API URL** + key)*  
+   - Switch to **Report** mode  
+   - Prompt: "Generate a comprehensive threat actor profile for APT29 including TTPs, infrastructure, and recent campaigns"  
+   - Review saved Markdown under your report folder  
 
 4. **Visualize Relationships**
    - Open Graph View
@@ -463,10 +390,9 @@ owns, operates, communicates_with, targets, and more...
    - Query: "What do we know about malware-c2.evil.com?"
    - Cross-reference with your existing notes
 
-3. **Check Dark Web**
-   - Enable **🕵️ Dark Web** mode
-   - Query: "Find mentions of 192.168.1.100 or malware-c2.evil.com"
-   - Review any dark web references
+3. **Check dark web** *(hosted API + key)*  
+   - Enable **Dark web** mode  
+   - Query: "Find mentions of 192.168.1.100 or malware-c2.evil.com"  
 
 4. **Document Findings**
    - Generate a report summarizing your analysis
@@ -501,37 +427,44 @@ owns, operates, communicates_with, targets, and more...
 
 ## Troubleshooting
 
-### License Key Issues
+### Claude Code CLI (local AI)
 
-**Problem**: "License key required for AI features" notice
+**Problem:** Extraction or Q&A fails with CLI / spawn errors.
 
-**Solutions**:
-1. Open Settings → OSINT Copilot
-2. Enter your license key in the "License Key" field
-3. Click "Test Connection" to verify the key
-4. Get a license key at [osint-copilot.com](https://osint-copilot.com)
+**Solutions:**
+1. In a terminal run `claude --version` (or your full path).  
+2. **Settings → OSINT Copilot** — set **Claude Code CLI path** to that executable.  
+3. Complete Anthropic’s login / API setup for Claude Code.  
+4. Restart Obsidian after changing PATH or installing the CLI.
 
-**Note**: Visualization features (Graph, Timeline, Map) work without a license key. Only AI-powered features require a license.
+**Problem:** Old behavior cached after editing vault prompts.
 
-**Problem**: "License key invalid" errors
-
-**Solutions**:
-1. Verify your license key in Settings → OSINT Copilot
-2. Check for extra spaces or characters in the key
-3. Ensure your subscription is active at [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/)
-4. Try disabling and re-enabling the plugin
+**Solutions:** Run command **OSINT Copilot: Reload vault prompts** or restart Obsidian.
 
 ---
 
-### Connection Errors
+### License / hosted API
 
-**Problem**: "Network connection error" or "Failed to fetch"
+**Problem:** “License key required” (or similar) when using **Report**, **Dark web**, **Digital footprint**, or **Evidence**.
 
-**Solutions**:
-1. Check your internet connection
-2. Verify firewall isn't blocking `api.osint-copilot.com`
-3. Try again in a few minutes (server may be temporarily unavailable)
-4. Check if you're behind a corporate proxy that blocks external APIs
+**Solutions:**
+1. **Settings → OSINT Copilot** — set **Graph API URL** and **License / API key** per your operator.  
+2. Keys are **not** required for **graph / timeline / map** or for **local Claude** features.
+
+**Problem:** “Invalid license” or HTTP 403 from hosted modes.
+
+**Solutions:** Confirm the key, subscription, and endpoint URL; check operator dashboard (e.g. [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) if you use the default cloud).
+
+---
+
+### Connection errors (hosted modes)
+
+**Problem:** `Failed to fetch` / timeout on report or dark web.
+
+**Solutions:**
+1. Check internet and firewall / proxy rules for your **Graph API URL**.  
+2. Retry later if the service is down.  
+3. Confirm corporate SSL inspection is not breaking HTTPS.
 
 ---
 
@@ -571,16 +504,15 @@ owns, operates, communicates_with, targets, and more...
 
 ---
 
-### Plugin Not Loading
+### Plugin not loading
 
-**Problem**: Plugin doesn't appear in Community Plugins list
+**Problem:** Plugin does not appear or fails to enable.
 
-**Solutions**:
-1. Verify files are in correct location: `.obsidian/plugins/OSINT-copilot-plugin/`
-2. Ensure `manifest.json`, `main.js`, and `styles.css` are present
-3. Check Obsidian version is 1.5.0 or higher
-4. Try restarting Obsidian completely
-5. Check console for JavaScript errors
+**Solutions:**
+1. Confirm `main.js`, `manifest.json`, and `styles.css` are **directly** inside **one** folder under `.obsidian/plugins/` (e.g. `osint-copilot`).  
+2. **Community plugins** — restricted mode off; plugin toggle on.  
+3. Obsidian **1.5.0+** (see `manifest.json` `minAppVersion`).  
+4. Restart Obsidian; open developer console (`Ctrl/Cmd + Shift + I`) for errors.
 
 ---
 
@@ -674,29 +606,28 @@ owns, operates, communicates_with, targets, and more...
 | Open Command Palette | Ctrl/Cmd + P |
 | Open Settings | Ctrl/Cmd + , |
 
-### Security Considerations
+### Security considerations
 
-1. **API Key Security**
-   - Don't share your license key
-   - Key is stored locally in Obsidian settings
+1. **Keys** — Hosted API key lives in Obsidian plugin data; treat like any secret.  
+2. **Claude** — Text you send in chat is processed by **Claude Code** per Anthropic’s terms.  
+3. **Hosted modes** — Report / dark web / footprint send data to **your configured Graph API URL**.  
+4. **Vault** — Entities, conversations, and `.osint-copilot/prompts/` are normal Markdown/JSON on disk.
 
-2. **Sensitive Data**
-   - Be mindful of what you send to AI services
-   - Dark web queries are processed via secure API
+### Vault prompts hygiene
 
-3. **Local Storage**
-   - Entity notes and conversations are stored locally
-   - Reports are saved as local markdown files
-
----
-
-## Getting Help
-
-- **Documentation**: Check the included `DOCUMENTATION.md` for technical details
-- **API Guide**: See `API_INTEGRATION_GUIDE.md` for API specifications
-- **Dashboard**: [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) for account management
-- **Support**: Contact support through the dashboard for technical issues
+- Keep `rules/global.md` short and policy-aligned.  
+- Use **Reload vault prompts** after edits.  
+- Use **Install missing vault prompt files** to restore defaults you deleted (does not overwrite edits).
 
 ---
 
-*OSINT Copilot Plugin v0.1.0 - Empowering SOC Analysts with AI-Powered Threat Research*
+## Getting help
+
+- **README.md** — Overview, BRAT install, privacy summary  
+- **This guide** — Configuration and features  
+- **GitHub** — [Obsidian-OSINT-Copilot-plugin](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin) issues and releases  
+- **Hosted dashboard** — [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) if you use the vendor cloud API  
+
+---
+
+*OSINT Copilot — local investigation workspace + optional hosted OSINT API. See `manifest.json` for the current plugin version.*

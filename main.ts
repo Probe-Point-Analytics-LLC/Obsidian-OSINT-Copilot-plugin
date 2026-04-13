@@ -42,6 +42,8 @@ import {
 import { UpdaterService } from './src/services/updater-service';
 import { EvidenceService } from './src/services/evidence-service';
 import { EvidencePickerModal } from './src/modals/evidence-picker-modal';
+import { VaultPromptLoader } from './src/services/vault-prompt-loader';
+import { VaultPromptBootstrapService } from './src/services/vault-prompt-bootstrap';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -61,6 +63,10 @@ interface VaultAISettings {
   advancedGraphMode: boolean;
   // Conversation settings
   conversationFolder: string;
+  /** Root folder for user-editable prompts (rules, agents, skills). */
+  promptsFolder: string;
+  /** Agent id matching agents/<id>.md in prompts folder (frontmatter id). */
+  activeAgentId: string;
   // Custom API settings
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
@@ -120,6 +126,8 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   advancedGraphMode: true,
   // Conversation defaults
   conversationFolder: ".osint-copilot/conversations",
+  promptsFolder: ".osint-copilot/prompts",
+  activeAgentId: "default",
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
@@ -153,6 +161,15 @@ export default class VaultAIPlugin extends Plugin {
   updaterService!: UpdaterService;
   evidenceService!: EvidenceService;
   claudeCodeService: ClaudeCodeService | null = null;
+  vaultPromptLoader!: VaultPromptLoader;
+
+  attachVaultSkillFromVault(): void {
+    if (this.claudeCodeService && this.vaultPromptLoader) {
+      this.claudeCodeService.setVaultSkillResolver(() =>
+        this.vaultPromptLoader.getGraphExtractionSkill()
+      );
+    }
+  }
 
   initClaudeCodeService() {
     const adapter = this.app.vault.adapter as any;
@@ -166,6 +183,7 @@ export default class VaultAIPlugin extends Plugin {
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
+    this.attachVaultSkillFromVault();
   }
 
   async onload() {
@@ -189,6 +207,17 @@ export default class VaultAIPlugin extends Plugin {
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
       claudeCodeModel: this.settings.claudeCodeModel,
     });
+    this.vaultPromptLoader = new VaultPromptLoader(
+      this.app,
+      () => this.settings.promptsFolder,
+      () => this.settings.activeAgentId,
+    );
+    try {
+      await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
+    } catch (e) {
+      console.warn('OSINTCopilot: vault prompt bootstrap failed:', e);
+    }
+    this.vaultPromptLoader.registerVaultEvents(this);
     this.initClaudeCodeService();
 
     // Initialize conversation service
@@ -434,6 +463,33 @@ export default class VaultAIPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "reload-vault-prompts",
+      name: "Reload vault prompts",
+      callback: () => {
+        this.vaultPromptLoader?.invalidateAll();
+        this.attachVaultSkillFromVault();
+        new Notice("Vault prompts cache cleared.");
+      },
+    });
+
+    this.addCommand({
+      id: "install-missing-vault-prompts",
+      name: "Install missing vault prompt files",
+      callback: () => {
+        void (async () => {
+          try {
+            await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
+            this.vaultPromptLoader?.invalidateAll();
+            this.attachVaultSkillFromVault();
+            new Notice("Missing default prompt files were created (existing files unchanged).");
+          } catch (e) {
+            new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
+          }
+        })();
+      },
+    });
+
     // Add settings tab
     this.addSettingTab(new VaultAISettingTab(this.app, this));
   }
@@ -512,6 +568,11 @@ export default class VaultAIPlugin extends Plugin {
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
+    }
+
+    if (this.vaultPromptLoader) {
+      this.vaultPromptLoader.invalidateAll();
+      this.attachVaultSkillFromVault();
     }
 
     // Refresh all chat views to update mode dropdowns
@@ -7021,6 +7082,47 @@ class VaultAISettingTab extends PluginSettingTab {
         text.inputEl.rows = 4;
         text.inputEl.setCssProps({ width: "100%" });
       });
+
+    new Setting(containerEl).setName("Vault prompts").setHeading();
+    new Setting(containerEl)
+      .setName("Prompts folder")
+      .setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.")
+      .addText((text) =>
+        text
+          .setPlaceholder(".osint-copilot/prompts")
+          .setValue(this.plugin.settings.promptsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.promptsFolder = value.trim() || ".osint-copilot/prompts";
+            await this.plugin.saveSettings();
+          })
+      );
+    new Setting(containerEl)
+      .setName("Active agent id")
+      .setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).")
+      .addText((text) =>
+        text
+          .setPlaceholder("default")
+          .setValue(this.plugin.settings.activeAgentId)
+          .onChange(async (value) => {
+            this.plugin.settings.activeAgentId = value.trim() || "default";
+            await this.plugin.saveSettings();
+          })
+      );
+    new Setting(containerEl)
+      .setName("Install missing default prompt files")
+      .setDesc("Creates any default files that are not present. Does not overwrite your edits.")
+      .addButton((btn) =>
+        btn.setButtonText("Install missing").onClick(async () => {
+          try {
+            await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
+            this.plugin.vaultPromptLoader?.invalidateAll();
+            this.plugin.attachVaultSkillFromVault();
+            new Notice("Done. Open the prompts folder in the vault to edit.");
+          } catch (e) {
+            new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
+          }
+        })
+      );
 
     // Custom Chat Configuration
     {

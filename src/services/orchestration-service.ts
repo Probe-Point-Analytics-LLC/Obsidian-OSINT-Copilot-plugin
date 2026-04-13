@@ -265,6 +265,15 @@ export class OrchestrationService {
         };
     }
 
+    private async getVaultPromptAugmentation(): Promise<string> {
+        try {
+            return (await this.plugin.vaultPromptLoader?.getOrchestrationAugmentation()) ?? "";
+        } catch (e) {
+            console.warn("[OrchestrationService] vault prompts:", e);
+            return "";
+        }
+    }
+
     private async classifyIntent(
         query: string,
         attachmentsContext: string,
@@ -273,6 +282,7 @@ export class OrchestrationService {
         routedIntent: OrchestrationIntent
     ): Promise<OrchestrationPlan> {
         const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
+        const vaultAug = await this.getVaultPromptAugmentation();
 
         // Format memory for context
         const memoryContext =
@@ -296,6 +306,7 @@ export class OrchestrationService {
 
 === ROUTED INTENT (heuristic, trust this for tool choice) ===
 ${routedIntentBlock}
+${vaultAug ? `\n=== VAULT-DEFINED RULES AND AGENT (user-editable markdown) ===\n${vaultAug}\n` : ""}
 
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
@@ -919,8 +930,11 @@ Respond with this exact JSON structure:
             }
         }
 
+        const vaultAug = await this.getVaultPromptAugmentation();
+
         const prompt = `
 ${systemPrompt}
+${vaultAug ? `\n=== VAULT-DEFINED RULES AND AGENT ===\n${vaultAug}\n` : ""}
 
 === CURRENT GRAPH STATE ===
 ${JSON.stringify(graphState, null, 2)}
