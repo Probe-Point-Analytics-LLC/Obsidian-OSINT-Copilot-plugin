@@ -1,5 +1,6 @@
 import { App, normalizePath, TFile } from "obsidian";
 import { VAULT_PROMPT_DEFAULT_FILES } from "../data/vault-prompt-defaults";
+import { DEFAULT_PROMPTS_FOLDER } from "../constants/vault-layout";
 
 /**
  * Creates default prompt files under the vault prompts root when missing (never overwrites).
@@ -11,7 +12,7 @@ export class VaultPromptBootstrapService {
 	) {}
 
 	async ensureDefaultsInstalled(): Promise<void> {
-		const root = normalizePath(this.getPromptsRoot().trim() || ".osint-copilot/prompts");
+		const root = normalizePath(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
 		for (const def of VAULT_PROMPT_DEFAULT_FILES) {
 			const path = normalizePath(`${root}/${def.path}`);
 			const existing = this.app.vault.getAbstractFileByPath(path);

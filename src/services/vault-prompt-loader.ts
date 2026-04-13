@@ -1,4 +1,5 @@
 import { App, normalizePath, Plugin, TAbstractFile, TFile, TFolder } from "obsidian";
+import { DEFAULT_PROMPTS_FOLDER } from "../constants/vault-layout";
 
 export interface ParsedVaultMarkdown {
 	data: Record<string, string>;
@@ -106,7 +107,7 @@ export class VaultPromptLoader {
 
 	private root(): string {
 		const r = this.getPromptsRoot().trim();
-		return normalizePath(r || ".osint-copilot/prompts");
+		return normalizePath(r || DEFAULT_PROMPTS_FOLDER);
 	}
 
 	private async readFileIfExists(relativePath: string): Promise<string | null> {

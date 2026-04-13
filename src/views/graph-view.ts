@@ -10,6 +10,7 @@ import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal,
 import { ConfirmModal } from '../modals/confirm-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
+import { GRAPH_NODE_POSITIONS_FILE } from '../constants/vault-layout';
 
 // Cytoscape types (simplified for bundling)
 interface CytoscapeEvent {
@@ -79,8 +80,8 @@ declare const cytoscape: (options?: Record<string, unknown>) => CytoscapeCore;
 
 export const GRAPH_VIEW_TYPE = 'graph_copilot-graph-view';
 
-// File path for persisting node positions
-const NODE_POSITIONS_FILE = '.osint-copilot/graph-positions.json';
+// File path for persisting node positions (visible under OSINTCopilot/)
+const NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
 
 export class GraphView extends ItemView {
     private entityManager: EntityManager;

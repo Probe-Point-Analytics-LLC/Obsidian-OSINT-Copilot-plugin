@@ -7660,9 +7660,22 @@ var GraphHistoryManager = class {
   }
 };
 
+// src/constants/vault-layout.ts
+var OSINT_COPILOT_VAULT_ROOT = "OSINTCopilot";
+var OSINT_COPILOT_CUSTOM_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/custom`;
+var DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversations`;
+var DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
+var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
+var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
+var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
+Research/`;
+var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
+var CUSTOM_TYPES_CONFIG_DIR = OSINT_COPILOT_CUSTOM_ROOT;
+var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
+
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
-var NODE_POSITIONS_FILE = ".osint-copilot/graph-positions.json";
+var NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
 var _GraphView = class _GraphView extends import_obsidian8.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap) {
     super(leaf);
@@ -11397,8 +11410,6 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
 
 // src/services/custom-types-service.ts
 var import_obsidian11 = require("obsidian");
-var CONFIG_DIR = ".osint-copilot";
-var CUSTOM_TYPES_FILE = "custom-types.json";
 var CustomTypesService = class {
   constructor(app) {
     this.customSchemas = /* @__PURE__ */ new Map();
@@ -11411,15 +11422,21 @@ var CustomTypesService = class {
   }
   async ensureConfigDir() {
     try {
-      if (!await this.vault.adapter.exists(CONFIG_DIR)) {
-        await this.vault.createFolder(CONFIG_DIR);
+      const norm = (0, import_obsidian11.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
+      const parts = norm.split("/").filter(Boolean);
+      let acc = "";
+      for (const p of parts) {
+        acc = acc ? `${acc}/${p}` : p;
+        if (!this.vault.getAbstractFileByPath(acc)) {
+          await this.vault.createFolder(acc);
+        }
       }
     } catch (error) {
       console.error("[CustomTypesService] Failed to create config folder:", error);
     }
   }
   async loadCustomTypes() {
-    const configPath = `${CONFIG_DIR}/${CUSTOM_TYPES_FILE}`;
+    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
     if (await this.vault.adapter.exists(configPath)) {
       try {
         const content = await this.vault.adapter.read(configPath);
@@ -11442,7 +11459,7 @@ var CustomTypesService = class {
   }
   async saveCustomTypes() {
     await this.ensureConfigDir();
-    const configPath = `${CONFIG_DIR}/${CUSTOM_TYPES_FILE}`;
+    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
     const config = {
       schemas: Array.from(this.customSchemas.values())
     };
@@ -12765,7 +12782,7 @@ var VaultPromptLoader = class {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian14.normalizePath)(r || ".osint-copilot/prompts");
+    return (0, import_obsidian14.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
     const path = (0, import_obsidian14.normalizePath)(`${this.root()}/${relativePath}`);
@@ -12879,7 +12896,7 @@ This folder is **managed by you**. The plugin copies these files once when they 
 | \`agents/*.md\` | One file per agent; YAML frontmatter \`id\`, \`name\`, \`description\`; body = extra system instructions. |
 | \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (Claude CLI). Edits apply on next extraction after reload. |
 
-**Task agents** (separate folder, default \`.osint-copilot/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude \u2014 see **Settings \u2192 Task agents** and the README inside that folder.
+**Task agents** (separate folder, default \`OSINTCopilot/custom/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude \u2014 see **Settings \u2192 Task agents** and the README inside that folder.
 
 ## Settings
 
@@ -12958,7 +12975,7 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim() || ".osint-copilot/prompts");
+    const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
       const path = (0, import_obsidian15.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
@@ -13069,7 +13086,7 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || ".osint-copilot/task-agents");
+      const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
       const norm = (0, import_obsidian16.normalizePath)(p);
@@ -13084,7 +13101,7 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || ".osint-copilot/task-agents");
+          const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
           const op = (0, import_obsidian16.normalizePath)(oldPath);
@@ -13101,7 +13118,7 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || ".osint-copilot/task-agents");
+    const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
     if (!(folder instanceof import_obsidian16.TFolder)) {
       this.cache = [];
@@ -13545,7 +13562,7 @@ Paths must stay under **both** the agent\u2019s \`output_roots\` **and** the glo
 
 ## Settings
 
-Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Use **Task agent** dropdown in chat (General mode) to select **None** or a task agent.
+Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**; orchestration uses the **Skills** menu in chat.
 `
   },
   {
@@ -13556,8 +13573,8 @@ id: memo-writer
 name: Memo writer
 description: Draft short memos into the vault from chat + wiki context
 output_schema: vault_files_v1
-output_roots: .osint-copilot/outputs/memos/
-context_roots: .osint-copilot/prompts/rules/
+output_roots: OSINTCopilot/custom/outputs/memos/
+context_roots: OSINTCopilot/custom/prompts/rules/
 max_notes: 15
 max_context_chars: 80000
 enabled_default: true
@@ -13591,7 +13608,7 @@ id: report-drafter
 name: Report drafter
 description: Longer structured report skeletons into allowed output folders
 output_schema: vault_files_v1
-output_roots: .osint-copilot/outputs/reports/
+output_roots: OSINTCopilot/custom/outputs/reports/
 context_roots:
 max_notes: 25
 max_context_chars: 120000
@@ -13628,7 +13645,7 @@ var TaskAgentBootstrapService = class {
   }
   async ensureDefaultsInstalled() {
     const root = (0, import_obsidian19.normalizePath)(
-      this.getTaskAgentsRoot().trim() || ".osint-copilot/task-agents"
+      this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
       const path = (0, import_obsidian19.normalizePath)(`${root}/${def.path}`);
@@ -13712,7 +13729,7 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || "OSINTCopilot/skills");
+      const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
       const norm = (0, import_obsidian20.normalizePath)(p);
@@ -13727,7 +13744,7 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || "OSINTCopilot/skills");
+          const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
           const op = (0, import_obsidian20.normalizePath)(oldPath);
@@ -13744,7 +13761,7 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || "OSINTCopilot/skills");
+    const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
     if (!(folder instanceof import_obsidian20.TFolder)) {
       this.cache = [];
@@ -13824,7 +13841,7 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian21.normalizePath)(this.getSkillsRoot().trim() || "OSINTCopilot/skills");
+    const root = (0, import_obsidian21.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
       const path = (0, import_obsidian21.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
@@ -13867,16 +13884,16 @@ var DEFAULT_SETTINGS = {
   autoRefreshGraph: true,
   autoOpenGraphOnEntityCreation: false,
   advancedGraphMode: true,
-  // Conversation defaults
-  conversationFolder: ".osint-copilot/conversations",
-  promptsFolder: ".osint-copilot/prompts",
+  // Conversation defaults (visible under OSINTCopilot/)
+  conversationFolder: DEFAULT_CONVERSATION_FOLDER,
+  promptsFolder: DEFAULT_PROMPTS_FOLDER,
   activeAgentId: "default",
-  taskAgentsFolder: ".osint-copilot/task-agents",
+  taskAgentsFolder: DEFAULT_TASK_AGENTS_FOLDER,
   taskAgentsEnabled: true,
   preferredTaskAgentId: "",
-  taskAgentGlobalOutputAllowlist: ".osint-copilot/outputs/\nResearch/",
+  taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
   taskAgentOverrides: {},
-  skillsFolder: "OSINTCopilot/skills",
+  skillsFolder: DEFAULT_SKILLS_FOLDER,
   skillToggles: {},
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
@@ -15028,7 +15045,7 @@ var _ChatView = class _ChatView extends import_obsidian22.ItemView {
     menu.showAtPosition({ x: r.left, y: r.bottom });
   }
   async createNewSkillFile() {
-    const root = (0, import_obsidian22.normalizePath)(this.plugin.settings.skillsFolder.trim() || "OSINTCopilot/skills");
+    const root = (0, import_obsidian22.normalizePath)(this.plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
     const id = `new_skill_${Date.now()}`;
     const fileName = `new-skill-${Date.now()}.md`;
     const path = (0, import_obsidian22.normalizePath)(`${root}/${fileName}`);
@@ -18227,8 +18244,8 @@ var VaultAISettingTab = class extends import_obsidian22.PluginSettingTab {
     });
     new import_obsidian22.Setting(containerEl).setName("Vault prompts").setHeading();
     new import_obsidian22.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
-      (text) => text.setPlaceholder(".osint-copilot/prompts").setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
-        this.plugin.settings.promptsFolder = value.trim() || ".osint-copilot/prompts";
+      (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
+        this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
@@ -18258,8 +18275,8 @@ var VaultAISettingTab = class extends import_obsidian22.PluginSettingTab {
     new import_obsidian22.Setting(containerEl).setName("Skills folder").setDesc(
       "Markdown skills the planner may invoke (SKILL_*). Toggle built-in Local search and Graph generation in the chat **Skills** menu."
     ).addText(
-      (text) => text.setPlaceholder("OSINTCopilot/skills").setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
-        this.plugin.settings.skillsFolder = value.trim() || "OSINTCopilot/skills";
+      (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
+        this.plugin.settings.skillsFolder = value.trim() || DEFAULT_SKILLS_FOLDER;
         this.plugin.skillRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
@@ -18272,14 +18289,14 @@ var VaultAISettingTab = class extends import_obsidian22.PluginSettingTab {
       })
     );
     new import_obsidian22.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
-      (text) => text.setPlaceholder(".osint-copilot/task-agents").setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
-        this.plugin.settings.taskAgentsFolder = value.trim() || ".osint-copilot/task-agents";
+      (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
+        this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
     new import_obsidian22.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
-      text.setPlaceholder(".osint-copilot/outputs/\nResearch/").setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
+      text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
       });
@@ -18301,9 +18318,10 @@ var VaultAISettingTab = class extends import_obsidian22.PluginSettingTab {
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
     new import_obsidian22.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
-      (text) => text.setPlaceholder(".osint-copilot/conversations").setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
-        this.plugin.settings.conversationFolder = value;
-        this.plugin.conversationService.setBasePath(value);
+      (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
+        const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
+        this.plugin.settings.conversationFolder = folder;
+        this.plugin.conversationService.setBasePath(folder);
         await this.plugin.saveSettings();
         await this.plugin.conversationService.initialize();
       })

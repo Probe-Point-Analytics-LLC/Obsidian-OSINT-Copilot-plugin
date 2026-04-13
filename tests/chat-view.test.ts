@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import VaultAIPlugin, { ChatView, CHAT_VIEW_TYPE } from '../main';
 import { App, WorkspaceLeaf } from 'obsidian';
+import {
+	DEFAULT_PROMPTS_FOLDER,
+	DEFAULT_SKILLS_FOLDER,
+	DEFAULT_TASK_AGENTS_FOLDER,
+	DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
+} from '../src/constants/vault-layout';
 
 describe('ChatView', () => {
     let plugin: VaultAIPlugin;
@@ -21,14 +27,14 @@ describe('ChatView', () => {
             autoRefreshGraph: true,
             autoOpenGraphOnEntityCreation: true,
             conversationFolder: '.test/conversations',
-            promptsFolder: '.osint-copilot/prompts',
+            promptsFolder: DEFAULT_PROMPTS_FOLDER,
             activeAgentId: 'default',
-            taskAgentsFolder: '.osint-copilot/task-agents',
+            taskAgentsFolder: DEFAULT_TASK_AGENTS_FOLDER,
             taskAgentsEnabled: true,
             preferredTaskAgentId: '',
-            taskAgentGlobalOutputAllowlist: '.osint-copilot/outputs/',
+            taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
             taskAgentOverrides: {},
-            skillsFolder: 'OSINTCopilot/skills',
+            skillsFolder: DEFAULT_SKILLS_FOLDER,
             skillToggles: {},
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',

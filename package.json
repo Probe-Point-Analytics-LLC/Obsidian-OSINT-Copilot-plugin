@@ -1,6 +1,6 @@
 {
   "name": "osint-copilot",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "OSINT Copilot for Obsidian - AI-powered Q&A and Report Generation",
   "main": "main.js",
   "scripts": {

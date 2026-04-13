@@ -33,7 +33,7 @@
 | **100% local** | **Entity graph**, **timeline**, **map**, manual **entities** and **relationships** (FollowTheMoney-style notes under your entity folder), **Nominatim** geocoding for addresses. No account required. |
 | **Local AI (Claude Code CLI)** | **Entity extraction** from pasted text, **vault Q&A / local search**, **general / graph / local** chat modes, **orchestration** (investigation planner + synthesis), **vault-wide graph ingest** (local batch extraction). Uses **your** Claude install; prompts can be overridden from the vault (see [Vault prompts](#vault-prompts-editable-rules--agents)). |
 
-On first enable, the plugin creates default Markdown under **`.osint-copilot/prompts/`** (rules, agents, graph-extraction skill) so you can edit behavior without rebuilding the plugin.
+On first enable, the plugin creates default Markdown under **`OSINTCopilot/custom/prompts/`** (rules, agents, graph-extraction skill) so you can edit behavior without rebuilding the plugin.
 
 ---
 
@@ -141,10 +141,10 @@ The first time the plugin runs (and whenever files are still missing), it create
 
 | Path | Role |
 |------|------|
-| `.osint-copilot/prompts/README.md` | Explains the layout |
-| `.osint-copilot/prompts/rules/global.md` | Extra instructions for the **orchestration planner** |
-| `.osint-copilot/prompts/agents/*.md` | **Agents** — YAML frontmatter (`id`, `name`, …) + body text |
-| `.osint-copilot/prompts/skills/graph-extraction.md` | Instructions for **entity / graph extraction** (used before the bundled plugin skill) |
+| `OSINTCopilot/custom/prompts/README.md` | Explains the layout |
+| `OSINTCopilot/custom/prompts/rules/global.md` | Extra instructions for the **orchestration planner** |
+| `OSINTCopilot/custom/prompts/agents/*.md` | **Agents** — YAML frontmatter (`id`, `name`, …) + body text |
+| `OSINTCopilot/custom/prompts/skills/graph-extraction.md` | Instructions for **entity / graph extraction** (used before the bundled plugin skill) |
 
 **Settings → OSINT Copilot → Vault prompts** lets you change the **prompts folder** and **active agent id** (matches `agents/<id>.md`).
 
@@ -234,7 +234,7 @@ OSINT Copilot supports the **FollowTheMoney (FTM)** schema, which includes:
 2. Open the OSINT Copilot chat
 3. Enable **Entity Generation** mode (toggle at the bottom)
 4. Paste text containing entity information
-5. The model will extract entities and relationships into your vault (skill text can be edited under `.osint-copilot/prompts/skills/graph-extraction.md`)
+5. The model will extract entities and relationships into your vault (skill text can be edited under `OSINTCopilot/custom/prompts/skills/graph-extraction.md`)
 
 ![Generated Entities](screenshots/Copilot%20Generated%20entities%20and%20relationships%20in%20the%20chat.png)
 
@@ -320,7 +320,7 @@ All AI features in this build use **Claude Code CLI** on your machine (plus opti
 
 1. **Settings → OSINT Copilot** — set **Claude Code CLI path** and model.
 2. Use **Test Claude Code** to confirm the CLI is reachable.
-3. Optionally edit **vault prompts** under `.osint-copilot/prompts/` (see [Vault prompts](#vault-prompts-editable-rules--agents)).
+3. Optionally edit **vault prompts** under `OSINTCopilot/custom/prompts/` (see [Vault prompts](#vault-prompts-editable-rules--agents)).
 
 #### Entity extraction (local Claude)
 
@@ -547,10 +547,10 @@ Configure OSINT Copilot to match your workflow and requirements.
 |---------|-------------|---------|-------------|
 | **Claude Code CLI path** | Executable for local AI (`claude` if on PATH) | `claude` | Local extraction, vault Q&A, orchestration |
 | **Claude model** | Model flag passed to CLI | `sonnet` | With local Claude |
-| **Prompts folder** | Vault folder for rules / agents / skills | `.osint-copilot/prompts` | Optional (auto-created) |
+| **Prompts folder** | Vault folder for rules / agents / skills | `OSINTCopilot/custom/prompts` | Optional (auto-created) |
 | **Active agent id** | Which `agents/<id>.md` to load | `default` | Vault agent body for orchestration |
 | **Entity Base Path** | Folder where entity notes are stored | `OSINTCopilot` | No |
-| **Conversation Folder** | Chat history (Markdown + JSON block per file) | `.osint-copilot/conversations` | No |
+| **Conversation Folder** | Chat history (Markdown + JSON block per file) | `OSINTCopilot/conversations` | No |
 | **Max Notes** | Cap on notes in context | 15 | No |
 | **System Prompt** | Default prompt for vault Q&A | (built-in text) | No |
 | **Enable Graph Features** | Graph / timeline / map | Enabled | No |
@@ -717,8 +717,8 @@ OSINT Copilot is designed with privacy and security in mind.
 ### Data storage
 
 - **Entity notes** — Markdown in your vault (entity folder + `Connections/`)
-- **Vault prompts** — `.osint-copilot/prompts/` (and paths you configure)
-- **Conversation history** — Markdown files with embedded JSON under `.osint-copilot/conversations/` (or your setting)
+- **Vault prompts** — `OSINTCopilot/custom/prompts/` (and paths you configure)
+- **Conversation history** — Markdown files with embedded JSON under `OSINTCopilot/conversations/` (or your setting)
 - **Plugin settings** — Obsidian plugin data (no remote API credentials in this build)
 - **Sync** — Only if you use Obsidian Sync, Git, or other tools you choose
 
@@ -783,7 +783,7 @@ For issues, feature requests, or questions:
 
 ### Documentation (current)
 
-- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`.osint-copilot/prompts/`), and **tri-mode chat** (general agent, graph generation, local search) with no remote investigation API.
+- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), and **Skills-based orchestration** with no remote investigation API.
 
 ### Recent Improvements
 

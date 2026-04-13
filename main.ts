@@ -54,6 +54,13 @@ import { isTaskAgentRunnable } from './src/task-agents/task-agent-settings';
 import { SkillRegistry } from './src/skills/skill-registry';
 import { SkillBootstrapService } from './src/skills/skill-bootstrap';
 import { listSkillsForMenu } from './src/skills/skill-runtime';
+import {
+  DEFAULT_CONVERSATION_FOLDER,
+  DEFAULT_PROMPTS_FOLDER,
+  DEFAULT_SKILLS_FOLDER,
+  DEFAULT_TASK_AGENTS_FOLDER,
+  DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
+} from './src/constants/vault-layout';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -139,16 +146,16 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   autoRefreshGraph: true,
   autoOpenGraphOnEntityCreation: false,
   advancedGraphMode: true,
-  // Conversation defaults
-  conversationFolder: ".osint-copilot/conversations",
-  promptsFolder: ".osint-copilot/prompts",
+  // Conversation defaults (visible under OSINTCopilot/)
+  conversationFolder: DEFAULT_CONVERSATION_FOLDER,
+  promptsFolder: DEFAULT_PROMPTS_FOLDER,
   activeAgentId: "default",
-  taskAgentsFolder: ".osint-copilot/task-agents",
+  taskAgentsFolder: DEFAULT_TASK_AGENTS_FOLDER,
   taskAgentsEnabled: true,
   preferredTaskAgentId: "",
-  taskAgentGlobalOutputAllowlist: ".osint-copilot/outputs/\nResearch/",
+  taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
   taskAgentOverrides: {},
-  skillsFolder: 'OSINTCopilot/skills',
+  skillsFolder: DEFAULT_SKILLS_FOLDER,
   skillToggles: {},
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
@@ -1615,7 +1622,7 @@ export class ChatView extends ItemView {
   }
 
   private async createNewSkillFile() {
-    const root = normalizePath(this.plugin.settings.skillsFolder.trim() || "OSINTCopilot/skills");
+    const root = normalizePath(this.plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
     const id = `new_skill_${Date.now()}`;
     const fileName = `new-skill-${Date.now()}.md`;
     const path = normalizePath(`${root}/${fileName}`);
@@ -5484,10 +5491,10 @@ class VaultAISettingTab extends PluginSettingTab {
       .setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.")
       .addText((text) =>
         text
-          .setPlaceholder(".osint-copilot/prompts")
+          .setPlaceholder(DEFAULT_PROMPTS_FOLDER)
           .setValue(this.plugin.settings.promptsFolder)
           .onChange(async (value) => {
-            this.plugin.settings.promptsFolder = value.trim() || ".osint-copilot/prompts";
+            this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
             await this.plugin.saveSettings();
           })
       );
@@ -5531,10 +5538,10 @@ class VaultAISettingTab extends PluginSettingTab {
       )
       .addText((text) =>
         text
-          .setPlaceholder("OSINTCopilot/skills")
+          .setPlaceholder(DEFAULT_SKILLS_FOLDER)
           .setValue(this.plugin.settings.skillsFolder)
           .onChange(async (value) => {
-            this.plugin.settings.skillsFolder = value.trim() || "OSINTCopilot/skills";
+            this.plugin.settings.skillsFolder = value.trim() || DEFAULT_SKILLS_FOLDER;
             this.plugin.skillRegistry?.invalidate();
             await this.plugin.saveSettings();
           }),
@@ -5555,10 +5562,10 @@ class VaultAISettingTab extends PluginSettingTab {
       .setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).")
       .addText((text) =>
         text
-          .setPlaceholder(".osint-copilot/task-agents")
+          .setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER)
           .setValue(this.plugin.settings.taskAgentsFolder)
           .onChange(async (value) => {
-            this.plugin.settings.taskAgentsFolder = value.trim() || ".osint-copilot/task-agents";
+            this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
             this.plugin.taskAgentRegistry?.invalidate();
             await this.plugin.saveSettings();
           }),
@@ -5568,7 +5575,7 @@ class VaultAISettingTab extends PluginSettingTab {
       .setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.")
       .addTextArea((text) => {
         text
-          .setPlaceholder(".osint-copilot/outputs/\nResearch/")
+          .setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST)
           .setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist)
           .onChange(async (value) => {
             this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
@@ -5601,11 +5608,12 @@ class VaultAISettingTab extends PluginSettingTab {
       .setDesc("Directory where chat conversations will be saved")
       .addText((text) =>
         text
-          .setPlaceholder(".osint-copilot/conversations")
+          .setPlaceholder(DEFAULT_CONVERSATION_FOLDER)
           .setValue(this.plugin.settings.conversationFolder)
           .onChange(async (value) => {
-            this.plugin.settings.conversationFolder = value;
-            this.plugin.conversationService.setBasePath(value);
+            const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
+            this.plugin.settings.conversationFolder = folder;
+            this.plugin.conversationService.setBasePath(folder);
             await this.plugin.saveSettings();
             await this.plugin.conversationService.initialize();
           })

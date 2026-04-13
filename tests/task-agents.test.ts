@@ -21,7 +21,7 @@ agent_kind: task
 id: test-agent
 name: Test
 output_schema: vault_files_v1
-output_roots: .osint-copilot/out/, Research/r/
+output_roots: OSINTCopilot/custom/out/, Research/r/
 max_notes: 5
 ---
 Do the thing.
@@ -29,7 +29,7 @@ Do the thing.
     const m = parseTaskAgentMarkdown(raw, 'agents/test.md');
     expect(m).not.toBeNull();
     expect(m!.id).toBe('test-agent');
-    expect(m!.outputRoots).toEqual([".osint-copilot/out", "Research/r"]);
+    expect(m!.outputRoots).toEqual(["OSINTCopilot/custom/out", "Research/r"]);
     expect(m!.maxNotes).toBe(5);
     expect(m!.body).toContain('Do the thing');
   });
@@ -50,9 +50,9 @@ describe('isPathAllowedForWrite', () => {
   it('allows path under both agent and global roots', () => {
     expect(
       isPathAllowedForWrite(
-        '.osint-copilot/outputs/memos/2024-01-01.md',
-        ['.osint-copilot/outputs/memos/'],
-        ['.osint-copilot/outputs/', 'Research/'],
+        'OSINTCopilot/custom/outputs/memos/2024-01-01.md',
+        ['OSINTCopilot/custom/outputs/memos/'],
+        ['OSINTCopilot/custom/outputs/', 'Research/'],
       ),
     ).toBe(true);
   });
@@ -61,8 +61,8 @@ describe('isPathAllowedForWrite', () => {
     expect(
       isPathAllowedForWrite(
         'Research/secret.md',
-        ['.osint-copilot/outputs/memos/'],
-        ['.osint-copilot/outputs/', 'Research/'],
+        ['OSINTCopilot/custom/outputs/memos/'],
+        ['OSINTCopilot/custom/outputs/', 'Research/'],
       ),
     ).toBe(false);
   });
@@ -70,8 +70,8 @@ describe('isPathAllowedForWrite', () => {
   it('rejects path outside global root', () => {
     expect(
       isPathAllowedForWrite(
-        '.osint-copilot/outputs/memos/x.md',
-        ['.osint-copilot/outputs/memos/'],
+        'OSINTCopilot/custom/outputs/memos/x.md',
+        ['OSINTCopilot/custom/outputs/memos/'],
         ['Research/'],
       ),
     ).toBe(false);
@@ -80,9 +80,9 @@ describe('isPathAllowedForWrite', () => {
   it('rejects dotdot', () => {
     expect(
       isPathAllowedForWrite(
-        '.osint-copilot/outputs/../etc/passwd',
-        ['.osint-copilot/outputs/'],
-        ['.osint-copilot/'],
+        'OSINTCopilot/custom/outputs/../etc/passwd',
+        ['OSINTCopilot/custom/outputs/'],
+        ['OSINTCopilot/'],
       ),
     ).toBe(false);
   });

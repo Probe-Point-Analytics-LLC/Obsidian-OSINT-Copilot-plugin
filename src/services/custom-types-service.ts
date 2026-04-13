@@ -1,8 +1,6 @@
-import { App, Notice, Vault } from 'obsidian';
+import { App, Notice, Vault, normalizePath } from 'obsidian';
 import { ftmSchemaService, FTMSchemaDefinition } from './ftm-schema-service';
-
-const CONFIG_DIR = '.osint-copilot';
-const CUSTOM_TYPES_FILE = 'custom-types.json';
+import { CUSTOM_TYPES_CONFIG_DIR, CUSTOM_TYPES_FILE_NAME } from '../constants/vault-layout';
 
 export interface CustomTypeConfig {
     schemas: Partial<FTMSchemaDefinition>[];
@@ -25,9 +23,14 @@ export class CustomTypesService {
 
     private async ensureConfigDir(): Promise<void> {
         try {
-            // Check if config dir exists; create if not
-            if (!(await this.vault.adapter.exists(CONFIG_DIR))) {
-                await this.vault.createFolder(CONFIG_DIR);
+            const norm = normalizePath(CUSTOM_TYPES_CONFIG_DIR);
+            const parts = norm.split("/").filter(Boolean);
+            let acc = "";
+            for (const p of parts) {
+                acc = acc ? `${acc}/${p}` : p;
+                if (!this.vault.getAbstractFileByPath(acc)) {
+                    await this.vault.createFolder(acc);
+                }
             }
         } catch (error) {
             console.error('[CustomTypesService] Failed to create config folder:', error);
@@ -35,7 +38,7 @@ export class CustomTypesService {
     }
 
     private async loadCustomTypes(): Promise<void> {
-        const configPath = `${CONFIG_DIR}/${CUSTOM_TYPES_FILE}`;
+        const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
         if (await this.vault.adapter.exists(configPath)) {
             try {
                 const content = await this.vault.adapter.read(configPath);
@@ -61,7 +64,7 @@ export class CustomTypesService {
 
     async saveCustomTypes(): Promise<void> {
         await this.ensureConfigDir();
-        const configPath = `${CONFIG_DIR}/${CUSTOM_TYPES_FILE}`;
+        const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
         const config: CustomTypeConfig = {
             schemas: Array.from(this.customSchemas.values())
         };

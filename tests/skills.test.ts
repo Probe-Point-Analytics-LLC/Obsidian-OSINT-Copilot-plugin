@@ -13,7 +13,7 @@ description: Desc
 ---
 
 Body line`;
-		const m = parseSkillMarkdown(raw, "OSINTCopilot/skills/t.md");
+		const m = parseSkillMarkdown(raw, "OSINTCopilot/custom/skills/t.md");
 		expect(m).not.toBeNull();
 		expect(m!.id).toBe("test_one");
 		expect(m!.body).toContain("Body line");

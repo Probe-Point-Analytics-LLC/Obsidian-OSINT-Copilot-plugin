@@ -3,6 +3,13 @@ import VaultAIPlugin from '../main';
 import { ChatView } from '../main';
 import { App } from 'obsidian';
 import { legacyFlagsForChatMode } from '../src/services/conversation-service';
+import {
+  DEFAULT_CONVERSATION_FOLDER,
+  DEFAULT_PROMPTS_FOLDER,
+  DEFAULT_SKILLS_FOLDER,
+  DEFAULT_TASK_AGENTS_FOLDER,
+  DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
+} from '../src/constants/vault-layout';
 
 function applyModeToView(view: ChatView, mode: 'general' | 'graph' | 'local') {
   view.chatMode = mode;
@@ -35,15 +42,15 @@ describe('ChatView send routing', () => {
       autoRefreshGraph: true,
       autoOpenGraphOnEntityCreation: false,
       advancedGraphMode: true,
-      conversationFolder: '.osint-copilot/conversations',
-      promptsFolder: '.osint-copilot/prompts',
+      conversationFolder: DEFAULT_CONVERSATION_FOLDER,
+      promptsFolder: DEFAULT_PROMPTS_FOLDER,
       activeAgentId: 'default',
-      taskAgentsFolder: '.osint-copilot/task-agents',
+      taskAgentsFolder: DEFAULT_TASK_AGENTS_FOLDER,
       taskAgentsEnabled: true,
       preferredTaskAgentId: '',
-      taskAgentGlobalOutputAllowlist: '.osint-copilot/outputs/',
+      taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
       taskAgentOverrides: {},
-      skillsFolder: 'OSINTCopilot/skills',
+      skillsFolder: DEFAULT_SKILLS_FOLDER,
       skillToggles: {},
       apiProvider: 'claude-code' as const,
       claudeCodeCliPath: 'claude',

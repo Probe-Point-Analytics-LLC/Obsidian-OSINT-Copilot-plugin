@@ -1,6 +1,7 @@
 import { App, normalizePath, Plugin, TAbstractFile, TFile, TFolder } from "obsidian";
 import { parseSkillMarkdown } from "./parse-skill-markdown";
 import type { VaultSkillManifest } from "./skill-types";
+import { DEFAULT_SKILLS_FOLDER } from "../constants/vault-layout";
 
 /**
  * Discovers vault-defined skills from skillsFolder (*.md except README).
@@ -21,7 +22,7 @@ export class SkillRegistry {
 		const maybeInvalidate = (file: TAbstractFile | null) => {
 			if (!file) return;
 			const p = file.path;
-			const root = normalizePath(this.getFolder().trim() || "OSINTCopilot/skills");
+			const root = normalizePath(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
 			if (!root) return;
 			const norm = normalizePath(p);
 			if (norm === root || norm.startsWith(root + "/")) {
@@ -36,7 +37,7 @@ export class SkillRegistry {
 			this.app.vault.on("rename", (file, oldPath) => {
 				maybeInvalidate(file);
 				if (oldPath) {
-					const root = normalizePath(this.getFolder().trim() || "OSINTCopilot/skills");
+					const root = normalizePath(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
 					if (!root) return;
 					const op = normalizePath(oldPath);
 					if (op === root || op.startsWith(root + "/")) {
@@ -54,7 +55,7 @@ export class SkillRegistry {
 	async listVaultSkills(): Promise<VaultSkillManifest[]> {
 		if (this.cache) return this.cache;
 
-		const root = normalizePath(this.getFolder().trim() || "OSINTCopilot/skills");
+		const root = normalizePath(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
 		const folder = this.app.vault.getAbstractFileByPath(root);
 		if (!(folder instanceof TFolder)) {
 			this.cache = [];

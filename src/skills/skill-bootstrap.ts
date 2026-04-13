@@ -1,5 +1,6 @@
 import { App, normalizePath, TFile } from "obsidian";
 import { SKILL_DEFAULT_FILES } from "../data/skill-defaults";
+import { DEFAULT_SKILLS_FOLDER } from "../constants/vault-layout";
 
 export class SkillBootstrapService {
 	constructor(
@@ -8,7 +9,7 @@ export class SkillBootstrapService {
 	) {}
 
 	async ensureDefaultsInstalled(): Promise<void> {
-		const root = normalizePath(this.getSkillsRoot().trim() || "OSINTCopilot/skills");
+		const root = normalizePath(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
 		for (const def of SKILL_DEFAULT_FILES) {
 			const path = normalizePath(`${root}/${def.path}`);
 			const existing = this.app.vault.getAbstractFileByPath(path);

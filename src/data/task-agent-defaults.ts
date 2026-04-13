@@ -54,7 +54,7 @@ Paths must stay under **both** the agent’s \`output_roots\` **and** the global
 
 ## Settings
 
-Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Use **Task agent** dropdown in chat (General mode) to select **None** or a task agent.
+Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**; orchestration uses the **Skills** menu in chat.
 `,
 	},
 	{
@@ -65,8 +65,8 @@ id: memo-writer
 name: Memo writer
 description: Draft short memos into the vault from chat + wiki context
 output_schema: vault_files_v1
-output_roots: .osint-copilot/outputs/memos/
-context_roots: .osint-copilot/prompts/rules/
+output_roots: OSINTCopilot/custom/outputs/memos/
+context_roots: OSINTCopilot/custom/prompts/rules/
 max_notes: 15
 max_context_chars: 80000
 enabled_default: true
@@ -100,7 +100,7 @@ id: report-drafter
 name: Report drafter
 description: Longer structured report skeletons into allowed output folders
 output_schema: vault_files_v1
-output_roots: .osint-copilot/outputs/reports/
+output_roots: OSINTCopilot/custom/outputs/reports/
 context_roots:
 max_notes: 25
 max_context_chars: 120000

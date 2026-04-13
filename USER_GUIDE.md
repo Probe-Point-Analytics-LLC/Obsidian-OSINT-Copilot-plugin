@@ -17,7 +17,7 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — **Orchestration** (planner + tools) uses the **Claude Code CLI** (`claude`) on your machine. Enable **Local search**, **Graph generation**, and **custom skills** from the chat **Skills** menu; custom skills are Markdown under **`OSINTCopilot/skills/`** (visible in your vault). Vault **rules and agents** live under `.osint-copilot/prompts/` (or your configured prompts folder).
+2. **Local AI** — **Orchestration** (planner + tools) uses the **Claude Code CLI** (`claude`) on your machine. Enable **Local search**, **Graph generation**, and **custom skills** from the chat **Skills** menu. Customization files live under **`OSINTCopilot/custom/`** (prompts, skills, task agents, outputs — visible in the vault). **Chat history** defaults to **`OSINTCopilot/conversations/`**.
 3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. All AI traffic goes through **Claude Code** when you use AI features.
 
 ### Who is this for?
@@ -80,7 +80,7 @@ Install and authenticate per [Anthropic’s Claude Code documentation](https://d
 
 ### 2. Vault prompts (first run + edits)
 
-On load, the plugin creates missing files under **`.osint-copilot/prompts/`** (path configurable):
+On load, the plugin creates missing files under **`OSINTCopilot/custom/prompts/`** (path configurable):
 
 | Path | Purpose |
 |------|---------|
@@ -94,7 +94,7 @@ On load, the plugin creates missing files under **`.osint-copilot/prompts/`** (p
 
 ### 3. Skills folder (custom planner skills)
 
-Default **`OSINTCopilot/skills`** (not hidden under `.osint-copilot/`). On first run the plugin creates **`README.md`** and **`example-skill.md`** if missing.
+Default **`OSINTCopilot/custom/skills`**. On first run the plugin creates **`README.md`** and **`example-skill.md`** if missing.
 
 Each custom skill is a Markdown file with YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description`). The orchestration planner may propose **`SKILL_<id>`** when that skill is enabled in the chat **Skills** menu.
 
@@ -106,7 +106,7 @@ Default **`OSINTCopilot`**. Entity types become subfolders; **`Connections/`** h
 
 ### 5. Conversation folder
 
-Default **`.osint-copilot/conversations`**. Each chat is a **Markdown** note with metadata and messages stored in an embedded **JSON** block (human-readable plus machine-parseable).
+Default **`OSINTCopilot/conversations`**. Each chat is a **Markdown** note with metadata and messages stored in an embedded **JSON** block (human-readable plus machine-parseable).
 
 ### 6. Max notes
 
@@ -144,7 +144,7 @@ The chat uses a **single orchestration agent**: the planner proposes which **too
 | **Local search** | `LOCAL_VAULT` | Search across your vault notes for relevant snippets |
 | **Graph generation** | `EXTRACT_TO_GRAPH` | Extract entities into the graph (when you attach files, URLs, or pasted text the orchestration pipeline includes as context) |
 
-**Custom skills** live as Markdown under **`OSINTCopilot/skills/`** (configurable in **Settings → OSINT Copilot → Skills folder**). Each file uses `skill_kind: vault` and an `id` in frontmatter; the planner can invoke them as `SKILL_<id>`. Use **Add new skill…** in the Skills menu to create a template file.
+**Custom skills** live as Markdown under **`OSINTCopilot/custom/skills/`** (configurable in **Settings → OSINT Copilot → Skills folder**). Each file uses `skill_kind: vault` and an `id` in frontmatter; the planner can invoke them as `SKILL_<id>`. Use **Add new skill…** in the Skills menu to create a template file.
 
 Toggle skills on or off per vault; the planner only sees **enabled** skills. Your **vault prompts** (rules, agents under the prompts folder) still apply to orchestration.
 
@@ -157,7 +157,7 @@ Toggle skills on or off per vault; the planner only sees **enabled** skills. You
 **How it works**
 1. Ensure **Local search** is enabled under **Skills**.
 2. Type your question; the planner proposes tools — approve the plan when prompted.
-3. Use **Reload vault prompts** after editing rules under `.osint-copilot/prompts/`.
+3. Use **Reload vault prompts** after editing rules under `OSINTCopilot/custom/prompts/`.
 
 **Example Queries**:
 ```
@@ -214,7 +214,7 @@ What TTPs are associated with Lazarus Group?
 
 ### Feature 3: Entity extraction (graph generation)
 
-**Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`.osint-copilot/prompts/skills/graph-extraction.md`**.
+**Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`OSINTCopilot/custom/prompts/skills/graph-extraction.md`**.
 
 **How to use**
 1. Enable **Graph generation** under **Skills**.
@@ -388,6 +388,10 @@ owns, operates, communicates_with, targets, and more...
 
 **Solutions:** Run command **OSINT Copilot: Reload vault prompts** or restart Obsidian.
 
+**Problem:** After updating the plugin, settings still point at old **`.osint-copilot/`** paths.
+
+**Solutions:** New installs default to **`OSINTCopilot/conversations/`** and **`OSINTCopilot/custom/`** (prompts, skills, task agents, outputs). Either update **Settings → OSINT Copilot** paths manually or move your existing folders in the vault file explorer to match the new defaults, then reload.
+
 ---
 
 ### Entity Creation Failures
@@ -492,7 +496,7 @@ owns, operates, communicates_with, targets, and more...
 ### Security considerations
 
 1. **Claude** — Text you send in chat is processed by **Claude Code** per Anthropic’s terms.  
-2. **Vault** — Entities, conversations, and `.osint-copilot/prompts/` are normal Markdown/JSON on disk.  
+2. **Vault** — Entities, conversations, and `OSINTCopilot/custom/` (prompts, skills, etc.) are normal Markdown/JSON on disk.  
 3. **Geocoding** — Map view may send address strings to **Nominatim** (OpenStreetMap); see README privacy section.
 
 ### Vault prompts hygiene
