@@ -30,7 +30,7 @@ __export(main_exports, {
   default: () => VaultAIPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian24 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/services/ftm-schema-service.ts
 var BASE_SCHEMAS = {
@@ -4157,10 +4157,10 @@ ${text}
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no investigation plan, no explanation. Just the {"operations": [...]} JSON.`;
   }
   async extractEntities(text, existingEntities, onProgress, signal) {
-    const prompt2 = await this.buildPrompt(text, existingEntities);
+    const prompt = await this.buildPrompt(text, existingEntities);
     onProgress?.("Invoking Claude Code CLI...", 30);
     try {
-      const raw = await this.invokeCLI(prompt2, signal);
+      const raw = await this.invokeCLI(prompt, signal);
       onProgress?.("Parsing response...", 80);
       const parsed = this.parseResponse(raw);
       if (!parsed) {
@@ -4176,7 +4176,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       return { success: false, error: err.message || String(err) };
     }
   }
-  invokeCLI(prompt2, signal, maxTurns = 1) {
+  invokeCLI(prompt, signal, maxTurns = 1) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
         reject(new DOMException("Aborted", "AbortError"));
@@ -4212,7 +4212,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
           resolve(stdout);
         }
       );
-      child.stdin?.write(prompt2);
+      child.stdin?.write(prompt);
       child.stdin?.end();
       if (signal) {
         const onAbort = () => {
@@ -4289,19 +4289,19 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
    * Used for local search answer synthesis, entity extraction from queries, etc.
    */
   async chat(systemPrompt, userMessage, signal) {
-    const prompt2 = systemPrompt ? `${systemPrompt}
+    const prompt = systemPrompt ? `${systemPrompt}
 
 ---
 
 ${userMessage}` : userMessage;
-    return this.invokeCLI(prompt2, signal);
+    return this.invokeCLI(prompt, signal);
   }
   /**
    * Extract text and information from an image using Claude's vision capabilities.
    * Uses --max-turns 5 to allow Claude to read the file with its built-in tools.
    */
   async extractTextFromImage(absolutePath, signal) {
-    const prompt2 = `Read the image file at "${absolutePath}" and extract ALL information from it.
+    const prompt = `Read the image file at "${absolutePath}" and extract ALL information from it.
 
 Extract and return:
 - All visible text (OCR), preserving structure
@@ -4311,7 +4311,7 @@ Extract and return:
 - A brief description of what the image shows
 
 Return ONLY the extracted information as plain text. No markdown formatting, no commentary about the extraction process.`;
-    return this.invokeCLI(prompt2, signal, 5);
+    return this.invokeCLI(prompt, signal, 5);
   }
   async isAvailable() {
     return new Promise((resolve) => {
@@ -4641,7 +4641,7 @@ var ConversationService = class {
 };
 
 // src/views/graph-view.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/modals/entity-modal.ts
 var import_obsidian6 = require("obsidian");
@@ -7353,6 +7353,45 @@ var ConfirmModal = class extends import_obsidian7.Modal {
   }
 };
 
+// src/modals/graph-workspace-name-modal.ts
+var import_obsidian8 = require("obsidian");
+var GraphWorkspaceNameModal = class extends import_obsidian8.Modal {
+  constructor(app, onCreate) {
+    super(app);
+    this.onCreate = onCreate;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "New graph workspace" });
+    contentEl.createEl("p", {
+      text: "Each workspace saves its own node layout in the vault.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian8.Setting(contentEl).setName("Name").addText((text) => {
+      this.textInput = text;
+      text.setPlaceholder("My investigation graph");
+    });
+    new import_obsidian8.Setting(contentEl).addButton(
+      (btn) => btn.setButtonText("Create").setCta().onClick(() => {
+        void this.handleCreate();
+      })
+    ).addButton((btn) => btn.setButtonText("Cancel").onClick(() => this.close()));
+  }
+  async handleCreate() {
+    const name = this.textInput?.getValue().trim() ?? "";
+    if (!name) {
+      new import_obsidian8.Notice("Enter a name for the graph workspace.");
+      return;
+    }
+    await Promise.resolve(this.onCreate(name));
+    this.close();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/services/graph-history-manager.ts
 var GraphHistoryManager = class {
   constructor(maxHistorySize = 100) {
@@ -7744,7 +7783,7 @@ var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
 var NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
-var _GraphView = class _GraphView extends import_obsidian8.ItemView {
+var _GraphView = class _GraphView extends import_obsidian9.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap, graphHost) {
     super(leaf);
     this.cy = null;
@@ -7921,7 +7960,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       ol.createEl("li", { text: "Check console tab for errors" });
       ol.createEl("li", { text: "Check network tab for failed requests to unpkg.com" });
       ol.createEl("li", { text: "Verify plugin settings: enableGraphFeatures should be enabled" });
-      new import_obsidian8.Notice("Graph failed to load. Check console for details.", 1e4);
+      new import_obsidian9.Notice("Graph failed to load. Check console for details.", 1e4);
     }
   }
   setupGraphDropHandlers(container) {
@@ -7964,14 +8003,14 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
           return;
         const position = this.screenToModelPosition(evt.clientX, evt.clientY);
         const dragManager = this.app.dragManager;
-        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian8.TFile) {
+        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian9.TFile) {
           await this.handleGraphFileDrop([dragManager.draggable.file], position);
           return;
         }
         const internalPath = evt.dataTransfer.getData("text/plain");
         if (internalPath) {
           const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-          if (tfile instanceof import_obsidian8.TFile) {
+          if (tfile instanceof import_obsidian9.TFile) {
             await this.handleGraphFileDrop([tfile], position);
             return;
           }
@@ -7995,17 +8034,17 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     };
   }
   async handleExternalFileDrop(fileList, position) {
-    const evidencePath = (0, import_obsidian8.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
+    const evidencePath = (0, import_obsidian9.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
     await this.ensureFolderExists(evidencePath);
     const tFiles = [];
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
-      const destPath = (0, import_obsidian8.normalizePath)(`${evidencePath}/${safeName}`);
+      const destPath = (0, import_obsidian9.normalizePath)(`${evidencePath}/${safeName}`);
       try {
         const buffer = await file.arrayBuffer();
         const existing = this.app.vault.getAbstractFileByPath(destPath);
-        if (existing instanceof import_obsidian8.TFile) {
+        if (existing instanceof import_obsidian9.TFile) {
           tFiles.push(existing);
         } else {
           const created = await this.app.vault.createBinary(destPath, buffer);
@@ -8013,7 +8052,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         }
       } catch (err) {
         console.error(`[GraphView] Failed to import file ${file.name}:`, err);
-        new import_obsidian8.Notice(`Failed to import ${file.name}`);
+        new import_obsidian9.Notice(`Failed to import ${file.name}`);
       }
     }
     if (tFiles.length > 0) {
@@ -8027,7 +8066,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       const isImage = _GraphView.IMAGE_EXTENSIONS.has(ext);
       const isDocument = _GraphView.DOCUMENT_EXTENSIONS.has(ext);
       if (!isImage && !isDocument) {
-        new import_obsidian8.Notice(`Unsupported file type: .${ext}`);
+        new import_obsidian9.Notice(`Unsupported file type: .${ext}`);
         continue;
       }
       const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
@@ -8048,11 +8087,11 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         }
         this.historyManager.recordEntityCreate(entity);
         this.addEntityToGraphAtPosition(entity, dropPos);
-        new import_obsidian8.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
+        new import_obsidian9.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
         offset++;
       } catch (err) {
         console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
-        new import_obsidian8.Notice(`Failed to add ${file.name} to graph`);
+        new import_obsidian9.Notice(`Failed to add ${file.name} to graph`);
       }
     }
   }
@@ -8089,7 +8128,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     if (!_GraphView.IMAGE_EXTENSIONS.has(ext))
       return void 0;
     const file = this.app.vault.getAbstractFileByPath(fp);
-    if (file instanceof import_obsidian8.TFile) {
+    if (file instanceof import_obsidian9.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return void 0;
@@ -8177,31 +8216,38 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     };
     const newGraphBtn = graphRow.createEl("button", { text: "+ new" });
     newGraphBtn.title = "Create a new graph workspace (separate saved layout)";
-    newGraphBtn.onclick = async () => {
-      const name = prompt("Name for the new graph workspace");
-      if (!name?.trim())
-        return;
-      const id = await this.graphHost.addGraphWorkspace(name.trim());
-      if (id) {
-        this.populateGraphSelect();
-        if (this.graphSelectEl)
-          this.graphSelectEl.value = id;
-        await this.switchGraphWorkspace(id);
-      }
+    newGraphBtn.onclick = () => {
+      new GraphWorkspaceNameModal(this.app, async (name) => {
+        const id = await this.graphHost.addGraphWorkspace(name);
+        if (id) {
+          this.populateGraphSelect();
+          if (this.graphSelectEl)
+            this.graphSelectEl.value = id;
+          await this.switchGraphWorkspace(id);
+        }
+      }).open();
     };
     const delGraphBtn = graphRow.createEl("button", { text: "\u2715" });
     delGraphBtn.title = "Delete current graph workspace (not default)";
-    delGraphBtn.onclick = async () => {
+    delGraphBtn.onclick = () => {
       const id = this.graphHost.getActiveGraphId();
       if (id === "default") {
-        new import_obsidian8.Notice("Cannot delete the default graph workspace.");
+        new import_obsidian9.Notice("Cannot delete the default graph workspace.");
         return;
       }
-      if (!confirm(`Delete graph workspace "${id}"? Layout for this graph will be removed.`))
-        return;
-      await this.graphHost.deleteGraphWorkspace(id);
-      this.populateGraphSelect();
-      await this.switchGraphWorkspace(this.graphHost.getActiveGraphId());
+      const label = this.graphHost.listGraphWorkspaces().find((g) => g.id === id)?.name ?? id;
+      new ConfirmModal(
+        this.app,
+        "Delete graph workspace?",
+        `Delete "${label}"? The saved layout for this workspace will be removed from graph-positions.json.`,
+        async () => {
+          await this.graphHost.deleteGraphWorkspace(id);
+          this.populateGraphSelect();
+          await this.switchGraphWorkspace(this.graphHost.getActiveGraphId());
+        },
+        void 0,
+        true
+      ).open();
     };
     toolbar.createDiv({ cls: "graph_copilot-toolbar-separator" });
     this.boxSelectBtn = toolbar.createEl("button", { text: "\u2B1A box select" });
@@ -8264,14 +8310,14 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         refreshBtn.textContent = "\u21BB refreshing...";
         try {
           await this.refreshWithSavedPositions();
-          new import_obsidian8.Notice("Graph refreshed successfully");
+          new import_obsidian9.Notice("Graph refreshed successfully");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-success)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
           }, 300);
         } catch (error) {
           console.error("[GraphView] Manual refresh failed:", error);
-          new import_obsidian8.Notice("Failed to refresh graph. Check console for details.");
+          new import_obsidian9.Notice("Failed to refresh graph. Check console for details.");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-error)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
@@ -8305,10 +8351,10 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       a.download = `osint-investigation-${timestamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      new import_obsidian8.Notice("Investigation exported successfully");
+      new import_obsidian9.Notice("Investigation exported successfully");
     } catch (error) {
       console.error("[GraphView] Export failed:", error);
-      new import_obsidian8.Notice("Failed to export investigation");
+      new import_obsidian9.Notice("Failed to export investigation");
     }
   }
   /**
@@ -8340,7 +8386,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     if (this.container) {
       this.container.addClass("graph_copilot-connection-mode");
     }
-    new import_obsidian8.Notice("Connection mode: click the source node");
+    new import_obsidian9.Notice("Connection mode: click the source node");
   }
   /**
    * Exit connection mode.
@@ -8394,7 +8440,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       this.container.addClass("graph_copilot-box-select-mode");
     }
     this.updateSelectionUI();
-    new import_obsidian8.Notice("Box select mode: drag to select multiple items");
+    new import_obsidian9.Notice("Box select mode: drag to select multiple items");
   }
   /**
    * Exit box selection mode.
@@ -8437,7 +8483,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     const slice = this.allGraphPositions[newId] || {};
     this.nodePositionsCache = new Map(Object.entries(slice));
     await this.refreshWithSavedPositions();
-    new import_obsidian8.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
+    new import_obsidian9.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
   }
   async lockSelectedArea() {
     const paths = [];
@@ -8452,7 +8498,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         paths.push(c.filePath);
     }
     const n = this.graphHost.vaultLockService.lockPaths(paths);
-    new import_obsidian8.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
+    new import_obsidian9.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
   }
   /**
    * Handle double-click on an edge to open its note.
@@ -8463,12 +8509,12 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       return;
     if (connection.filePath) {
       const file = this.app.vault.getAbstractFileByPath(connection.filePath);
-      if (file instanceof import_obsidian8.TFile) {
+      if (file instanceof import_obsidian9.TFile) {
         await this.app.workspace.getLeaf().openFile(file);
         return;
       }
     }
-    new import_obsidian8.Notice("No note file found for this relationship");
+    new import_obsidian9.Notice("No note file found for this relationship");
   }
   /**
    * Handle node click in connection mode.
@@ -8483,10 +8529,10 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       if (this.statusIndicator) {
         this.statusIndicator.textContent = `Source: ${nodeLabel} \u2192 Click target...`;
       }
-      new import_obsidian8.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
+      new import_obsidian9.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
     } else {
       if (nodeId === this.sourceNodeId) {
-        new import_obsidian8.Notice("Cannot connect a node to itself. Click a different node.");
+        new import_obsidian9.Notice("Cannot connect a node to itself. Click a different node.");
         return;
       }
       const modal = new FTMIntervalTypeSelectorModal(
@@ -8672,7 +8718,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
       if (evt.target === this.cy) {
         if (this.connectionMode) {
           this.exitConnectionMode();
-          new import_obsidian8.Notice("Connection mode cancelled");
+          new import_obsidian9.Notice("Connection mode cancelled");
         } else if (!this.boxSelectMode && (this.selectedNodes.size > 0 || this.selectedEdges.size > 0)) {
           this.clearSelection();
         }
@@ -8816,7 +8862,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     });
     this.updateSelectionUI();
     const totalCount = this.selectedNodes.size + this.selectedEdges.size;
-    new import_obsidian8.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
+    new import_obsidian9.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
   }
   /**
    * Clear all selections (nodes and edges).
@@ -8993,14 +9039,14 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     for (const entityId of this.selectedNodes) {
       const e = this.entityManager.getEntity(entityId);
       if (e?.filePath && lock.isPathLocked(e.filePath)) {
-        new import_obsidian8.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
+        new import_obsidian9.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
         return;
       }
     }
     for (const connectionId of this.selectedEdges) {
       const c = this.entityManager.getConnection(connectionId);
       if (c?.filePath && lock.isPathLocked(c.filePath)) {
-        new import_obsidian8.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
+        new import_obsidian9.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
         return;
       }
     }
@@ -9063,9 +9109,9 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
     if (failedRelationships > 0)
       failParts.push(`${failedRelationships} ${failedRelationships === 1 ? "relationship" : "relationships"}`);
     if (failParts.length === 0) {
-      new import_obsidian8.Notice(`Successfully deleted ${successParts.join(" and ")}`);
+      new import_obsidian9.Notice(`Successfully deleted ${successParts.join(" and ")}`);
     } else {
-      new import_obsidian8.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
+      new import_obsidian9.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
     }
   }
   /**
@@ -9136,13 +9182,13 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
           }
           this.selectedNodes.delete(entityId);
           this.updateSelectionUI();
-          new import_obsidian8.Notice(`Deleted entity: ${label}`);
+          new import_obsidian9.Notice(`Deleted entity: ${label}`);
         } else {
-          new import_obsidian8.Notice(`Failed to delete entity: ${label}`);
+          new import_obsidian9.Notice(`Failed to delete entity: ${label}`);
         }
       } catch (error) {
         console.error(`Failed to delete entity ${entityId}:`, error);
-        new import_obsidian8.Notice(`Error deleting entity: ${label}`);
+        new import_obsidian9.Notice(`Error deleting entity: ${label}`);
       }
     };
     buttonContainer.appendChild(deleteBtn);
@@ -9198,7 +9244,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian8.Notice("Entity not found");
+        new import_obsidian9.Notice("Entity not found");
       }
       menu.remove();
     });
@@ -9210,7 +9256,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
           if (this.onShowOnMap) {
             this.onShowOnMap(entityId);
           } else {
-            new import_obsidian8.Notice("Map view not available");
+            new import_obsidian9.Notice("Map view not available");
           }
           menu.remove();
         });
@@ -9238,14 +9284,14 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
               await this.entityManager.updateEntity(entityId, {
                 add_to_timeline: !isOnTimeline
               });
-              new import_obsidian8.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
+              new import_obsidian9.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
               const updatedEntity = this.entityManager.getEntity(entityId);
               if (updatedEntity) {
                 this.updateEntityInGraph(updatedEntity);
               }
             } catch (error) {
               console.error("[GraphView] Failed to toggle timeline status:", error);
-              new import_obsidian8.Notice("Failed to update timeline status");
+              new import_obsidian9.Notice("Failed to update timeline status");
             }
             menu.remove();
           })();
@@ -9365,7 +9411,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian8.Notice("Connection not found");
+        new import_obsidian9.Notice("Connection not found");
       }
       menu.remove();
     });
@@ -9400,7 +9446,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
   async deleteRelationship(connectionId, relationship, sourceLabel, targetLabel) {
     const connection = this.entityManager.getConnection(connectionId);
     if (!connection) {
-      new import_obsidian8.Notice("Relationship not found");
+      new import_obsidian9.Notice("Relationship not found");
       return;
     }
     new ConfirmModal(
@@ -9414,7 +9460,7 @@ var _GraphView = class _GraphView extends import_obsidian8.ItemView {
           if (this.cy) {
             this.cy.getElementById(connectionId).remove();
           }
-          new import_obsidian8.Notice(`Deleted relationship: ${relationship}`);
+          new import_obsidian9.Notice(`Deleted relationship: ${relationship}`);
         })();
       },
       void 0,
@@ -9865,7 +9911,7 @@ ${label}
             this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
           });
           this.savePositions();
-          new import_obsidian8.Notice("Graph rearranged");
+          new import_obsidian9.Notice("Graph rearranged");
         }
         resolve();
       }, 600);
@@ -9962,7 +10008,7 @@ ${label}
     try {
       console.debug(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE} `);
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian8.TFile) {
+      if (file instanceof import_obsidian9.TFile) {
         const content = await this.app.vault.read(file);
         const raw = JSON.parse(content);
         if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === "object") {
@@ -10007,7 +10053,7 @@ ${label}
       } catch (e) {
       }
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian8.TFile) {
+      if (file instanceof import_obsidian9.TFile) {
         await this.app.vault.modify(file, content);
         console.debug("[GraphView] Positions saved successfully (modified existing file)");
       } else {
@@ -10018,7 +10064,7 @@ ${label}
           const errorMessage = createError.message;
           if (errorMessage?.includes("already exists")) {
             const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-            if (existingFile instanceof import_obsidian8.TFile) {
+            if (existingFile instanceof import_obsidian9.TFile) {
               await this.app.vault.modify(existingFile, content);
               console.debug("[GraphView] Positions saved successfully (modified after race condition)");
             }
@@ -10134,15 +10180,15 @@ ${label}
    */
   async performUndo() {
     if (!this.historyManager.canUndo()) {
-      new import_obsidian8.Notice("Nothing to undo");
+      new import_obsidian9.Notice("Nothing to undo");
       return;
     }
     const description = this.historyManager.getLastUndoDescription();
     const success = await this.historyManager.undo();
     if (success) {
-      new import_obsidian8.Notice(`Undo: ${description} `);
+      new import_obsidian9.Notice(`Undo: ${description} `);
     } else {
-      new import_obsidian8.Notice("Undo failed");
+      new import_obsidian9.Notice("Undo failed");
     }
   }
   /**
@@ -10150,15 +10196,15 @@ ${label}
    */
   async performRedo() {
     if (!this.historyManager.canRedo()) {
-      new import_obsidian8.Notice("Nothing to redo");
+      new import_obsidian9.Notice("Nothing to redo");
       return;
     }
     const description = this.historyManager.getLastRedoDescription();
     const success = await this.historyManager.redo();
     if (success) {
-      new import_obsidian8.Notice(`Redo: ${description} `);
+      new import_obsidian9.Notice(`Redo: ${description} `);
     } else {
-      new import_obsidian8.Notice("Redo failed");
+      new import_obsidian9.Notice("Redo failed");
     }
   }
   /**
@@ -10481,7 +10527,7 @@ ${label}
   async geolocateEntity(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian8.Notice("Entity not found");
+      new import_obsidian9.Notice("Entity not found");
       return;
     }
     let address;
@@ -10499,18 +10545,18 @@ ${label}
       country = entity.properties.country;
     }
     if (!address && !city && !country) {
-      new import_obsidian8.Notice("No address information found. Please add address details to the entity first.");
+      new import_obsidian9.Notice("No address information found. Please add address details to the entity first.");
       return;
     }
     try {
-      new import_obsidian8.Notice("Geocoding address...");
+      new import_obsidian9.Notice("Geocoding address...");
       const result = await this.geocodingService.geocodeAddressWithRetry(
         address,
         city,
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian8.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
+          new import_obsidian9.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
         }
       );
       const updates = {
@@ -10534,15 +10580,15 @@ ${label}
       if (updatedEntity) {
         this.updateEntityInGraph(updatedEntity);
       }
-      new import_obsidian8.Notice(`\u2713 Geocoded: ${result.displayName} 
+      new import_obsidian9.Notice(`\u2713 Geocoded: ${result.displayName} 
 Lat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)} 
 Confidence: ${result.confidence} `);
     } catch (error) {
       if (error instanceof GeocodingError) {
-        new import_obsidian8.Notice(`Geocoding failed: ${error.message} `);
+        new import_obsidian9.Notice(`Geocoding failed: ${error.message} `);
       } else {
         console.error("[GraphView] Geocoding error:", error);
-        new import_obsidian8.Notice("Failed to geocode address. Please try again.");
+        new import_obsidian9.Notice("Failed to geocode address. Please try again.");
       }
     }
   }
@@ -10552,9 +10598,9 @@ _GraphView.DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set(["pdf", "docx", "doc", 
 var GraphView = _GraphView;
 
 // src/views/timeline-view.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 var TIMELINE_VIEW_TYPE = "graph_copilot-timeline-view";
-var TimelineView = class extends import_obsidian9.ItemView {
+var TimelineView = class extends import_obsidian10.ItemView {
   constructor(leaf, entityManager, onEventClick) {
     super(leaf);
     this.container = null;
@@ -10890,7 +10936,7 @@ var TimelineView = class extends import_obsidian9.ItemView {
       }
     };
     card.addEventListener("contextmenu", (e) => {
-      const menu = new import_obsidian9.Menu();
+      const menu = new import_obsidian10.Menu();
       menu.addItem((item) => {
         item.setTitle("Edit").setIcon("pencil").onClick(() => {
           const entity = this.entityManager.getEntity(event.id);
@@ -10906,7 +10952,7 @@ var TimelineView = class extends import_obsidian9.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian9.Notice("Entity not found");
+            new import_obsidian10.Notice("Entity not found");
           }
         });
       });
@@ -10963,9 +11009,9 @@ var TimelineView = class extends import_obsidian9.ItemView {
 };
 
 // src/views/map-view.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 var MAP_VIEW_TYPE = "graph_copilot-map-view";
-var MapView = class extends import_obsidian10.ItemView {
+var MapView = class extends import_obsidian11.ItemView {
   constructor(leaf, entityManager, onLocationClick) {
     super(leaf);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet map instance
@@ -11139,7 +11185,7 @@ var MapView = class extends import_obsidian10.ItemView {
       this.map?.invalidateSize();
     }, 100);
     this.map.on("contextmenu", (e) => {
-      const menu = new import_obsidian10.Menu();
+      const menu = new import_obsidian11.Menu();
       menu.addItem((item) => {
         item.setTitle("Create location here").setIcon("map-pin").onClick(() => {
           const modal = new EntityCreationModal(
@@ -11263,7 +11309,7 @@ var MapView = class extends import_obsidian10.ItemView {
       }
     });
     marker.on("contextmenu", (e) => {
-      const menu = new import_obsidian10.Menu();
+      const menu = new import_obsidian11.Menu();
       menu.addItem((item) => {
         item.setTitle("Open note").setIcon("file-text").onClick(() => {
           this.entityManager.openEntityNote(location.id);
@@ -11284,7 +11330,7 @@ var MapView = class extends import_obsidian10.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian10.Notice("Entity not found");
+            new import_obsidian11.Notice("Entity not found");
           }
         });
       });
@@ -11405,7 +11451,7 @@ var MapView = class extends import_obsidian10.ItemView {
       return isLocationOrAddress && hasNoCoords && hasAddress;
     });
     if (locationsWithoutCoords.length === 0) {
-      new import_obsidian10.Notice("No locations found that need geocoding");
+      new import_obsidian11.Notice("No locations found that need geocoding");
       return;
     }
     const modal = new GeolocateMissingModal(
@@ -11420,7 +11466,7 @@ var MapView = class extends import_obsidian10.ItemView {
     modal.open();
   }
 };
-var GeolocateMissingModal = class extends import_obsidian10.Modal {
+var GeolocateMissingModal = class extends import_obsidian11.Modal {
   constructor(app, locations, geocodingService2, entityManager, onComplete) {
     super(app);
     this.locations = locations;
@@ -11505,7 +11551,7 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian10.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+          new import_obsidian11.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
         }
       );
       const updates = {
@@ -11529,9 +11575,9 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
       btn.textContent = "\u2717 failed";
       btn.setCssProps({ color: "var(--text-error)" });
       if (error instanceof GeocodingError) {
-        new import_obsidian10.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
+        new import_obsidian11.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
       } else {
-        new import_obsidian10.Notice(`Failed to geocode ${entity.label}`);
+        new import_obsidian11.Notice(`Failed to geocode ${entity.label}`);
       }
       btn.disabled = false;
     }
@@ -11561,7 +11607,7 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
           state,
           country,
           (attempt, maxAttempts, delaySeconds) => {
-            new import_obsidian10.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+            new import_obsidian11.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
           }
         );
         const updates = {
@@ -11584,7 +11630,7 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
         failed++;
       }
     }
-    new import_obsidian10.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
+    new import_obsidian11.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
     await this.onComplete();
     this.close();
   }
@@ -11595,7 +11641,7 @@ var GeolocateMissingModal = class extends import_obsidian10.Modal {
 };
 
 // src/services/custom-types-service.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 var CustomTypesService = class {
   constructor(app) {
     this.customSchemas = /* @__PURE__ */ new Map();
@@ -11608,7 +11654,7 @@ var CustomTypesService = class {
   }
   async ensureConfigDir() {
     try {
-      const norm = (0, import_obsidian11.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
+      const norm = (0, import_obsidian12.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
       const parts = norm.split("/").filter(Boolean);
       let acc = "";
       for (const p of parts) {
@@ -11639,7 +11685,7 @@ var CustomTypesService = class {
         console.debug(`[CustomTypesService] Loaded ${this.customSchemas.size} custom entity types.`);
       } catch (e) {
         console.error("[CustomTypesService] Failed to load custom types:", e);
-        new import_obsidian11.Notice("Failed to load custom entity types config.");
+        new import_obsidian12.Notice("Failed to load custom entity types config.");
       }
     }
   }
@@ -11653,7 +11699,7 @@ var CustomTypesService = class {
       await this.vault.adapter.write(configPath, JSON.stringify(config, null, 2));
     } catch (e) {
       console.error("[CustomTypesService] Failed to save custom types:", e);
-      new import_obsidian11.Notice("Failed to save custom entity types config.");
+      new import_obsidian12.Notice("Failed to save custom entity types config.");
     }
   }
   async addCustomType(schema) {
@@ -11662,7 +11708,7 @@ var CustomTypesService = class {
     this.customSchemas.set(schema.name, schema);
     ftmSchemaService.registerSchema(schema);
     await this.saveCustomTypes();
-    new import_obsidian11.Notice(`Custom entity type '${schema.label}' added.`);
+    new import_obsidian12.Notice(`Custom entity type '${schema.label}' added.`);
   }
   async updateCustomType(schema) {
     if (!schema.name || !this.customSchemas.has(schema.name)) {
@@ -11673,7 +11719,7 @@ var CustomTypesService = class {
   async deleteCustomType(name) {
     if (this.customSchemas.delete(name)) {
       await this.saveCustomTypes();
-      new import_obsidian11.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
+      new import_obsidian12.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
     }
   }
   getCustomSchemas() {
@@ -11685,7 +11731,7 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 
 // src/services/intent-router.ts
 function detectOrchestrationIntent(query) {
@@ -12095,7 +12141,7 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
 ${tooling.criticalRulesLines.map((l) => `   - ${l}`).join("\n")}` : "";
     const availableToolsBlock = tooling.availableToolsLines.join("\n");
     const defaultToolsExample = tooling.defaultToolsExample.length > 0 ? tooling.defaultToolsExample : [...tooling.enabledPlannerToolIds].slice(0, 2);
-    const prompt2 = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
+    const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
 
 === ROUTED INTENT (heuristic, trust this for tool choice) ===
 ${routedIntentBlock}
@@ -12141,7 +12187,7 @@ Respond with this exact JSON structure:
 }`;
     try {
       const responseText = await this.plugin.graphApiService.callRemoteModel(
-        [{ role: "user", content: prompt2 }],
+        [{ role: "user", content: prompt }],
         true
       );
       console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2e3));
@@ -12266,7 +12312,7 @@ Respond with this exact JSON structure:
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian12.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian13.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -12607,7 +12653,7 @@ ${r.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian12.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian13.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -12657,18 +12703,18 @@ ${r.summary || ""}
       ).open();
     });
     if (!confirmedValues) {
-      new import_obsidian12.Notice("Graph modifications cancelled by user.");
+      new import_obsidian13.Notice("Graph modifications cancelled by user.");
       return;
     }
     const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
     if (cmdsToExecute.length === 0) {
-      new import_obsidian12.Notice("No graph modifications selected.");
+      new import_obsidian13.Notice("No graph modifications selected.");
       return;
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian12.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian13.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -12703,7 +12749,7 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
       }
     }
     const vaultAug = await this.getVaultPromptAugmentation();
-    const prompt2 = `
+    const prompt = `
 ${systemPrompt}
 ${vaultAug ? `
 === VAULT-DEFINED RULES AND AGENT ===
@@ -12729,7 +12775,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
 `;
     try {
       return await this.plugin.graphApiService.callRemoteModel(
-        [{ role: "user", content: prompt2 }],
+        [{ role: "user", content: prompt }],
         false
       );
     } catch (error) {
@@ -12739,7 +12785,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian12.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian13.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -12761,7 +12807,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -12775,7 +12821,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian13.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian14.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -12802,7 +12848,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian13.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian14.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -12829,7 +12875,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian13.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian14.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -12859,7 +12905,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian13.requestUrl)({ url });
+      const response = await (0, import_obsidian14.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -12893,7 +12939,7 @@ var UpdaterService = class {
 };
 
 // src/services/vault-prompt-loader.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 function parseMarkdownWithFrontmatter(raw) {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed.startsWith("---")) {
@@ -12947,10 +12993,10 @@ var VaultPromptLoader = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian14.normalizePath)(this.getPromptsRoot().trim());
+      const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim());
       if (!root)
         return;
-      const norm = (0, import_obsidian14.normalizePath)(p);
+      const norm = (0, import_obsidian15.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.invalidateAll();
       }
@@ -12962,10 +13008,10 @@ var VaultPromptLoader = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian14.normalizePath)(this.getPromptsRoot().trim());
+          const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim());
           if (!root)
             return;
-          const op = (0, import_obsidian14.normalizePath)(oldPath);
+          const op = (0, import_obsidian15.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.invalidateAll();
           }
@@ -12978,15 +13024,15 @@ var VaultPromptLoader = class {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian14.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
+    return (0, import_obsidian15.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
-    const path = (0, import_obsidian14.normalizePath)(`${this.root()}/${relativePath}`);
+    const path = (0, import_obsidian15.normalizePath)(`${this.root()}/${relativePath}`);
     const hit = this.cache.get(path);
     if (hit !== void 0)
       return hit;
     const f = this.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof import_obsidian14.TFile)) {
+    if (!(f instanceof import_obsidian15.TFile)) {
       this.cache.set(path, "");
       return null;
     }
@@ -13039,13 +13085,13 @@ var VaultPromptLoader = class {
   }
   /** List agent files under agents/ (for future UI). */
   async listAgents() {
-    const agentsPath = (0, import_obsidian14.normalizePath)(`${this.root()}/agents`);
+    const agentsPath = (0, import_obsidian15.normalizePath)(`${this.root()}/agents`);
     const folder = this.app.vault.getAbstractFileByPath(agentsPath);
-    if (!(folder instanceof import_obsidian14.TFolder))
+    if (!(folder instanceof import_obsidian15.TFolder))
       return [];
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian14.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian15.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -13074,7 +13120,7 @@ var VaultPromptLoader = class {
 };
 
 // src/services/vault-prompt-bootstrap.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 
 // src/data/vault-prompt-defaults.ts
 var VAULT_PROMPT_DEFAULT_FILES = [
@@ -13171,11 +13217,11 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian15.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
+    const root = (0, import_obsidian16.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
-      const path = (0, import_obsidian15.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian16.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian15.TFile)
+      if (existing instanceof import_obsidian16.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -13184,7 +13230,7 @@ var VaultPromptBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian15.normalizePath)(path);
+    const norm = (0, import_obsidian16.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -13204,7 +13250,7 @@ var VaultPromptBootstrapService = class {
 };
 
 // src/task-agents/task-agent-registry.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 
 // src/task-agents/normalize-vault-path.ts
 function normalizeVaultPath(p) {
@@ -13282,10 +13328,10 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+      const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian16.normalizePath)(p);
+      const norm = (0, import_obsidian17.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -13297,10 +13343,10 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+          const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian16.normalizePath)(oldPath);
+          const op = (0, import_obsidian17.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -13314,15 +13360,15 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian16.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+    const root = (0, import_obsidian17.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian16.TFolder)) {
+    if (!(folder instanceof import_obsidian17.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian16.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian17.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -13346,11 +13392,11 @@ var TaskAgentRegistry = class {
 };
 
 // src/task-agents/context-assembler.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 async function assembleTaskAgentContext(app, contextRoots, pluginIndex, maxNotes, maxChars, query) {
   if (contextRoots.length === 0)
     return "";
-  const roots = contextRoots.map((r) => (0, import_obsidian17.normalizePath)(r.trim())).filter(Boolean);
+  const roots = contextRoots.map((r) => (0, import_obsidian18.normalizePath)(r.trim())).filter(Boolean);
   const queryTerms = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   const candidates = [];
   for (const [, note] of pluginIndex) {
@@ -13530,7 +13576,7 @@ function parseVaultFilesJson(raw) {
 }
 
 // src/task-agents/write-applier.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 function buildNoteContent(entry) {
   const fm = (entry.frontmatter || "").trim();
   if (fm) {
@@ -13553,7 +13599,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
       result.errors.push("Skipping entry: missing path");
       continue;
     }
-    const rel = (0, import_obsidian18.normalizePath)(file.path.replace(/\\/g, "/"));
+    const rel = (0, import_obsidian19.normalizePath)(file.path.replace(/\\/g, "/"));
     if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
       result.errors.push(`Not allowed: ${rel}`);
       continue;
@@ -13565,7 +13611,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
     const content = buildNoteContent(file);
     try {
       const existing = app.vault.getAbstractFileByPath(rel);
-      if (existing instanceof import_obsidian18.TFile) {
+      if (existing instanceof import_obsidian19.TFile) {
         await app.vault.modify(existing, content);
         result.updated.push(rel);
       } else if (existing) {
@@ -13597,10 +13643,10 @@ function formatApplyNotice(res) {
   if (res.errors.length)
     parts.push(`Errors: ${res.errors.length}`);
   if (parts.length === 0) {
-    new import_obsidian18.Notice("Task agent: no files applied.");
+    new import_obsidian19.Notice("Task agent: no files applied.");
     return;
   }
-  new import_obsidian18.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
+  new import_obsidian19.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
   if (res.errors.length) {
     console.warn("[TaskAgent] apply errors:", res.errors);
   }
@@ -13713,7 +13759,7 @@ ${paths.map((p) => `- \`${p}\``).join("\n")}`;
 };
 
 // src/task-agents/task-agent-bootstrap.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 
 // src/data/task-agent-defaults.ts
 var TASK_AGENT_DEFAULT_FILES = [
@@ -13845,13 +13891,13 @@ var TaskAgentBootstrapService = class {
     this.getTaskAgentsRoot = getTaskAgentsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian19.normalizePath)(
+    const root = (0, import_obsidian20.normalizePath)(
       this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
-      const path = (0, import_obsidian19.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian20.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian19.TFile)
+      if (existing instanceof import_obsidian20.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -13860,7 +13906,7 @@ var TaskAgentBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian19.normalizePath)(path);
+    const norm = (0, import_obsidian20.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -13892,7 +13938,7 @@ function isTaskAgentRunnable(manifest, settings) {
 }
 
 // src/skills/skill-registry.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/skills/parse-skill-markdown.ts
 function parseSkillMarkdown(raw, sourcePath) {
@@ -13930,10 +13976,10 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+      const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian20.normalizePath)(p);
+      const norm = (0, import_obsidian21.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -13945,10 +13991,10 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+          const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian20.normalizePath)(oldPath);
+          const op = (0, import_obsidian21.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -13962,15 +14008,15 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian21.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian20.TFolder)) {
+    if (!(folder instanceof import_obsidian21.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian20.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian21.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -13994,7 +14040,7 @@ var SkillRegistry = class {
 };
 
 // src/skills/skill-bootstrap.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/data/skill-defaults.ts
 var SKILL_DEFAULT_FILES = [
@@ -14042,11 +14088,11 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian21.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian22.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
-      const path = (0, import_obsidian21.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian22.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian21.TFile)
+      if (existing instanceof import_obsidian22.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -14055,7 +14101,7 @@ var SkillBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian21.normalizePath)(path);
+    const norm = (0, import_obsidian22.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -14075,7 +14121,7 @@ var SkillBootstrapService = class {
 };
 
 // src/services/vault-lock-service.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 var VaultLockService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -14084,12 +14130,12 @@ var VaultLockService = class {
   /** Call after loadSettings(). */
   initializeFromSettings() {
     const paths = this.plugin.settings.lockedVaultPaths ?? [];
-    this.locked = new Set(paths.map((p) => (0, import_obsidian22.normalizePath)(p)));
+    this.locked = new Set(paths.map((p) => (0, import_obsidian23.normalizePath)(p)));
   }
   isPathLocked(path) {
     if (!path)
       return false;
-    return this.locked.has((0, import_obsidian22.normalizePath)(path));
+    return this.locked.has((0, import_obsidian23.normalizePath)(path));
   }
   /**
    * Add paths to the lock set. Returns count of newly added paths.
@@ -14099,7 +14145,7 @@ var VaultLockService = class {
     for (const p of paths) {
       if (!p)
         continue;
-      const np = (0, import_obsidian22.normalizePath)(p);
+      const np = (0, import_obsidian23.normalizePath)(p);
       if (!this.locked.has(np)) {
         this.locked.add(np);
         n++;
@@ -14110,7 +14156,7 @@ var VaultLockService = class {
     return n;
   }
   unlockPath(path) {
-    const np = (0, import_obsidian22.normalizePath)(path);
+    const np = (0, import_obsidian23.normalizePath)(path);
     if (!this.locked.has(np))
       return;
     this.locked.delete(np);
@@ -14130,11 +14176,11 @@ var VaultLockService = class {
   }
   /** Migrate lock entry when a file is renamed (same as Note Locker). */
   onVaultRename(_file, oldPath) {
-    const op = (0, import_obsidian22.normalizePath)(oldPath);
+    const op = (0, import_obsidian23.normalizePath)(oldPath);
     if (!this.locked.has(op))
       return;
     this.locked.delete(op);
-    this.locked.add((0, import_obsidian22.normalizePath)(_file.path));
+    this.locked.add((0, import_obsidian23.normalizePath)(_file.path));
     this.persist();
   }
   persist() {
@@ -14144,8 +14190,8 @@ var VaultLockService = class {
 };
 
 // src/modals/vault-unlock-modal.ts
-var import_obsidian23 = require("obsidian");
-var VaultUnlockModal = class extends import_obsidian23.Modal {
+var import_obsidian24 = require("obsidian");
+var VaultUnlockModal = class extends import_obsidian24.Modal {
   constructor(app, onUnlock, titleText = "Locked note", message = "This note is locked from the OSINT graph. Unlocking allows editing and agent changes.") {
     super(app);
     this.onUnlock = onUnlock;
@@ -14158,7 +14204,7 @@ var VaultUnlockModal = class extends import_obsidian23.Modal {
     contentEl.createEl("h2", { text: this.titleText });
     contentEl.createEl("p", { text: this.message });
     contentEl.createEl("p", { text: "Are you sure you want to unlock?" });
-    new import_obsidian23.Setting(contentEl).addButton(
+    new import_obsidian24.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Unlock").setCta().onClick(() => {
         this.onUnlock();
         this.close();
@@ -14202,7 +14248,7 @@ var DEFAULT_SETTINGS = {
   graphWorkspaces: [{ id: "default", name: "Default" }]
 };
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var VaultAIPlugin = class extends import_obsidian24.Plugin {
+var VaultAIPlugin = class extends import_obsidian25.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -14357,21 +14403,21 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian24.TFile) {
+        if (file instanceof import_obsidian25.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian24.TFile) {
+        if (file instanceof import_obsidian25.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian24.TFile) {
+        if (file instanceof import_obsidian25.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -14446,10 +14492,10 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
           a.download = `osint-investigation-${timestamp}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian24.Notice("Investigation exported successfully");
+          new import_obsidian25.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian24.Notice("Failed to export investigation");
+          new import_obsidian25.Notice("Failed to export investigation");
         }
       }
     });
@@ -14465,7 +14511,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
       name: "Reindex vault",
       callback: () => {
         void this.buildIndex().then(() => {
-          new import_obsidian24.Notice("Vault reindexed successfully.");
+          new import_obsidian25.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -14474,7 +14520,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian24.Notice("Entities reloaded from notes.");
+          new import_obsidian25.Notice("Entities reloaded from notes.");
         });
       }
     });
@@ -14486,7 +14532,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
         this.taskAgentRegistry?.invalidate();
         this.skillRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new import_obsidian24.Notice("Vault prompts, skills, and task-agent registry refreshed.");
+        new import_obsidian25.Notice("Vault prompts, skills, and task-agent registry refreshed.");
       }
     });
     this.addCommand({
@@ -14502,9 +14548,9 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new import_obsidian24.Notice("Missing default prompt, skills, and task-agent files were created (existing files unchanged).");
+            new import_obsidian25.Notice("Missing default prompt, skills, and task-agent files were created (existing files unchanged).");
           } catch (e) {
-            new import_obsidian24.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+            new import_obsidian25.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
           }
         })();
       }
@@ -14626,7 +14672,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian24.MarkdownView)
+          if (leaf.view instanceof import_obsidian25.MarkdownView)
             update(leaf);
         });
       })
@@ -14643,12 +14689,12 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
       })
     );
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (leaf.view instanceof import_obsidian24.MarkdownView)
+      if (leaf.view instanceof import_obsidian25.MarkdownView)
         update(leaf);
     });
   }
   updateVaultLockLeafMode(leaf) {
-    if (!leaf || !(leaf.view instanceof import_obsidian24.MarkdownView))
+    if (!leaf || !(leaf.view instanceof import_obsidian25.MarkdownView))
       return;
     const path = leaf.view.file?.path;
     if (!path || path.endsWith(".canvas"))
@@ -14699,12 +14745,12 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
     const btn = document.createElement("div");
     btn.addClass("view-action", "clickable-icon", "osint-copilot-vault-unlock-btn");
     btn.setAttribute("aria-label", "Locked \u2014 click to unlock");
-    (0, import_obsidian24.setIcon)(btn, "lock");
+    (0, import_obsidian25.setIcon)(btn, "lock");
     btn.addEventListener("click", () => {
       new VaultUnlockModal(this.app, () => {
         this.vaultLockService.unlockPath(path);
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian24.MarkdownView && leaf.view.file?.path === path) {
+          if (leaf.view instanceof import_obsidian25.MarkdownView && leaf.view.file?.path === path) {
             this.updateVaultLockLeafMode(leaf);
           }
         });
@@ -14760,7 +14806,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
    */
   async openGraphView(forceNew = false) {
     if (!this.settings.enableGraphFeatures) {
-      new import_obsidian24.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian25.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -14804,7 +14850,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
       if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
-        new import_obsidian24.Notice("Graph view updated with new entities");
+        new import_obsidian25.Notice("Graph view updated with new entities");
       }
     }
   }
@@ -14825,7 +14871,7 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
       if (this.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian24.Notice("Graph view opened with new entities");
+        new import_obsidian25.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -14873,15 +14919,15 @@ var VaultAIPlugin = class extends import_obsidian24.Plugin {
   async showEntityOnMap(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian24.Notice("Entity not found");
+      new import_obsidian25.Notice("Entity not found");
       return;
     }
     if (entity.type !== "Location") {
-      new import_obsidian24.Notice("Only location entities can be shown on the map");
+      new import_obsidian25.Notice("Only location entities can be shown on the map");
       return;
     }
     if (!entity.properties.latitude || !entity.properties.longitude) {
-      new import_obsidian24.Notice("Location has no coordinates. Please add latitude and longitude.");
+      new import_obsidian25.Notice("Location has no coordinates. Please add latitude and longitude.");
       return;
     }
     await this.openMapView();
@@ -15275,7 +15321,7 @@ ${additionalContext}
     }
   }
 };
-var AskModal = class extends import_obsidian24.Modal {
+var AskModal = class extends import_obsidian25.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -15303,7 +15349,7 @@ var AskModal = class extends import_obsidian24.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian24.Notice("Please enter a question.");
+      new import_obsidian25.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -15319,7 +15365,7 @@ var AskModal = class extends import_obsidian24.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian24.Notice("Answer copied to clipboard.");
+        new import_obsidian25.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -15330,7 +15376,7 @@ var AskModal = class extends import_obsidian24.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian24.TFile) {
+              if (file instanceof import_obsidian25.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -15350,7 +15396,7 @@ var AskModal = class extends import_obsidian24.Modal {
     contentEl.empty();
   }
 };
-var RenameConversationModal = class extends import_obsidian24.Modal {
+var RenameConversationModal = class extends import_obsidian25.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -15408,7 +15454,7 @@ var RenameConversationModal = class extends import_obsidian24.Modal {
     contentEl.empty();
   }
 };
-var _ChatView = class _ChatView extends import_obsidian24.ItemView {
+var _ChatView = class _ChatView extends import_obsidian25.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -15459,7 +15505,7 @@ var _ChatView = class _ChatView extends import_obsidian24.ItemView {
     this.applyChatMode("general");
   }
   async openSkillsMenu(anchor) {
-    const menu = new import_obsidian24.Menu();
+    const menu = new import_obsidian25.Menu();
     try {
       const rows = await listSkillsForMenu(
         this.plugin.skillRegistry,
@@ -15479,7 +15525,7 @@ var _ChatView = class _ChatView extends import_obsidian24.ItemView {
       }
     } catch (e) {
       console.error("[ChatView] Skills menu:", e);
-      new import_obsidian24.Notice("Could not load skills.", 4e3);
+      new import_obsidian25.Notice("Could not load skills.", 4e3);
     }
     menu.addSeparator();
     menu.addItem((item) => {
@@ -15490,10 +15536,10 @@ var _ChatView = class _ChatView extends import_obsidian24.ItemView {
     menu.showAtPosition({ x: r.left, y: r.bottom });
   }
   async createNewSkillFile() {
-    const root = (0, import_obsidian24.normalizePath)(this.plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian25.normalizePath)(this.plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
     const id = `new_skill_${Date.now()}`;
     const fileName = `new-skill-${Date.now()}.md`;
-    const path = (0, import_obsidian24.normalizePath)(`${root}/${fileName}`);
+    const path = (0, import_obsidian25.normalizePath)(`${root}/${fileName}`);
     const body = `---
 skill_kind: vault
 id: ${id}
@@ -15513,13 +15559,13 @@ Instructions for this skill (local Claude).`;
       }
       await this.app.vault.create(path, body);
       const f = this.app.vault.getAbstractFileByPath(path);
-      if (f instanceof import_obsidian24.TFile) {
+      if (f instanceof import_obsidian25.TFile) {
         await this.app.workspace.getLeaf(false).openFile(f);
       }
       this.plugin.skillRegistry.invalidate();
-      new import_obsidian24.Notice(`Created ${path}`);
+      new import_obsidian25.Notice(`Created ${path}`);
     } catch (e) {
-      new import_obsidian24.Notice(`Failed to create skill: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+      new import_obsidian25.Notice(`Failed to create skill: ${e instanceof Error ? e.message : String(e)}`, 5e3);
     }
   }
   async populateAgentDropdown() {
@@ -15674,7 +15720,7 @@ Instructions for this skill (local Claude).`;
       void this.plugin.saveSettings();
       this.plugin.vaultPromptLoader?.invalidateAll();
       this.plugin.attachVaultSkillFromVault();
-      new import_obsidian24.Notice(`Active agent: ${this.plugin.settings.activeAgentId}`);
+      new import_obsidian25.Notice(`Active agent: ${this.plugin.settings.activeAgentId}`);
     });
     const settingsBtn = buttonGroup.createEl("button", {
       text: "\u2699\uFE0F",
@@ -15807,18 +15853,18 @@ Instructions for this skill (local Claude).`;
           "files =",
           draggable.files?.length
         );
-        if (draggable.file instanceof import_obsidian24.TFolder) {
+        if (draggable.file instanceof import_obsidian25.TFolder) {
           await this.handleDroppedFolder(draggable.file);
           handled = true;
-        } else if (draggable.file instanceof import_obsidian24.TFile) {
+        } else if (draggable.file instanceof import_obsidian25.TFile) {
           await this.handleDroppedAbstractFile(draggable.file);
           handled = true;
         }
         if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian24.TFolder)
+            if (f instanceof import_obsidian25.TFolder)
               await this.handleDroppedFolder(f);
-            else if (f instanceof import_obsidian24.TFile)
+            else if (f instanceof import_obsidian25.TFile)
               await this.handleDroppedAbstractFile(f);
           }
           handled = true;
@@ -15827,10 +15873,10 @@ Instructions for this skill (local Claude).`;
           const info = draggable.info;
           if (typeof info === "string") {
             const resolved = this.app.vault.getAbstractFileByPath(info);
-            if (resolved instanceof import_obsidian24.TFolder) {
+            if (resolved instanceof import_obsidian25.TFolder) {
               await this.handleDroppedFolder(resolved);
               handled = true;
-            } else if (resolved instanceof import_obsidian24.TFile) {
+            } else if (resolved instanceof import_obsidian25.TFile) {
               await this.handleDroppedAbstractFile(resolved);
               handled = true;
             }
@@ -15841,10 +15887,10 @@ Instructions for this skill (local Claude).`;
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian24.TFolder) {
+          if (abstractFile instanceof import_obsidian25.TFolder) {
             await this.handleDroppedFolder(abstractFile);
             handled = true;
-          } else if (abstractFile instanceof import_obsidian24.TFile) {
+          } else if (abstractFile instanceof import_obsidian25.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             handled = true;
           }
@@ -15986,7 +16032,7 @@ Instructions for this skill (local Claude).`;
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian24.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian25.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -16024,12 +16070,12 @@ Instructions for this skill (local Claude).`;
     target.value = "";
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian24.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian25.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian24.Notice(`Attached: ${file.name}`);
+    new import_obsidian25.Notice(`Attached: ${file.name}`);
   }
   static isImageFile(name) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -16040,12 +16086,12 @@ Instructions for this skill (local Claude).`;
       return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian24.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
+      new import_obsidian25.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian24.Notice(`Attached: ${file.name}`);
+    new import_obsidian25.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
@@ -16059,12 +16105,12 @@ Instructions for this skill (local Claude).`;
       return;
     const ext = (file.extension || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian24.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian25.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian24.Notice(`Attached: ${file.name}`);
+    new import_obsidian25.Notice(`Attached: ${file.name}`);
   }
   /**
    * Handle a dropped folder — recursively collect all allowed files and attach them.
@@ -16074,24 +16120,24 @@ Instructions for this skill (local Claude).`;
       return;
     const files = this.collectFilesFromFolder(folder);
     if (files.length === 0) {
-      new import_obsidian24.Notice(`No supported files found in folder "${folder.name}"`);
+      new import_obsidian25.Notice(`No supported files found in folder "${folder.name}"`);
       return;
     }
     for (const file of files) {
       this.attachedFiles.push({ file, extracted: false });
     }
     this.renderAttachments();
-    new import_obsidian24.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+    new import_obsidian25.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
   }
   collectFilesFromFolder(folder) {
     const results = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian24.TFile) {
+      if (child instanceof import_obsidian25.TFile) {
         const ext = (child.extension || "").toLowerCase();
         if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
           results.push(child);
         }
-      } else if (child instanceof import_obsidian24.TFolder) {
+      } else if (child instanceof import_obsidian25.TFolder) {
         results.push(...this.collectFilesFromFolder(child));
       }
     }
@@ -16155,14 +16201,14 @@ Instructions for this skill (local Claude).`;
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian24.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian25.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian24.Notice(`Text extracted from URL`);
+      new import_obsidian25.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       console.error("URL extraction error:", error);
-      new import_obsidian24.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian25.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
       this.inputEl.disabled = false;
@@ -16176,7 +16222,7 @@ Instructions for this skill (local Claude).`;
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian24.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian25.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -16349,7 +16395,7 @@ Instructions for this skill (local Claude).`;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian24.Notice("Failed to load conversation");
+      new import_obsidian25.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -16362,7 +16408,7 @@ Instructions for this skill (local Claude).`;
     this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian24.Notice("Started new conversation");
+    new import_obsidian25.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -16378,9 +16424,9 @@ Instructions for this skill (local Claude).`;
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian24.Notice("Conversation deleted");
+          new import_obsidian25.Notice("Conversation deleted");
         } else {
-          new import_obsidian24.Notice("Failed to delete conversation");
+          new import_obsidian25.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -16398,7 +16444,7 @@ Instructions for this skill (local Claude).`;
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian24.Notice("Conversation renamed");
+          new import_obsidian25.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -16422,7 +16468,7 @@ Instructions for this skill (local Claude).`;
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian24.MarkdownRenderer.render(
+      await import_obsidian25.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -16531,7 +16577,7 @@ Instructions for this skill (local Claude).`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian24.TFile) {
+              if (file instanceof import_obsidian25.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -16581,10 +16627,10 @@ Instructions for this skill (local Claude).`;
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian24.TFile) {
+                if (file instanceof import_obsidian25.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian24.Notice("Linked note file not found");
+                  new import_obsidian25.Notice("Linked note file not found");
                 }
               })();
             }
@@ -16647,7 +16693,7 @@ Instructions for this skill (local Claude).`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian24.TFile) {
+              if (file instanceof import_obsidian25.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -16816,11 +16862,11 @@ Instructions for this skill (local Claude).`;
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian24.TFile) {
+            if (file instanceof import_obsidian25.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian24.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian25.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian24.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian25.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -16922,7 +16968,7 @@ Instructions for this skill (local Claude).`;
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian24.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian25.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -17140,7 +17186,7 @@ Instructions for this skill (local Claude).`;
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian24.Notice("Task cancelled");
+        new import_obsidian25.Notice("Task cancelled");
       },
       () => {
       },
@@ -17171,7 +17217,7 @@ Instructions for this skill (local Claude).`;
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian24.Notice("Operation cancelled");
+        new import_obsidian25.Notice("Operation cancelled");
       },
       () => {
       },
@@ -17241,21 +17287,21 @@ Instructions for this skill (local Claude).`;
             text = attachment.content;
           } else if (isImage) {
             let absolutePath;
-            if (attachment.file instanceof import_obsidian24.TFile) {
+            if (attachment.file instanceof import_obsidian25.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
-              const evidencePath = (0, import_obsidian24.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const evidencePath = (0, import_obsidian25.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
               const folder = this.app.vault.getAbstractFileByPath(evidencePath);
               if (!folder) {
                 await this.app.vault.createFolder(evidencePath);
               }
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
-              const destPath = (0, import_obsidian24.normalizePath)(`${evidencePath}/${safeName}`);
+              const destPath = (0, import_obsidian25.normalizePath)(`${evidencePath}/${safeName}`);
               const buffer = await attachment.file.arrayBuffer();
               const existing = this.app.vault.getAbstractFileByPath(destPath);
               let tFile;
-              if (existing instanceof import_obsidian24.TFile) {
+              if (existing instanceof import_obsidian25.TFile) {
                 tFile = existing;
               } else {
                 tFile = await this.app.vault.createBinary(destPath, buffer);
@@ -17264,7 +17310,7 @@ Instructions for this skill (local Claude).`;
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
             text = await this.plugin.graphApiService.extractTextFromImage(absolutePath, extractionController.signal);
-          } else if (attachment.file instanceof import_obsidian24.TFile) {
+          } else if (attachment.file instanceof import_obsidian25.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
@@ -17298,7 +17344,7 @@ ${text}`);
           } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian24.Notice(userMessage, 8e3);
+          new import_obsidian25.Notice(userMessage, 8e3);
         }
       }
       this.activeAbortControllers.delete(extractionMsgIndex);
@@ -17338,9 +17384,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian24.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian25.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian24.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian25.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -17703,13 +17749,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian24.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian25.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian24.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian25.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -17767,7 +17813,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     }).style.marginTop = "0";
     if (plan.planSummary) {
       const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
-      import_obsidian24.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
+      import_obsidian25.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
     const allTools = [
       { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
@@ -17832,7 +17878,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
           selectedTools.push(toolId);
       });
       if (selectedTools.length === 0) {
-        new import_obsidian24.Notice("Please select at least one investigation module.");
+        new import_obsidian25.Notice("Please select at least one investigation module.");
         return;
       }
       executeBtn.disabled = true;
@@ -18093,7 +18139,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian24.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian25.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -18210,7 +18256,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian24.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian25.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -18622,7 +18668,7 @@ _ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
   "ico"
 ]);
 var ChatView = _ChatView;
-var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian25.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /**
@@ -18642,47 +18688,47 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian24.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian24.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+    new import_obsidian25.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian24.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian25.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian24.Notice("Update successful! Reloading plugin...");
+            new import_obsidian25.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian24.Notice("Failed to download update. Check console for details.");
+            new import_obsidian25.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian24.Notice("An error occurred during update.");
+          new import_obsidian25.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Graph note lock").setHeading();
-    new import_obsidian24.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
+    new import_obsidian25.Setting(containerEl).setName("Graph note lock").setHeading();
+    new import_obsidian25.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
       "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths."
     ).addButton(
       (btn) => btn.setButtonText("Unlock all").onClick(async () => {
         if (!confirm("Unlock all notes locked from the graph?"))
           return;
         this.plugin.vaultLockService.unlockAll();
-        new import_obsidian24.Notice("All graph locks cleared.");
+        new import_obsidian25.Notice("All graph locks cleared.");
         this.display();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian25.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -18691,7 +18737,7 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
         }
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian25.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -18699,20 +18745,20 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
       text.inputEl.rows = 4;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian24.Setting(containerEl).setName("Vault prompts").setHeading();
-    new import_obsidian24.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
+    new import_obsidian25.Setting(containerEl).setName("Vault prompts").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
       (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
         this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
+    new import_obsidian25.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
       (text) => text.setPlaceholder("default").setValue(this.plugin.settings.activeAgentId).onChange(async (value) => {
         this.plugin.settings.activeAgentId = value.trim() || "default";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
+    new import_obsidian25.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
@@ -18722,14 +18768,14 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
           this.plugin.taskAgentRegistry?.invalidate();
           this.plugin.skillRegistry?.invalidate();
           this.plugin.attachVaultSkillFromVault();
-          new import_obsidian24.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
+          new import_obsidian25.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
         } catch (e) {
-          new import_obsidian24.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian25.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Skills (orchestration)").setHeading();
-    new import_obsidian24.Setting(containerEl).setName("Skills folder").setDesc(
+    new import_obsidian25.Setting(containerEl).setName("Skills (orchestration)").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Skills folder").setDesc(
       "Markdown skills the planner may invoke (SKILL_*). Toggle built-in Local search and Graph generation in the chat **Skills** menu."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
@@ -18738,21 +18784,21 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Task agents (vault)").setHeading();
-    new import_obsidian24.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
+    new import_obsidian25.Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
       (t) => t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
         this.plugin.settings.taskAgentsEnabled = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
+    new import_obsidian25.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
       (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
         this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
+    new import_obsidian25.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
       text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
@@ -18760,21 +18806,21 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
       text.inputEl.rows = 3;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian24.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
+    new import_obsidian25.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           this.plugin.taskAgentRegistry?.invalidate();
-          new import_obsidian24.Notice("Task-agent defaults installed where missing.");
+          new import_obsidian25.Notice("Task-agent defaults installed where missing.");
           this.display();
         } catch (e) {
-          new import_obsidian24.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian25.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
-    new import_obsidian24.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian25.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
         this.plugin.settings.conversationFolder = folder;
@@ -18783,24 +18829,24 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
       text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
       cls: "setting-item-description"
     });
-    new import_obsidian24.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+    new import_obsidian25.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
       (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
         this.plugin.settings.claudeCodeCliPath = value || "claude";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+    new import_obsidian25.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Test Claude Code").setDesc("Verify that the Claude CLI is reachable.").addButton(
+    new import_obsidian25.Setting(containerEl).setName("Test Claude Code").setDesc("Verify that the Claude CLI is reachable.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
@@ -18809,22 +18855,22 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
             cliPath: this.plugin.settings.claudeCodeCliPath
           });
           const ok = await svc.isAvailable();
-          new import_obsidian24.Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+          new import_obsidian25.Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
         } catch (e) {
-          new import_obsidian24.Notice("Error: " + (e.message || String(e)));
+          new import_obsidian25.Notice("Error: " + (e.message || String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian24.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian25.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian25.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian24.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian25.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
@@ -18849,7 +18895,7 @@ var VaultAISettingTab = class extends import_obsidian24.PluginSettingTab {
       }
       for (const a of list) {
         const runnable = isTaskAgentRunnable(a, this.plugin.settings);
-        new import_obsidian24.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
+        new import_obsidian25.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
           t.setValue(runnable);
           t.onChange(async (v) => {
             if (v) {

@@ -8,6 +8,7 @@ import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '.
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { ConfirmModal } from '../modals/confirm-modal';
+import { GraphWorkspaceNameModal } from '../modals/graph-workspace-name-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 import { GRAPH_NODE_POSITIONS_FILE } from '../constants/vault-layout';
@@ -640,28 +641,38 @@ export class GraphView extends ItemView {
         };
         const newGraphBtn = graphRow.createEl('button', { text: '+ new' });
         newGraphBtn.title = 'Create a new graph workspace (separate saved layout)';
-        newGraphBtn.onclick = async () => {
-            const name = prompt('Name for the new graph workspace');
-            if (!name?.trim()) return;
-            const id = await this.graphHost.addGraphWorkspace(name.trim());
-            if (id) {
-                this.populateGraphSelect();
-                if (this.graphSelectEl) this.graphSelectEl.value = id;
-                await this.switchGraphWorkspace(id);
-            }
+        newGraphBtn.onclick = () => {
+            new GraphWorkspaceNameModal(this.app, async (name) => {
+                const id = await this.graphHost.addGraphWorkspace(name);
+                if (id) {
+                    this.populateGraphSelect();
+                    if (this.graphSelectEl) this.graphSelectEl.value = id;
+                    await this.switchGraphWorkspace(id);
+                }
+            }).open();
         };
         const delGraphBtn = graphRow.createEl('button', { text: '✕' });
         delGraphBtn.title = 'Delete current graph workspace (not default)';
-        delGraphBtn.onclick = async () => {
+        delGraphBtn.onclick = () => {
             const id = this.graphHost.getActiveGraphId();
             if (id === 'default') {
                 new Notice('Cannot delete the default graph workspace.');
                 return;
             }
-            if (!confirm(`Delete graph workspace "${id}"? Layout for this graph will be removed.`)) return;
-            await this.graphHost.deleteGraphWorkspace(id);
-            this.populateGraphSelect();
-            await this.switchGraphWorkspace(this.graphHost.getActiveGraphId());
+            const label =
+                this.graphHost.listGraphWorkspaces().find((g) => g.id === id)?.name ?? id;
+            new ConfirmModal(
+                this.app,
+                'Delete graph workspace?',
+                `Delete "${label}"? The saved layout for this workspace will be removed from graph-positions.json.`,
+                async () => {
+                    await this.graphHost.deleteGraphWorkspace(id);
+                    this.populateGraphSelect();
+                    await this.switchGraphWorkspace(this.graphHost.getActiveGraphId());
+                },
+                undefined,
+                true,
+            ).open();
         };
 
         // Separator

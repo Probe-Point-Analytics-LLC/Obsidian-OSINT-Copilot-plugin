@@ -1,5 +1,9 @@
 # Release notes
 
+## 2.4.1
+
+- **Graph workspaces (Electron)**: Replace unsupported `window.prompt()` with an Obsidian modal for **+ new** graph workspace. Delete workspace uses `ConfirmModal` instead of `confirm()`.
+
 ## 2.4.0
 
 - **Vault graph lock**: Box-select entities and relationships in the graph, then **Lock area** to mark those notes read-only until unlocked (editor unlock button or Settings).
