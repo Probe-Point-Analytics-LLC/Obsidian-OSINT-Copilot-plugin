@@ -10,6 +10,8 @@ import { applyVaultFilesV1, formatApplyNotice } from "./write-applier";
 
 export interface TaskAgentRunnerOptions {
 	globalOutputAllowlist: string;
+	/** If set, refuse writes to locked vault paths (OSINT graph lock). */
+	isPathLocked?: (path: string) => boolean;
 }
 
 export class TaskAgentRunner {
@@ -109,6 +111,7 @@ Paths must be vault-relative, use forward slashes, and stay within the agent out
 			data,
 			manifest.outputRoots,
 			globalRoots,
+			this.options.isPathLocked,
 		);
 		formatApplyNotice(apply);
 

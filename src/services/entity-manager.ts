@@ -4,6 +4,7 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice } from 'obsidian';
+import type { VaultLockService } from './vault-lock-service';
 import {
     Entity, EntityType, Connection, ENTITY_CONFIGS,
     getEntityLabel, generateId, sanitizeFilename, COMMON_PROPERTIES,
@@ -17,10 +18,26 @@ export class EntityManager {
     private basePath: string;
     private entities: Map<string, Entity> = new Map();
     private connections: Map<string, Connection> = new Map();
+    private vaultLockService: VaultLockService | null = null;
 
-    constructor(app: App, basePath: string = 'OSINTCopilot') {
+    constructor(app: App, basePath: string = 'OSINTCopilot', vaultLockService?: VaultLockService | null) {
         this.app = app;
         this.basePath = basePath;
+        this.vaultLockService = vaultLockService ?? null;
+    }
+
+    setVaultLockService(service: VaultLockService | null): void {
+        this.vaultLockService = service;
+    }
+
+    /** Block vault writes when the path is locked (graph / settings). */
+    private assertPathWritable(path: string | undefined, action: string): boolean {
+        if (!path) return true;
+        if (this.vaultLockService?.isPathLocked(path)) {
+            new Notice(`Cannot ${action}: note is locked. Unlock from the editor toolbar or plugin settings.`);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -517,6 +534,10 @@ ${(entity.properties.notes as string) || ''}
         // Check if file exists
         const existingFile = this.app.vault.getAbstractFileByPath(filePath);
         if (existingFile instanceof TFile) {
+            const pathToCheck = entity.filePath || filePath;
+            if (!this.assertPathWritable(pathToCheck, 'update entity note')) {
+                throw new Error('Path locked');
+            }
             await this.app.vault.modify(existingFile, content);
         } else {
             await this.app.vault.create(filePath, content);
@@ -789,6 +810,10 @@ ${(entity.properties.notes as string) || ''}
         // Check if file exists
         const existingFile = this.app.vault.getAbstractFileByPath(filePath);
         if (existingFile instanceof TFile) {
+            const pathToCheck = entity.filePath || filePath;
+            if (!this.assertPathWritable(pathToCheck, 'update entity note')) {
+                throw new Error('Path locked');
+            }
             await this.app.vault.modify(existingFile, content);
         } else {
             await this.app.vault.create(filePath, content);
@@ -875,6 +900,8 @@ ${(entity.properties.notes as string) || ''}
         const entity = this.entities.get(entityId);
         if (!entity) return null;
 
+        if (!this.assertPathWritable(entity.filePath, 'update entity')) return null;
+
         // Update properties
         entity.properties = { ...entity.properties, ...properties };
 
@@ -903,6 +930,8 @@ ${(entity.properties.notes as string) || ''}
     async deleteEntity(entityId: string): Promise<boolean> {
         const entity = this.entities.get(entityId);
         if (!entity) return false;
+
+        if (!this.assertPathWritable(entity.filePath, 'delete entity')) return false;
 
         // Delete the note file
         if (entity.filePath) {
@@ -961,6 +990,8 @@ ${(entity.properties.notes as string) || ''}
             // Create the note file
             const filePath = entity.filePath || `${folderPath}/${sanitizeFilename(entity.label)}.md`;
 
+            if (!this.assertPathWritable(filePath, 'restore entity')) return false;
+
             // Check if file already exists
             const existingFile = this.app.vault.getAbstractFileByPath(filePath);
             if (existingFile) {
@@ -989,6 +1020,8 @@ ${(entity.properties.notes as string) || ''}
      */
     async updateEntityForHistory(entity: Entity): Promise<boolean> {
         try {
+            if (!this.assertPathWritable(entity.filePath, 'update entity')) return false;
+
             // Update in-memory
             this.entities.set(entity.id, entity);
 
@@ -1080,6 +1113,11 @@ ${(entity.properties.notes as string) || ''}
                     continue;
                 }
 
+                if (!this.assertPathWritable(entity.filePath, 'delete entity')) {
+                    failed.push(entityId);
+                    continue;
+                }
+
                 // Delete the note file
                 if (entity.filePath) {
                     const file = this.app.vault.getAbstractFileByPath(entity.filePath);
@@ -1128,6 +1166,9 @@ ${(entity.properties.notes as string) || ''}
 
         if (!fromEntity || !toEntity) return null;
 
+        if (!this.assertPathWritable(fromEntity.filePath, 'add connection')) return null;
+        if (!this.assertPathWritable(toEntity.filePath, 'add connection')) return null;
+
         const id = generateId();
 
         // Create label for the connection
@@ -1168,6 +1209,8 @@ ${(entity.properties.notes as string) || ''}
 
         if (!fromEntity || !toEntity) return null;
 
+        if (!this.assertPathWritable(connection.filePath, 'update connection')) return null;
+
         // Update properties
         connection.properties = { ...connection.properties, ...properties };
 
@@ -1193,6 +1236,8 @@ ${(entity.properties.notes as string) || ''}
      */
     async updateConnectionForHistory(connection: Connection): Promise<boolean> {
         try {
+            if (!this.assertPathWritable(connection.filePath, 'update connection')) return false;
+
             // Update in-memory
             this.connections.set(connection.id, connection);
 
@@ -1266,6 +1311,8 @@ ${this.buildConnectionPropertiesSection(connection)}
     ): Promise<void> {
         if (!fromEntity.filePath) return;
 
+        if (!this.assertPathWritable(fromEntity.filePath, 'update entity note')) return;
+
         const file = this.app.vault.getAbstractFileByPath(fromEntity.filePath);
         if (!(file instanceof TFile)) return;
 
@@ -1304,6 +1351,8 @@ ${this.buildConnectionPropertiesSection(connection)}
         relationship: string
     ): Promise<void> {
         if (!targetEntity.filePath) return;
+
+        if (!this.assertPathWritable(targetEntity.filePath, 'update entity note')) return;
 
         const file = this.app.vault.getAbstractFileByPath(targetEntity.filePath);
         if (!(file instanceof TFile)) return;
@@ -1384,6 +1433,10 @@ ${this.buildConnectionPropertiesSection(connection)}
         // Check if file exists
         const existingFile = this.app.vault.getAbstractFileByPath(filePath);
         if (existingFile instanceof TFile) {
+            const pathToCheck = connection.filePath || filePath;
+            if (!this.assertPathWritable(pathToCheck, 'update connection note')) {
+                throw new Error('Path locked');
+            }
             await this.app.vault.modify(existingFile, content);
         } else {
             await this.app.vault.create(filePath, content);
@@ -1471,8 +1524,18 @@ ${this.buildConnectionPropertiesSection(connection)}
         const connection = this.connections.get(connectionId);
         if (!connection) return false;
 
-        // Get the source entity to update its note
         const fromEntity = this.entities.get(connection.fromEntityId);
+        if (fromEntity?.filePath && !this.assertPathWritable(fromEntity.filePath, 'delete connection')) {
+            return false;
+        }
+        if (connection.filePath && !this.assertPathWritable(connection.filePath, 'delete connection')) {
+            return false;
+        }
+
+        // Get the source entity to update its note
+        if (!fromEntity) {
+            return this.connections.delete(connectionId);
+        }
         if (fromEntity && fromEntity.filePath) {
             const file = this.app.vault.getAbstractFileByPath(fromEntity.filePath);
             if (file instanceof TFile) {
@@ -1519,13 +1582,19 @@ ${this.buildConnectionPropertiesSection(connection)}
      * Restore a connection (for undo operations).
      */
     async restoreConnection(connection: Connection): Promise<boolean> {
+        const fromEntity = this.entities.get(connection.fromEntityId);
+        const toEntity = this.entities.get(connection.toEntityId);
+
+        if (fromEntity && toEntity) {
+            if (!this.assertPathWritable(fromEntity.filePath, 'restore connection')) return false;
+            if (!this.assertPathWritable(toEntity.filePath, 'restore connection')) return false;
+            if (connection.filePath && !this.assertPathWritable(connection.filePath, 'restore connection')) return false;
+        }
+
         // Add to connections map
         this.connections.set(connection.id, connection);
 
         // Update the source entity's note
-        const fromEntity = this.entities.get(connection.fromEntityId);
-        const toEntity = this.entities.get(connection.toEntityId);
-
         if (fromEntity && toEntity) {
             await this.addRelationshipToNote(fromEntity, toEntity, connection.relationship);
         }

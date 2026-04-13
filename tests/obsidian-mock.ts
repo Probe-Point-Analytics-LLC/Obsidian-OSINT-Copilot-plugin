@@ -101,6 +101,11 @@ export class TFile {
     }
 }
 
+/** Minimal path normalizer for unit tests (forward slashes, trim). */
+export function normalizePath(path: string): string {
+    return path.replace(/\\/g, '/').replace(/^\/+/, '').trim();
+}
+
 export const requestUrl = vi.fn();
 
 export const MarkdownRenderer = {

@@ -57,6 +57,9 @@ describe('ChatView send routing', () => {
       claudeCodeModel: 'sonnet',
       themeMode: 'system',
       customCheckpoints: [],
+      lockedVaultPaths: [],
+      activeGraphId: 'default',
+      graphWorkspaces: [{ id: 'default', name: 'Default' }],
     };
 
     plugin.conversationService = {

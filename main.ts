@@ -17,6 +17,7 @@ import {
   CachedMetadata,
   Component,
   normalizePath,
+  setIcon,
 } from "obsidian";
 
 // Graph plugin imports
@@ -61,6 +62,8 @@ import {
   DEFAULT_TASK_AGENTS_FOLDER,
   DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
 } from './src/constants/vault-layout';
+import { VaultLockService } from './src/services/vault-lock-service';
+import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -101,6 +104,12 @@ interface VaultAISettings {
   customCheckpoints: CustomCheckpoint[];
   // --- Theme Mode ---
   themeMode: 'system' | 'light' | 'dark';
+  /** Vault-relative paths locked from graph (read-only until unlock). */
+  lockedVaultPaths: string[];
+  /** Active graph workspace for saved node positions. */
+  activeGraphId: string;
+  /** Named graph workspaces (id + display name). */
+  graphWorkspaces: { id: string; name: string }[];
 }
 
 export interface CustomCheckpoint {
@@ -163,6 +172,10 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   customCheckpoints: [],
 
   themeMode: 'system',
+
+  lockedVaultPaths: [],
+  activeGraphId: 'default',
+  graphWorkspaces: [{ id: 'default', name: 'Default' }],
 };
 
 
@@ -188,6 +201,7 @@ export default class VaultAIPlugin extends Plugin {
   taskAgentRegistry!: TaskAgentRegistry;
   taskAgentRunner!: TaskAgentRunner;
   skillRegistry!: SkillRegistry;
+  vaultLockService!: VaultLockService;
 
   attachVaultSkillFromVault(): void {
     if (this.claudeCodeService && this.vaultPromptLoader) {
@@ -215,12 +229,15 @@ export default class VaultAIPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    this.vaultLockService = new VaultLockService(this);
+    this.vaultLockService.initializeFromSettings();
+
     // Initialize custom types service (load schemas before entity manager)
     this.customTypesService = new CustomTypesService(this.app);
     await this.customTypesService.initialize();
 
     // Initialize graph plugin components
-    this.entityManager = new EntityManager(this.app, this.settings.entityBasePath);
+    this.entityManager = new EntityManager(this.app, this.settings.entityBasePath, this.vaultLockService);
     this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
       apiProvider: 'claude-code',
@@ -263,7 +280,10 @@ export default class VaultAIPlugin extends Plugin {
       this.vaultPromptLoader,
       () => this.index,
       () => this.settings.claudeCodeModel || 'sonnet',
-      { globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist },
+      {
+        globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
+        isPathLocked: (p) => this.vaultLockService.isPathLocked(p),
+      },
     );
 
     // Initialize conversation service
@@ -325,7 +345,8 @@ export default class VaultAIPlugin extends Plugin {
           leaf,
           this.entityManager,
           (entityId) => this.onEntityClick(entityId),
-          (entityId) => { void this.showEntityOnMap(entityId); }
+          (entityId) => { void this.showEntityOnMap(entityId); },
+          this,
         );
       }
     );
@@ -529,6 +550,8 @@ export default class VaultAIPlugin extends Plugin {
       },
     });
 
+    this.registerVaultLockEditorHooks();
+
     // Add settings tab
     this.addSettingTab(new VaultAISettingTab(this.app, this));
   }
@@ -569,6 +592,15 @@ export default class VaultAIPlugin extends Plugin {
     if (!merged.skillToggles || typeof merged.skillToggles !== 'object') {
       merged.skillToggles = {};
     }
+    if (!Array.isArray(merged.lockedVaultPaths)) {
+      merged.lockedVaultPaths = [];
+    }
+    if (typeof merged.activeGraphId !== 'string' || !merged.activeGraphId) {
+      merged.activeGraphId = 'default';
+    }
+    if (!Array.isArray(merged.graphWorkspaces) || merged.graphWorkspaces.length === 0) {
+      merged.graphWorkspaces = [{ id: 'default', name: 'Default' }];
+    }
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
       await this.saveData(this.settings);
@@ -601,6 +633,7 @@ export default class VaultAIPlugin extends Plugin {
     this.skillRegistry?.invalidate();
     this.taskAgentRunner?.updateOptions({
       globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
+      isPathLocked: (p: string) => this.vaultLockService.isPathLocked(p),
     });
 
     // Refresh all chat views (header controls)
@@ -613,6 +646,138 @@ export default class VaultAIPlugin extends Plugin {
 
   isAuthenticated(): boolean {
     return true;
+  }
+
+  getActiveGraphId(): string {
+    return this.settings.activeGraphId || 'default';
+  }
+
+  async setActiveGraphId(id: string): Promise<void> {
+    if (!this.settings.graphWorkspaces.some((g) => g.id === id)) return;
+    this.settings.activeGraphId = id;
+    await this.saveSettings();
+  }
+
+  listGraphWorkspaces(): { id: string; name: string }[] {
+    return [...this.settings.graphWorkspaces];
+  }
+
+  async addGraphWorkspace(name: string): Promise<string | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const id = `graph-${Date.now().toString(36)}`;
+    this.settings.graphWorkspaces.push({ id, name: trimmed });
+    this.settings.activeGraphId = id;
+    await this.saveSettings();
+    return id;
+  }
+
+  async deleteGraphWorkspace(id: string): Promise<void> {
+    if (id === 'default') return;
+    this.settings.graphWorkspaces = this.settings.graphWorkspaces.filter((g) => g.id !== id);
+    if (this.settings.activeGraphId === id) {
+      this.settings.activeGraphId = 'default';
+    }
+    await this.saveSettings();
+  }
+
+  private registerVaultLockEditorHooks(): void {
+    const update = (leaf: WorkspaceLeaf | null) => this.updateVaultLockLeafMode(leaf);
+
+    this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => update(leaf)));
+    this.registerEvent(
+      this.app.workspace.on('layout-change', () => {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          if (leaf.view instanceof MarkdownView) update(leaf);
+        });
+      }),
+    );
+    this.registerEvent(
+      this.app.workspace.on('file-open', () => {
+        const leaf = this.app.workspace.getMostRecentLeaf();
+        update(leaf);
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on('rename', (file, oldPath) => {
+        this.vaultLockService.onVaultRename(file, oldPath);
+      }),
+    );
+
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view instanceof MarkdownView) update(leaf);
+    });
+  }
+
+  private updateVaultLockLeafMode(leaf: WorkspaceLeaf | null): void {
+    if (!leaf || !(leaf.view instanceof MarkdownView)) return;
+    const path = leaf.view.file?.path;
+    if (!path || path.endsWith('.canvas')) return;
+
+    const locked = this.vaultLockService.isPathLocked(path);
+    const view = leaf.view;
+    if (locked) {
+      const state = leaf.getViewState();
+      if (state.state && 'mode' in state.state && (state.state as { mode?: string }).mode === 'source') {
+        void leaf.setViewState({
+          ...state,
+          state: { ...state.state, mode: 'preview' },
+        });
+      }
+      this.hideVaultLockEditButtons(view);
+      this.addVaultUnlockButton(view, path);
+    } else {
+      this.showVaultLockEditButtons(view);
+      this.removeVaultUnlockButton(view);
+    }
+  }
+
+  private hideVaultLockEditButtons(view: MarkdownView): void {
+    const container = view.containerEl;
+    container.querySelectorAll('.view-action').forEach((btn) => {
+      if (!(btn instanceof HTMLElement)) return;
+      const aria = btn.getAttribute('aria-label') || '';
+      const hasPencil = !!btn.querySelector('.lucide-pencil');
+      if (hasPencil || aria.includes('Edit') || aria.includes('edit') || aria.includes('Switch to editing')) {
+        btn.style.display = 'none';
+      }
+    });
+  }
+
+  private showVaultLockEditButtons(view: MarkdownView): void {
+    const container = view.containerEl;
+    container.querySelectorAll('.view-action').forEach((btn) => {
+      if (!(btn instanceof HTMLElement)) return;
+      const aria = btn.getAttribute('aria-label') || '';
+      if (aria.includes('Edit') || aria.includes('edit') || btn.querySelector('.lucide-pencil')) {
+        btn.style.display = '';
+      }
+    });
+  }
+
+  private addVaultUnlockButton(view: MarkdownView, path: string): void {
+    this.removeVaultUnlockButton(view);
+    const container = view.containerEl;
+    const btn = document.createElement('div');
+    btn.addClass('view-action', 'clickable-icon', 'osint-copilot-vault-unlock-btn');
+    btn.setAttribute('aria-label', 'Locked — click to unlock');
+    setIcon(btn, 'lock');
+    btn.addEventListener('click', () => {
+      new VaultUnlockModal(this.app, () => {
+        this.vaultLockService.unlockPath(path);
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          if (leaf.view instanceof MarkdownView && leaf.view.file?.path === path) {
+            this.updateVaultLockLeafMode(leaf);
+          }
+        });
+      }).open();
+    });
+    const actions = container.querySelector('.view-actions');
+    if (actions) actions.prepend(btn);
+  }
+
+  private removeVaultUnlockButton(view: MarkdownView): void {
+    view.containerEl.querySelector('.osint-copilot-vault-unlock-btn')?.remove();
   }
 
   // ============================================================================
@@ -5450,6 +5615,21 @@ class VaultAISettingTab extends PluginSettingTab {
               new Notice("An error occurred during update.");
             }
           })
+      );
+
+    new Setting(containerEl).setName("Graph note lock").setHeading();
+    new Setting(containerEl)
+      .setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`)
+      .setDesc(
+        "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths.",
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Unlock all").onClick(async () => {
+          if (!confirm("Unlock all notes locked from the graph?")) return;
+          this.plugin.vaultLockService.unlockAll();
+          new Notice("All graph locks cleared.");
+          this.display();
+        }),
       );
 
     // Max Notes

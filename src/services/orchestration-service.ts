@@ -901,8 +901,12 @@ Respond with this exact JSON structure:
                     if (data.id) {
                         const entity = this.plugin.entityManager.getEntity(data.id);
                         const name = entity ? entity.label : `ID: ${data.id}`;
-                        await this.plugin.entityManager.deleteEntities([data.id]);
-                        lines.push(`✓ Removed entity: **${name}**`);
+                        if (entity?.filePath && this.plugin.vaultLockService?.isPathLocked(entity.filePath)) {
+                            lines.push(`⚠ Skipped delete (locked): **${name}**`);
+                        } else {
+                            await this.plugin.entityManager.deleteEntities([data.id]);
+                            lines.push(`✓ Removed entity: **${name}**`);
+                        }
                     }
                 } else if (command.startsWith("@@create_link")) {
                     const jsonStr = command.replace("@@create_link", "").trim();
@@ -932,8 +936,16 @@ Respond with this exact JSON structure:
                     const jsonStr = command.replace("@@delete_link", "").trim();
                     const data = JSON.parse(jsonStr);
                     if (data.id) {
-                        await this.plugin.entityManager.deleteConnectionWithNote(data.id);
-                        lines.push(`✓ Removed link (id ${data.id})`);
+                        const conn = this.plugin.entityManager.getConnection(data.id);
+                        const locked =
+                            (conn?.filePath && this.plugin.vaultLockService?.isPathLocked(conn.filePath)) ||
+                            false;
+                        if (locked) {
+                            lines.push(`⚠ Skipped delete link (locked): id ${data.id}`);
+                        } else {
+                            await this.plugin.entityManager.deleteConnectionWithNote(data.id);
+                            lines.push(`✓ Removed link (id ${data.id})`);
+                        }
                     }
                 } else {
                     console.warn(`[OrchestrationService] Unrecognized graph command: ${command}`);

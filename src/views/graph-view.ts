@@ -11,6 +11,17 @@ import { ConfirmModal } from '../modals/confirm-modal';
 import { GraphHistoryManager, HistoryEntry, HistoryOperationType, NodePosition } from '../services/graph-history-manager';
 import { GeocodingService, GeocodingError } from '../services/geocoding-service';
 import { GRAPH_NODE_POSITIONS_FILE } from '../constants/vault-layout';
+import type { VaultLockService } from '../services/vault-lock-service';
+
+/** Passed from main — vault lock + graph workspace (multi-graph positions). */
+export interface OSINTCopilotGraphHost {
+    vaultLockService: VaultLockService;
+    getActiveGraphId(): string;
+    setActiveGraphId(id: string): Promise<void>;
+    listGraphWorkspaces(): { id: string; name: string }[];
+    addGraphWorkspace(name: string): Promise<string | null>;
+    deleteGraphWorkspace(id: string): Promise<void>;
+}
 
 // Cytoscape types (simplified for bundling)
 interface CytoscapeEvent {
@@ -104,6 +115,7 @@ export class GraphView extends ItemView {
     private selectionCountEl: HTMLElement | null = null;
     private deleteSelectedBtn: HTMLButtonElement | null = null;
     private clearSelectionBtn: HTMLButtonElement | null = null;
+    private lockAreaBtn: HTMLButtonElement | null = null;
 
     // Box selection mode state
     private boxSelectMode: boolean = false;
@@ -118,6 +130,10 @@ export class GraphView extends ItemView {
 
     // Node positions cache for tracking position changes
     private nodePositionsCache: Map<string, NodePosition> = new Map();
+    /** Per-graph id → node id → position (persisted as JSON v2). */
+    private allGraphPositions: Record<string, Record<string, NodePosition>> = {};
+    private graphHost: OSINTCopilotGraphHost;
+    private graphSelectEl: HTMLSelectElement | null = null;
 
     // Geocoding service for location entities
     private geocodingService: GeocodingService;
@@ -128,11 +144,13 @@ export class GraphView extends ItemView {
     constructor(
         leaf: WorkspaceLeaf,
         entityManager: EntityManager,
-        onEntityClick?: (entityId: string) => void,
-        onShowOnMap?: (entityId: string) => void
+        onEntityClick: ((entityId: string) => void) | undefined,
+        onShowOnMap: ((entityId: string) => void) | undefined,
+        graphHost: OSINTCopilotGraphHost
     ) {
         super(leaf);
         this.entityManager = entityManager;
+        this.graphHost = graphHost;
         this.onEntityClick = onEntityClick || null;
         this.onShowOnMap = onShowOnMap || null;
 
@@ -609,6 +627,46 @@ export class GraphView extends ItemView {
         // Separator
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
+        // Graph workspace (multi-graph positions)
+        const graphRow = toolbar.createDiv({ cls: 'graph_copilot-graph-workspace-row' });
+        graphRow.setCssProps({ display: 'flex', gap: '6px', 'align-items': 'center' });
+        graphRow.createSpan({ text: 'Graph:', cls: 'graph_copilot-graph-label' });
+        this.graphSelectEl = graphRow.createEl('select', { cls: 'dropdown graph_copilot-graph-select' });
+        this.populateGraphSelect();
+        this.graphSelectEl.onchange = async () => {
+            const v = this.graphSelectEl?.value;
+            if (!v) return;
+            await this.switchGraphWorkspace(v);
+        };
+        const newGraphBtn = graphRow.createEl('button', { text: '+ new' });
+        newGraphBtn.title = 'Create a new graph workspace (separate saved layout)';
+        newGraphBtn.onclick = async () => {
+            const name = prompt('Name for the new graph workspace');
+            if (!name?.trim()) return;
+            const id = await this.graphHost.addGraphWorkspace(name.trim());
+            if (id) {
+                this.populateGraphSelect();
+                if (this.graphSelectEl) this.graphSelectEl.value = id;
+                await this.switchGraphWorkspace(id);
+            }
+        };
+        const delGraphBtn = graphRow.createEl('button', { text: '✕' });
+        delGraphBtn.title = 'Delete current graph workspace (not default)';
+        delGraphBtn.onclick = async () => {
+            const id = this.graphHost.getActiveGraphId();
+            if (id === 'default') {
+                new Notice('Cannot delete the default graph workspace.');
+                return;
+            }
+            if (!confirm(`Delete graph workspace "${id}"? Layout for this graph will be removed.`)) return;
+            await this.graphHost.deleteGraphWorkspace(id);
+            this.populateGraphSelect();
+            await this.switchGraphWorkspace(this.graphHost.getActiveGraphId());
+        };
+
+        // Separator
+        toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
+
         // Box Select button
         this.boxSelectBtn = toolbar.createEl('button', { text: '⬚ box select' });
         this.boxSelectBtn.title = 'Enter box selection mode to select multiple items by dragging';
@@ -626,6 +684,12 @@ export class GraphView extends ItemView {
         this.deleteSelectedBtn.addClass('graph_copilot-delete-selected-btn');
         this.deleteSelectedBtn.setCssProps({ display: 'none' });
         this.deleteSelectedBtn.onclick = () => this.showDeleteConfirmation();
+
+        this.lockAreaBtn = toolbar.createEl('button', { text: '🔒 lock area' });
+        this.lockAreaBtn.title = 'Lock selected entities and relationships (notes become read-only until unlock)';
+        this.lockAreaBtn.addClass('graph_copilot-lock-area-btn');
+        this.lockAreaBtn.setCssProps({ display: 'none' });
+        this.lockAreaBtn.onclick = () => void this.lockSelectedArea();
 
         // Selection count indicator
         this.selectionCountEl = toolbar.createDiv({ cls: 'graph_copilot-selection-count' });
@@ -850,6 +914,7 @@ export class GraphView extends ItemView {
             this.container.addClass('graph_copilot-box-select-mode');
         }
 
+        this.updateSelectionUI();
         new Notice('Box select mode: drag to select multiple items');
     }
 
@@ -873,6 +938,47 @@ export class GraphView extends ItemView {
         if (this.container) {
             this.container.removeClass('graph_copilot-box-select-mode');
         }
+
+        this.updateSelectionUI();
+    }
+
+    private populateGraphSelect(): void {
+        if (!this.graphSelectEl) return;
+        const sel = this.graphSelectEl;
+        const current = this.graphHost.getActiveGraphId();
+        sel.empty();
+        for (const g of this.graphHost.listGraphWorkspaces()) {
+            const opt = sel.createEl('option', { text: g.name, value: g.id });
+            if (g.id === current) opt.selected = true;
+        }
+    }
+
+    /**
+     * Persist current cache into allGraphPositions, switch active graph id, reload layout from file-backed map.
+     */
+    private async switchGraphWorkspace(newId: string): Promise<void> {
+        const prev = this.graphHost.getActiveGraphId();
+        this.allGraphPositions[prev] = Object.fromEntries(this.nodePositionsCache);
+        await this.graphHost.setActiveGraphId(newId);
+        this.populateGraphSelect();
+        const slice = this.allGraphPositions[newId] || {};
+        this.nodePositionsCache = new Map(Object.entries(slice));
+        await this.refreshWithSavedPositions();
+        new Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
+    }
+
+    private async lockSelectedArea(): Promise<void> {
+        const paths: string[] = [];
+        for (const id of this.selectedNodes) {
+            const e = this.entityManager.getEntity(id);
+            if (e?.filePath) paths.push(e.filePath);
+        }
+        for (const cid of this.selectedEdges) {
+            const c = this.entityManager.getConnection(cid);
+            if (c?.filePath) paths.push(c.filePath);
+        }
+        const n = this.graphHost.vaultLockService.lockPaths(paths);
+        new Notice(n > 0 ? `Locked ${n} note(s)` : 'Selected items were already locked');
     }
 
     /**
@@ -1398,6 +1504,11 @@ export class GraphView extends ItemView {
         if (this.clearSelectionBtn) {
             this.clearSelectionBtn.setCssProps({ display: totalCount > 0 ? 'block' : 'none' });
         }
+
+        if (this.lockAreaBtn) {
+            const showLock = this.boxSelectMode && totalCount > 0;
+            this.lockAreaBtn.setCssProps({ display: showLock ? 'block' : 'none' });
+        }
     }
 
     /**
@@ -1545,6 +1656,22 @@ export class GraphView extends ItemView {
      * Delete all selected items (entities and relationships).
      */
     private async deleteSelectedItems(): Promise<void> {
+        const lock = this.graphHost.vaultLockService;
+        for (const entityId of this.selectedNodes) {
+            const e = this.entityManager.getEntity(entityId);
+            if (e?.filePath && lock.isPathLocked(e.filePath)) {
+                new Notice('Cannot delete: a selected entity note is locked. Unlock it first.');
+                return;
+            }
+        }
+        for (const connectionId of this.selectedEdges) {
+            const c = this.entityManager.getConnection(connectionId);
+            if (c?.filePath && lock.isPathLocked(c.filePath)) {
+                new Notice('Cannot delete: a selected relationship note is locked. Unlock it first.');
+                return;
+            }
+        }
+
         let deletedEntities = 0;
         let deletedRelationships = 0;
         let failedEntities = 0;
@@ -2688,18 +2815,30 @@ export class GraphView extends ItemView {
             const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
             if (file instanceof TFile) {
                 const content = await this.app.vault.read(file);
-                const positions = JSON.parse(content) as Record<string, NodePosition>;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const raw = JSON.parse(content) as any;
+                if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === 'object') {
+                    this.allGraphPositions = raw.byGraph as Record<string, Record<string, NodePosition>>;
+                } else {
+                    // Legacy: flat map of nodeId → position → single default graph
+                    const legacy = raw as Record<string, NodePosition>;
+                    this.allGraphPositions = { default: legacy || {} };
+                }
+                const activeId = this.graphHost.getActiveGraphId();
+                const slice = this.allGraphPositions[activeId] || {};
                 this.nodePositionsCache.clear();
-                for (const [nodeId, pos] of Object.entries(positions)) {
+                for (const [nodeId, pos] of Object.entries(slice)) {
                     this.nodePositionsCache.set(nodeId, pos);
                 }
-                console.debug(`[GraphView] Loaded ${this.nodePositionsCache.size} saved node positions: `,
-                    Array.from(this.nodePositionsCache.entries()).slice(0, 3));
+                if (this.graphSelectEl) {
+                    this.populateGraphSelect();
+                    this.graphSelectEl.value = activeId;
+                }
+                console.debug(`[GraphView] Loaded ${this.nodePositionsCache.size} saved node positions for graph "${activeId}"`);
             } else {
                 console.debug('[GraphView] Positions file not found');
             }
         } catch (error) {
-            // File doesn't exist or is invalid - start fresh
             console.debug('[GraphView] No saved positions found, starting fresh:', error);
         }
     }
@@ -2709,13 +2848,11 @@ export class GraphView extends ItemView {
      */
     private async savePositions(): Promise<void> {
         try {
-            const positions: Record<string, NodePosition> = {};
-            for (const [nodeId, pos] of this.nodePositionsCache.entries()) {
-                positions[nodeId] = pos;
-            }
+            const activeId = this.graphHost.getActiveGraphId();
+            this.allGraphPositions[activeId] = Object.fromEntries(this.nodePositionsCache);
 
-            const content = JSON.stringify(positions, null, 2);
-            console.debug(`[GraphView] Saving ${Object.keys(positions).length} positions to ${NODE_POSITIONS_FILE} `);
+            const content = JSON.stringify({ version: 2, byGraph: this.allGraphPositions }, null, 2);
+            console.debug(`[GraphView] Saving graph "${activeId}" (${this.nodePositionsCache.size} nodes) to ${NODE_POSITIONS_FILE}`);
 
             // Ensure directory exists first
             const dir = NODE_POSITIONS_FILE.substring(0, NODE_POSITIONS_FILE.lastIndexOf('/'));

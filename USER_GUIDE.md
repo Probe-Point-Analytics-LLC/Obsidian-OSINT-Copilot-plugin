@@ -205,6 +205,13 @@ What TTPs are associated with Lazarus Group?
 - **Right-click** for context menu options
 - **Zoom/Pan** with mouse wheel and drag
 
+**Graph workspaces**: Use the **Graph** dropdown in the graph toolbar to switch between saved layouts (each workspace stores its own node positions in `OSINTCopilot/graph-positions.json`). **+ new** creates another workspace; **✕** removes the current one (not **Default**).
+
+**Locking notes from the graph**:
+- Enter **box select**, select entities and/or relationship edges, then click **🔒 lock area**. Those notes become **read-only** in Obsidian (preview only; edit actions hidden) until you **unlock** via the lock button in the note header or **Unlock all** under plugin settings (**Graph note lock**).
+- **Orchestration** and **task agents** will not overwrite locked paths. Deleting or editing entities through the plugin is blocked until unlock.
+- Locks are stored in plugin data (paths survive restarts). Renaming a locked note in the vault updates the lock entry. Deleting a file outside the plugin still removes the file from disk.
+
 **Creating Entities**:
 1. Enable **Graph generation** under **Skills**, attach or paste source text, and run orchestration so the planner can use `EXTRACT_TO_GRAPH`
 2. Manually create via Command Palette: "Create Entity"

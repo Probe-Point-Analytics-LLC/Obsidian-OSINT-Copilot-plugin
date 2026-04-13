@@ -24,6 +24,7 @@ export async function applyVaultFilesV1(
 	data: VaultFilesV1,
 	agentOutputRoots: string[],
 	globalAllowlistRoots: string[],
+	isPathLocked?: (path: string) => boolean,
 ): Promise<ApplyVaultFilesResult> {
 	const result: ApplyVaultFilesResult = { created: [], updated: [], errors: [] };
 
@@ -40,6 +41,11 @@ export async function applyVaultFilesV1(
 		const rel = normalizePath(file.path.replace(/\\/g, "/"));
 		if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
 			result.errors.push(`Not allowed: ${rel}`);
+			continue;
+		}
+
+		if (isPathLocked?.(rel)) {
+			result.errors.push(`Locked (unlock in editor or settings): ${rel}`);
 			continue;
 		}
 
