@@ -51,6 +51,9 @@ import { TaskAgentRegistry } from './src/task-agents/task-agent-registry';
 import { TaskAgentRunner } from './src/task-agents/task-agent-runner';
 import { TaskAgentBootstrapService } from './src/task-agents/task-agent-bootstrap';
 import { isTaskAgentRunnable } from './src/task-agents/task-agent-settings';
+import { SkillRegistry } from './src/skills/skill-registry';
+import { SkillBootstrapService } from './src/skills/skill-bootstrap';
+import { listSkillsForMenu } from './src/skills/skill-runtime';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -80,6 +83,10 @@ interface VaultAISettings {
   taskAgentGlobalOutputAllowlist: string;
   /** Per task-agent id: true/false overrides manifest enabled_default. */
   taskAgentOverrides: Record<string, boolean>;
+  /** Visible vault folder for custom skills (markdown). Built-ins toggled here too. */
+  skillsFolder: string;
+  /** Per-skill id (built-in or vault): enabled. Undefined defaults to true. */
+  skillToggles: Record<string, boolean>;
   // Custom API settings
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
@@ -141,6 +148,8 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   preferredTaskAgentId: "",
   taskAgentGlobalOutputAllowlist: ".osint-copilot/outputs/\nResearch/",
   taskAgentOverrides: {},
+  skillsFolder: 'OSINTCopilot/skills',
+  skillToggles: {},
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
@@ -171,6 +180,7 @@ export default class VaultAIPlugin extends Plugin {
   vaultPromptLoader!: VaultPromptLoader;
   taskAgentRegistry!: TaskAgentRegistry;
   taskAgentRunner!: TaskAgentRunner;
+  skillRegistry!: SkillRegistry;
 
   attachVaultSkillFromVault(): void {
     if (this.claudeCodeService && this.vaultPromptLoader) {
@@ -232,6 +242,13 @@ export default class VaultAIPlugin extends Plugin {
       await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
     } catch (e) {
       console.warn('OSINTCopilot: task-agent bootstrap failed:', e);
+    }
+    this.skillRegistry = new SkillRegistry(this.app, () => this.settings.skillsFolder);
+    this.skillRegistry.registerVaultEvents(this);
+    try {
+      await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
+    } catch (e) {
+      console.warn('OSINTCopilot: skill bootstrap failed:', e);
     }
     this.taskAgentRunner = new TaskAgentRunner(
       this.app,
@@ -478,8 +495,9 @@ export default class VaultAIPlugin extends Plugin {
       callback: () => {
         this.vaultPromptLoader?.invalidateAll();
         this.taskAgentRegistry?.invalidate();
+        this.skillRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new Notice("Vault prompts and task-agent registry refreshed.");
+        new Notice("Vault prompts, skills, and task-agent registry refreshed.");
       },
     });
 
@@ -491,10 +509,12 @@ export default class VaultAIPlugin extends Plugin {
           try {
             await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
             await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
+            await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
+            this.skillRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new Notice("Missing default prompt and task-agent files were created (existing files unchanged).");
+            new Notice("Missing default prompt, skills, and task-agent files were created (existing files unchanged).");
           } catch (e) {
             new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
           }
@@ -539,6 +559,9 @@ export default class VaultAIPlugin extends Plugin {
     if (!merged.taskAgentOverrides || typeof merged.taskAgentOverrides !== 'object') {
       merged.taskAgentOverrides = {};
     }
+    if (!merged.skillToggles || typeof merged.skillToggles !== 'object') {
+      merged.skillToggles = {};
+    }
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
       await this.saveData(this.settings);
@@ -568,11 +591,12 @@ export default class VaultAIPlugin extends Plugin {
     }
 
     this.taskAgentRegistry?.invalidate();
+    this.skillRegistry?.invalidate();
     this.taskAgentRunner?.updateOptions({
       globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
     });
 
-    // Refresh all chat views to update mode dropdowns
+    // Refresh all chat views (header controls)
     this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => {
       if (leaf.view instanceof ChatView) {
         leaf.view.refresh();
@@ -1502,13 +1526,10 @@ export class ChatView extends ItemView {
   activeCheckpointId: string | undefined;
   orchestrationMode: boolean = true;
   vaultGraphIngestMode: boolean = false;
-  modeDropdown!: HTMLSelectElement;
-  /** Shown only when `chatMode === 'general'`; bound to `settings.activeAgentId`. */
+  /** Bound to `settings.activeAgentId` (vault prompts). */
   agentDropdown!: HTMLSelectElement;
   agentSelectContainer!: HTMLElement;
-  /** Vault task agent (General mode); empty = orchestration. */
-  taskAgentDropdown!: HTMLSelectElement;
-  taskAgentSelectContainer!: HTMLElement;
+  /** Legacy: persisted on conversations; task agents are configured in settings only. */
   selectedTaskAgentId: string = "";
   graphGenerationMode: boolean = false;
   graphGenerationToggle!: HTMLInputElement;
@@ -1555,51 +1576,75 @@ export class ChatView extends ItemView {
     this.activeCheckpointId = undefined;
   }
 
-  private syncModesFromConversation(conv: ConversationMetadata) {
-    const mode = conv.chatMode ?? inferChatModeFromLegacyFields(conv);
-    this.applyChatMode(mode);
+  private syncModesFromConversation(_conv: ConversationMetadata) {
+    this.applyChatMode("general");
   }
 
-  private updateTaskAgentRowVisibility(): void {
-    if (!this.taskAgentSelectContainer) return;
-    const show =
-      this.chatMode === "general" && this.plugin.settings.taskAgentsEnabled;
-    this.taskAgentSelectContainer.style.display = show ? "" : "none";
-  }
-
-  private async populateTaskAgentDropdown() {
-    if (!this.taskAgentDropdown) return;
-    this.taskAgentDropdown.empty();
-    const none = this.taskAgentDropdown.createEl("option", {
-      text: "None (orchestration)",
-      value: "",
-    });
+  private async openSkillsMenu(anchor: HTMLElement) {
+    const menu = new Menu();
     try {
-      const all = await this.plugin.taskAgentRegistry.listAgents();
-      const cur = this.selectedTaskAgentId || "";
-      let matched = cur === "";
-      for (const a of all) {
-        if (!isTaskAgentRunnable(a, this.plugin.settings)) continue;
-        const opt = this.taskAgentDropdown.createEl("option", {
-          text: a.name || a.id,
-          value: a.id,
+      const rows = await listSkillsForMenu(
+        this.plugin.skillRegistry,
+        this.plugin.settings.skillToggles ?? {},
+      );
+      for (const { entry, enabled } of rows) {
+        menu.addItem((item) => {
+          item.setTitle(
+            entry.description
+              ? `${entry.name} — ${entry.description.slice(0, 120)}`
+              : entry.name,
+          );
+          item.setChecked(enabled);
+          item.onClick(async () => {
+            this.plugin.settings.skillToggles[entry.id] = !enabled;
+            await this.plugin.saveSettings();
+          });
         });
-        if (a.id === cur) {
-          opt.selected = true;
-          matched = true;
+      }
+    } catch (e) {
+      console.error("[ChatView] Skills menu:", e);
+      new Notice("Could not load skills.", 4000);
+    }
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle(`Add new skill… (${this.plugin.settings.skillsFolder})`);
+      item.onClick(() => void this.createNewSkillFile());
+    });
+    const r = anchor.getBoundingClientRect();
+    menu.showAtPosition({ x: r.left, y: r.bottom });
+  }
+
+  private async createNewSkillFile() {
+    const root = normalizePath(this.plugin.settings.skillsFolder.trim() || "OSINTCopilot/skills");
+    const id = `new_skill_${Date.now()}`;
+    const fileName = `new-skill-${Date.now()}.md`;
+    const path = normalizePath(`${root}/${fileName}`);
+    const body = `---
+skill_kind: vault
+id: ${id}
+name: New skill
+description: Short description for the planner tool list.
+---
+
+Instructions for this skill (local Claude).`;
+    try {
+      const parts = root.split("/").filter(Boolean);
+      let acc = "";
+      for (const p of parts) {
+        acc = acc ? `${acc}/${p}` : p;
+        if (!this.app.vault.getAbstractFileByPath(acc)) {
+          await this.app.vault.createFolder(acc);
         }
       }
-      if (!matched && cur) {
-        const opt = this.taskAgentDropdown.createEl("option", {
-          text: `${cur} (disabled)`,
-          value: "",
-        });
-        opt.selected = true;
-      } else if (matched && cur === "") {
-        none.selected = true;
+      await this.app.vault.create(path, body);
+      const f = this.app.vault.getAbstractFileByPath(path);
+      if (f instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(f);
       }
-    } catch {
-      none.selected = true;
+      this.plugin.skillRegistry.invalidate();
+      new Notice(`Created ${path}`);
+    } catch (e) {
+      new Notice(`Failed to create skill: ${e instanceof Error ? e.message : String(e)}`, 5000);
     }
   }
 
@@ -1684,6 +1729,7 @@ export class ChatView extends ItemView {
   }
 
   async saveCurrentConversation() {
+    this.applyChatMode("general");
     if (!this.currentConversation) {
       this.currentConversation = await this.plugin.conversationService.createConversation(
         this.chatHistory.length > 0 ? this.chatHistory[0].content : undefined,
@@ -1692,7 +1738,7 @@ export class ChatView extends ItemView {
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
-    this.currentConversation.chatMode = this.chatMode;
+    this.currentConversation.chatMode = "general";
     this.currentConversation.taskAgentId = this.selectedTaskAgentId.trim() || undefined;
     const f = legacyFlagsForChatMode(this.chatMode);
     this.currentConversation.localSearchMode = f.localSearchMode;
@@ -1750,33 +1796,15 @@ export class ChatView extends ItemView {
       void this.startNewConversation();
     });
 
-    // === Main Mode Selection Dropdown (Mutually Exclusive - can be "none" for Graph only Mode) ===
-    const modeSelectContainer = buttonGroup.createDiv("vault-ai-mode-select-container");
-    modeSelectContainer.setAttribute("title", "Select a mode, or choose 'graph generation' for entity extraction without AI chat");
-
-    const modeLabel = modeSelectContainer.createEl("label", {
-      text: "Mode:",
-      cls: "vault-ai-mode-select-label",
+    const skillsBtn = buttonGroup.createEl("button", {
+      text: "Skills",
+      cls: "vault-ai-skills-btn",
     });
-    modeLabel.htmlFor = "vault-ai-mode-dropdown";
-
-    this.modeDropdown = modeSelectContainer.createEl("select", {
-      cls: "vault-ai-mode-dropdown",
+    skillsBtn.title = "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
+    skillsBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.openSkillsMenu(skillsBtn);
     });
-    this.modeDropdown.id = "vault-ai-mode-dropdown";
-
-    const triModeOptions: { value: CopilotChatMode; label: string }[] = [
-      { value: "general", label: "🤖 General agent" },
-      { value: "graph", label: "🏷️ Graph generation" },
-      { value: "local", label: "🔍 Local search" },
-    ];
-    for (const option of triModeOptions) {
-      const optEl = this.modeDropdown.createEl("option", {
-        text: option.label,
-        value: option.value,
-      });
-      if (option.value === this.chatMode) optEl.selected = true;
-    }
 
     this.agentSelectContainer = buttonGroup.createDiv("vault-ai-agent-select-container");
     const agentLabel = this.agentSelectContainer.createEl("label", {
@@ -1789,38 +1817,12 @@ export class ChatView extends ItemView {
     });
     this.agentDropdown.id = "vault-ai-agent-dropdown";
     void this.populateAgentDropdown();
-    this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
     this.agentDropdown.addEventListener("change", () => {
       this.plugin.settings.activeAgentId = this.agentDropdown.value || "default";
       void this.plugin.saveSettings();
       this.plugin.vaultPromptLoader?.invalidateAll();
       this.plugin.attachVaultSkillFromVault();
       new Notice(`Active agent: ${this.plugin.settings.activeAgentId}`);
-    });
-
-    this.taskAgentSelectContainer = buttonGroup.createDiv("vault-ai-task-agent-select-container");
-    const taskAgentLabel = this.taskAgentSelectContainer.createEl("label", {
-      text: "Task:",
-      cls: "vault-ai-mode-select-label",
-    });
-    taskAgentLabel.htmlFor = "vault-ai-task-agent-dropdown";
-    this.taskAgentDropdown = this.taskAgentSelectContainer.createEl("select", {
-      cls: "vault-ai-task-agent-dropdown",
-    });
-    this.taskAgentDropdown.id = "vault-ai-task-agent-dropdown";
-    void this.populateTaskAgentDropdown();
-    this.updateTaskAgentRowVisibility();
-    this.taskAgentDropdown.addEventListener("change", () => {
-      this.selectedTaskAgentId = this.taskAgentDropdown.value || "";
-      this.plugin.settings.preferredTaskAgentId = this.selectedTaskAgentId;
-      void this.plugin.saveSettings();
-      void this.saveCurrentConversation();
-      this.updateInputPlaceholder();
-      new Notice(
-        this.selectedTaskAgentId
-          ? `Task agent: ${this.selectedTaskAgentId}`
-          : "Task agent: None (orchestration)",
-      );
     });
 
     // Settings shortcut button
@@ -1836,40 +1838,7 @@ export class ChatView extends ItemView {
       this.app.setting.openTabById(this.plugin.manifest.id);
     });
 
-    this.modeDropdown.addEventListener("change", () => {
-      const selectedValue = this.modeDropdown.value as CopilotChatMode;
-      if (selectedValue === "general" || selectedValue === "graph" || selectedValue === "local") {
-        this.applyChatMode(selectedValue);
-      }
-      if (this.agentSelectContainer) {
-        this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
-      }
-      this.updateTaskAgentRowVisibility();
-      if (this.chatMode === "general") {
-        void this.populateAgentDropdown();
-        void this.populateTaskAgentDropdown();
-      }
-      if (this.graphGenerationToggle) {
-        this.graphGenerationToggle.checked = this.graphGenerationMode;
-      }
-      this.updateGraphGenerationLabel();
-      this.updateAllModeLabels();
-      this.updateInputPlaceholder();
-      this.updateModeDisclaimer();
-      this.updateUploadButtonVisibility();
-      this.updateUrlButtonVisibility();
-      this.updateGraphToggleVisibility();
-      void this.saveCurrentConversation();
-      new Notice(
-        selectedValue === "general"
-          ? "General agent mode — orchestration and tools"
-          : selectedValue === "graph"
-            ? "Graph generation — extract entities from text (local Claude)"
-            : "Local search — vault Q&A",
-      );
-    });
-
-    // Legacy graph toggle hidden — graph vs local vs general is controlled by the mode dropdown only
+    // Legacy graph toggle hidden (orchestration + Skills drive tools)
     this.entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
     this.entityGenContainer.addClass("vault-ai-toggle-container");
     this.entityGenContainer.style.display = "none";
@@ -1976,9 +1945,7 @@ export class ChatView extends ItemView {
     this.dragOverlay = inputContainer.createDiv("vault-ai-drag-overlay");
     this.dragOverlay.createDiv({ text: "Drop file to extract text", cls: "vault-ai-drag-text" });
 
-    // Drag events on the input container - only enabled in Graph Only mode
     inputContainer.addEventListener("dragenter", (e) => {
-      if (!this.isGraphOnlyMode()) return;  // Only allow drag in Graph Only mode
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) {
@@ -1990,7 +1957,6 @@ export class ChatView extends ItemView {
     });
 
     inputContainer.addEventListener("dragleave", (e) => {
-      if (!this.isGraphOnlyMode()) return;
       e.preventDefault();
       e.stopPropagation();
       if (!inputContainer.contains(e.relatedTarget as Node)) {
@@ -1999,7 +1965,6 @@ export class ChatView extends ItemView {
     });
 
     inputContainer.addEventListener("dragover", (e) => {
-      if (!this.isGraphOnlyMode()) return;  // Only allow drag in Graph Only mode
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) {
@@ -2014,11 +1979,6 @@ export class ChatView extends ItemView {
       e.preventDefault();
       e.stopPropagation();
       this.dragOverlay.removeClass("active");
-
-      if (!this.isGraphOnlyMode()) {
-        new Notice("File drop only available in graph generation mode");
-        return;
-      }
 
       let handled = false;
 
@@ -2116,49 +2076,22 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
-    if (this.chatMode === "graph") {
-      return {
-        icon: "🏷️",
-        title: "Graph generation:",
-        text: "Text is sent to local Claude to propose entities and links (no general chat).",
-      };
-    }
-    if (this.chatMode === "general") {
-      return {
-        icon: "🤖",
-        title: "General agent:",
-        text: "Orchestration runs tools (local vault search, attachment extraction) using your vault agent and rules.",
-      };
-    }
-    if (this.chatMode === "local") {
-      return {
-        icon: "🔍",
-        title: "Local search:",
-        text: "Answers from your vault index; follow-up graph extraction from notes uses local Claude.",
-      };
-    }
-    return null;
+    return {
+      icon: "🤖",
+      title: "Orchestration:",
+      text: "The planner proposes tools enabled under **Skills** (local search, graph extraction, custom vault skills).",
+    };
   }
 
   updateUploadButtonVisibility() {
     if (this.uploadButtonEl) {
-      // Only show upload button in Graph Generation mode (Graph Only mode)
-      if (this.isGraphOnlyMode()) {
-        this.uploadButtonEl.style.display = "block";
-      } else {
-        this.uploadButtonEl.style.display = "none";
-      }
+      this.uploadButtonEl.style.display = "block";
     }
   }
 
   updateUrlButtonVisibility() {
     if (this.urlButtonEl) {
-      // Only show URL button in Graph Generation mode (Graph Only mode)
-      if (this.isGraphOnlyMode()) {
-        this.urlButtonEl.style.display = "block";
-      } else {
-        this.urlButtonEl.style.display = "none";
-      }
+      this.urlButtonEl.style.display = "block";
     }
   }
 
@@ -2510,7 +2443,7 @@ export class ChatView extends ItemView {
 
 
   isGraphOnlyMode(): boolean {
-    return this.chatMode === "graph";
+    return false;
   }
 
   // Show notice when entering Graph only Mode
@@ -2522,16 +2455,7 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    if (this.chatMode === "graph") {
-      return "Enter text to extract entities...";
-    }
-    if (this.chatMode === "general") {
-      if (this.selectedTaskAgentId.trim() && this.plugin.settings.taskAgentsEnabled) {
-        return "Describe what to write in the vault (task agent runs local Claude + JSON file apply)...";
-      }
-      return "Ask for an investigation (orchestration, tools, vault context)...";
-    }
-    return "Ask a question about your vault...";
+    return "Ask for an investigation; enable tools under Skills. Attach files or URLs for graph extraction when needed...";
   }
 
   // Update the input placeholder text
@@ -2619,14 +2543,7 @@ export class ChatView extends ItemView {
   }
 
   updateAllModeLabels() {
-    if (this.modeDropdown) {
-      this.modeDropdown.value = this.chatMode;
-    }
-    if (this.agentSelectContainer) {
-      this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
-    }
-    this.updateTaskAgentRowVisibility();
-    void this.populateTaskAgentDropdown();
+    void this.populateAgentDropdown();
     this.updateGraphGenerationLabel();
   }
 
@@ -3741,8 +3658,7 @@ export class ChatView extends ItemView {
     const value = this.inputEl.value.trim();
     if (!value && this.attachedFiles.length === 0 && !this.vaultGraphIngestMode) return;
 
-    // Check for URL in Graph Generation Mode
-    if (this.isGraphOnlyMode() && value.startsWith('http')) {
+    if (value.startsWith("http")) {
       const isUrlHandled = await this.handleUrlExtraction(value);
       if (isUrlHandled) {
         this.inputEl.value = ""; // Clear input if URL was handled
@@ -3931,21 +3847,10 @@ export class ChatView extends ItemView {
     // Save conversation after user message
     await this.saveCurrentConversation();
 
-    // Route by tri-mode (plus optional vault-wide ingest flag from legacy conversations)
     if (this.vaultGraphIngestMode) {
       await this.handleVaultGraphIngestOnly(processingValue, "");
-    } else if (this.chatMode === "graph") {
-      await this.handleGraphOnlyMode(processingValue);
-    } else if (
-      this.chatMode === "general" &&
-      this.selectedTaskAgentId.trim() &&
-      this.plugin.settings.taskAgentsEnabled
-    ) {
-      await this.handleVaultTaskAgent(processingValue);
-    } else if (this.chatMode === "general") {
-      await this.handleOrchestrationAgent(processingValue, "");
     } else {
-      await this.handleNormalChat(processingValue);
+      await this.handleOrchestrationAgent(processingValue, "");
     }
 
     // Save conversation after assistant response
@@ -5606,14 +5511,33 @@ class VaultAISettingTab extends PluginSettingTab {
           try {
             await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
             await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
+            await new SkillBootstrapService(this.plugin.app, () => this.plugin.settings.skillsFolder).ensureDefaultsInstalled();
             this.plugin.vaultPromptLoader?.invalidateAll();
             this.plugin.taskAgentRegistry?.invalidate();
+            this.plugin.skillRegistry?.invalidate();
             this.plugin.attachVaultSkillFromVault();
-            new Notice("Done. Open the prompts and task-agents folders in the vault to edit.");
+            new Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
           } catch (e) {
             new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
           }
         })
+      );
+
+    new Setting(containerEl).setName("Skills (orchestration)").setHeading();
+    new Setting(containerEl)
+      .setName("Skills folder")
+      .setDesc(
+        "Markdown skills the planner may invoke (SKILL_*). Toggle built-in Local search and Graph generation in the chat **Skills** menu.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("OSINTCopilot/skills")
+          .setValue(this.plugin.settings.skillsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.skillsFolder = value.trim() || "OSINTCopilot/skills";
+            this.plugin.skillRegistry?.invalidate();
+            await this.plugin.saveSettings();
+          }),
       );
 
     new Setting(containerEl).setName("Task agents (vault)").setHeading();

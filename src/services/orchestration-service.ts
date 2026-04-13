@@ -4,6 +4,13 @@ import { GraphApiService } from './api-service';
 import { AIOperation, EntityType, getEntityLabel, ProcessTextResponse } from '../entities/types';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
+import {
+	buildPlannerTooling,
+	filterToolsToCall,
+	parseVaultSkillPlannerTool,
+} from '../skills/skill-runtime';
+import type { PlannerTooling } from '../skills/skill-types';
+import { executeVaultSkillTool } from '../skills/skill-executor';
 
 export interface OrchestrationPlan {
     reasoning: string;
@@ -234,34 +241,36 @@ export class OrchestrationService {
         }
     }
 
-    /** Example default tools shown in the planner JSON template; aligns with routed intent. */
-    private defaultToolsForIntent(_intent: OrchestrationIntent): string[] {
-        return ["LOCAL_VAULT"];
-    }
-
-    private buildRoutedIntentInstructions(intent: OrchestrationIntent, hasAttachments: boolean): string {
-        const att = hasAttachments
-            ? " Attachments are present; EXTRACT_TO_GRAPH may be included if it helps ingest files into the graph."
-            : " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
+    private describeRoutedIntentLine(intent: OrchestrationIntent): string {
         switch (intent) {
             case "VAULT_GRAPH_BUILD":
             case "VAULT_QA":
-                return `${intent} — User wants answers or graph data from their vault.${att} Use "LOCAL_VAULT" to search notes.`;
+                return `${intent} — User wants answers or graph data from their vault.`;
             default:
-                return `${intent} — Use LOCAL_VAULT to search the user's vault.${att}`;
+                return `${intent} — User request (investigation / OSINT workflow).`;
         }
     }
 
-    /** When the LLM returns no tools, default to LOCAL_VAULT. */
-    private fallbackProposalForEmptyTools(_routedIntent: OrchestrationIntent, query: string): {
+    /** When the LLM returns no tools, default to first enabled tool from skills. */
+    private fallbackProposalForEmptyTools(query: string, tooling: PlannerTooling): {
         toolsToCall: string[];
         planSummary: string;
         directResponse: string;
     } {
+        const first =
+            tooling.defaultToolsExample[0] ?? [...tooling.enabledPlannerToolIds][0];
+        if (!first) {
+            return {
+                toolsToCall: [],
+                planSummary: `### No tools available\nEnable at least one skill in the chat **Skills** menu.`,
+                directResponse: `No skills are enabled. Open **Skills** in the chat header and turn on at least one skill.`,
+            };
+        }
+        const label = first === "LOCAL_VAULT" ? "Local vault" : first === "EXTRACT_TO_GRAPH" ? "Graph extraction" : first;
         return {
-            toolsToCall: ["LOCAL_VAULT"],
-            planSummary: `### Investigation Plan\n1. **Local vault** — Search your Obsidian notes for: "${query}"\n\n*Adjust modules before running.*`,
-            directResponse: `I'll search your vault for relevant material.`,
+            toolsToCall: [first],
+            planSummary: `### Investigation Plan\n1. **${label}** — Run for: "${query}"\n\n*Adjust modules before running.*`,
+            directResponse: `I'll run **${label}** for your request.`,
         };
     }
 
@@ -284,23 +293,46 @@ export class OrchestrationService {
         const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
         const vaultAug = await this.getVaultPromptAugmentation();
 
-        // Format memory for context
         const memoryContext =
             conversationMemory && conversationMemory.length > 0
                 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
                 : "No previous conversation.";
 
-        // Check if the user is approving a previously proposed plan
         const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
 
-        // Only include EXTRACT_TO_GRAPH when attachments are present
         const hasAttachments = !!(attachmentsContext && attachmentsContext.trim().length > 0);
-        const extractToGraphTool = hasAttachments
-            ? '\n- "EXTRACT_TO_GRAPH" - Extract entities from attached files/links into the knowledge graph.'
-            : "";
+        const tooling = await buildPlannerTooling(
+            this.plugin.skillRegistry,
+            this.plugin.settings.skillToggles ?? {},
+            hasAttachments,
+        );
 
-        const defaultToolsExample = this.defaultToolsForIntent(routedIntent);
-        const routedIntentBlock = this.buildRoutedIntentInstructions(routedIntent, hasAttachments);
+        if (tooling.enabledPlannerToolIds.size === 0) {
+            return {
+                reasoning: "No skills are enabled for this session.",
+                toolsToCall: [],
+                graphCommands: [],
+                isProposal: true,
+                planSummary:
+                    "### No tools available\nEnable at least one skill using the **Skills** button in the chat header (e.g. Local search).",
+                directResponse:
+                    "No skills are enabled. Open **Skills** in the chat header and enable at least one skill, then send your message again.",
+            };
+        }
+
+        const routedIntentBlock = tooling.buildRoutedIntentBlock(
+            this.describeRoutedIntentLine(routedIntent),
+            hasAttachments,
+        );
+
+        const skillHints =
+            tooling.criticalRulesLines.length > 0
+                ? `\n   Hints:\n${tooling.criticalRulesLines.map((l) => `   - ${l}`).join("\n")}`
+                : "";
+
+        const availableToolsBlock = tooling.availableToolsLines.join("\n");
+        const defaultToolsExample =
+            tooling.defaultToolsExample.length > 0 ? tooling.defaultToolsExample : [...tooling.enabledPlannerToolIds].slice(0, 2);
 
         const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
 
@@ -310,14 +342,14 @@ ${vaultAug ? `\n=== VAULT-DEFINED RULES AND AGENT (user-editable markdown) ===\n
 
 === CRITICAL RULES ===
 1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. For ANY investigative question, propose LOCAL_VAULT to search existing vault notes. If attachments are present, also propose EXTRACT_TO_GRAPH.
-3. Set "isProposal" to true and list the tools you recommend.
+2. Propose ONLY tools listed under AVAILABLE TOOLS below. Do not invent tool ids.${skillHints}
+3. Set "isProposal" to true and list the tools you recommend (for new requests).
 4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
 5. Your "directResponse" should describe your PLAN, never the answer to the question.
 6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
 
 === AVAILABLE TOOLS ===
-- "LOCAL_VAULT" - Search across matching Obsidian notes in the vault.${extractToGraphTool}
+${availableToolsBlock}
 
 === USER'S ORCHESTRATION CONTEXT ===
 ${systemPrompt}
@@ -345,7 +377,6 @@ Respond with this exact JSON structure:
 }`;
 
         try {
-            // Use the remote model for classification natively with JSON mode enforced
             const responseText = await this.plugin.graphApiService.callRemoteModel(
                 [{ role: "user", content: prompt }],
                 true
@@ -353,18 +384,13 @@ Respond with this exact JSON structure:
 
             console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2000));
 
-            // Try to extract JSON from the response text
             const match = responseText.match(/\{[\s\S]*\}/);
             if (match) {
                 const rawPlan = JSON.parse(match[0]);
                 console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1000));
 
-                // Handle both camelCase and snake_case keys from LLM
                 let toolsToCall = rawPlan.toolsToCall || rawPlan.tools_to_call || [];
-                // Filter out EXTRACT_TO_GRAPH when no attachments present
-                if (!hasAttachments) {
-                    toolsToCall = toolsToCall.filter((t: string) => t !== "EXTRACT_TO_GRAPH");
-                }
+                toolsToCall = filterToolsToCall(toolsToCall, tooling.enabledPlannerToolIds, hasAttachments);
 
                 const plan: OrchestrationPlan = {
                     reasoning: rawPlan.reasoning || "No reasoning provided.",
@@ -375,9 +401,8 @@ Respond with this exact JSON structure:
                     planSummary: rawPlan.planSummary || rawPlan.plan_summary
                 };
 
-                // GUARD: If this is NOT an approval and the LLM still returned no tools, use intent-aligned defaults
                 if (!isApproval && plan.toolsToCall.length === 0) {
-                    const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
+                    const fb = this.fallbackProposalForEmptyTools(query, tooling);
                     console.warn(
                         "[OrchestrationService] LLM returned no tools for a non-approval query. Forcing fallback proposal:",
                         routedIntent,
@@ -396,13 +421,13 @@ Respond with this exact JSON structure:
             }
         } catch (error) {
             console.error("[OrchestrationService] Failed to classify intent:", error);
-            const fb = this.fallbackProposalForEmptyTools(routedIntent, query);
+            const fb = this.fallbackProposalForEmptyTools(query, tooling);
             return {
                 reasoning: "Fallback due to classification error.",
                 toolsToCall: fb.toolsToCall,
                 graphCommands: [],
                 isProposal: true,
-                planSummary: `### Investigation Plan\n1. Fallback — ${fb.toolsToCall.join(", ")}\n\n*The planner request failed; adjust modules and click Run.*`,
+                planSummary: `### Investigation Plan\n1. Fallback — ${fb.toolsToCall.length ? fb.toolsToCall.join(", ") : "none"}\n\n*The planner request failed; adjust modules and click Run.*`,
                 directResponse: fb.directResponse,
             };
         }
@@ -646,8 +671,18 @@ Respond with this exact JSON structure:
             options?.globalAbort?.aborted === true ||
             options?.abortSignals?.[toolId]?.aborted === true;
 
+        const vaultSkillList = await this.plugin.skillRegistry.listVaultSkills();
+        const vaultSkillTitle = (toolId: string): string => {
+            const id = parseVaultSkillPlannerTool(toolId);
+            if (!id) return toolId;
+            const m = vaultSkillList.find((s) => s.id === id);
+            return m?.name || toolId;
+        };
+
         const promises = tools.map(async (tool) => {
-            const displayName = toolToDisplayName[tool] || tool;
+            const displayName =
+                toolToDisplayName[tool] ||
+                (tool.startsWith("SKILL_") ? vaultSkillTitle(tool) : tool);
             try {
                 switch (tool) {
                     case "LOCAL_VAULT": {
@@ -738,8 +773,35 @@ Respond with this exact JSON structure:
                         break;
                     }
 
-                    default:
+                    default: {
+                        if (tool.startsWith("SKILL_")) {
+                            if (isCancelled(tool)) {
+                                results[tool] = "Cancelled by user.";
+                                onProgress(displayName, "Cancelled", 100);
+                                break;
+                            }
+                            onProgress(displayName, "Running vault skill (local Claude)...", 35);
+                            const sig =
+                                options?.abortSignals?.[tool] ?? options?.globalAbort;
+                            try {
+                                const out = await executeVaultSkillTool(
+                                    this.plugin,
+                                    tool,
+                                    query,
+                                    attachmentsContext,
+                                    sig,
+                                );
+                                results[tool] = out;
+                                onProgress(displayName, "Complete", 100);
+                            } catch (e) {
+                                const msg = e instanceof Error ? e.message : String(e);
+                                results[tool] = `Skill error: ${msg}`;
+                                onProgress(displayName, "Failed", 100);
+                            }
+                            break;
+                        }
                         console.warn(`[OrchestrationService] Unknown tool: ${tool}`);
+                    }
                 }
             } catch (error) {
                 console.error(`[OrchestrationService] Tool ${tool} failed:`, error);

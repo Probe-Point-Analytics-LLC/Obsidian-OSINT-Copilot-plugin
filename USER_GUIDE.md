@@ -17,7 +17,7 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — **Graph generation** (entity extraction from text), **local search** (vault Q&A), and **general agent** (orchestration with vault prompts) use the **Claude Code CLI** (`claude`) on your machine. You control behavior partly via **vault Markdown** under `.osint-copilot/prompts/`.
+2. **Local AI** — **Orchestration** (planner + tools) uses the **Claude Code CLI** (`claude`) on your machine. Enable **Local search**, **Graph generation**, and **custom skills** from the chat **Skills** menu; custom skills are Markdown under **`OSINTCopilot/skills/`** (visible in your vault). Vault **rules and agents** live under `.osint-copilot/prompts/` (or your configured prompts folder).
 3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. All AI traffic goes through **Claude Code** when you use AI features.
 
 ### Who is this for?
@@ -92,19 +92,27 @@ On load, the plugin creates missing files under **`.osint-copilot/prompts/`** (p
 
 **Commands:** **Reload vault prompts**; **Install missing vault prompt files** (adds defaults without overwriting your edits).
 
-### 3. Entity base path
+### 3. Skills folder (custom planner skills)
+
+Default **`OSINTCopilot/skills`** (not hidden under `.osint-copilot/`). On first run the plugin creates **`README.md`** and **`example-skill.md`** if missing.
+
+Each custom skill is a Markdown file with YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description`). The orchestration planner may propose **`SKILL_<id>`** when that skill is enabled in the chat **Skills** menu.
+
+**Settings:** **Skills folder** under **OSINT Copilot**.
+
+### 4. Entity base path
 
 Default **`OSINTCopilot`**. Entity types become subfolders; **`Connections/`** holds relationship notes.
 
-### 4. Conversation folder
+### 5. Conversation folder
 
 Default **`.osint-copilot/conversations`**. Each chat is a **Markdown** note with metadata and messages stored in an embedded **JSON** block (human-readable plus machine-parseable).
 
-### 5. Max notes
+### 6. Max notes
 
 Caps how many notes are pulled into context for **local search** and related flows (typical range **5–30**).
 
-### 6. System prompt
+### 7. System prompt
 
 Default text for vault-oriented answers; combine with **vault rules/agents** for orchestration.
 
@@ -127,29 +135,29 @@ Access the main chat interface via:
 - **Ribbon Icon**: Click the OSINT Copilot icon in the left sidebar
 - **Command Palette**: `Ctrl/Cmd + P` → "OSINT Copilot: Open Chat"
 
-### Operating modes
+### Orchestration and Skills
 
-Use the **mode dropdown** in the chat header:
+The chat uses a **single orchestration agent**: the planner proposes which **tools** to run; you choose which capabilities are available via the **Skills** button in the chat header.
 
-| Mode | Role |
-|------|------|
-| **General agent** | Orchestration using **vault prompts** (rules, agents, skills) and **Claude Code CLI** |
-| **Graph generation** | Extract entities and relationships from text you paste or from assistant output |
-| **Local search** | Vault Q&A — **Claude Code CLI** + indexed note context |
+| Built-in skill | Planner tool | Role |
+|----------------|--------------|------|
+| **Local search** | `LOCAL_VAULT` | Search across your vault notes for relevant snippets |
+| **Graph generation** | `EXTRACT_TO_GRAPH` | Extract entities into the graph (when you attach files, URLs, or pasted text the orchestration pipeline includes as context) |
 
-Pick one primary mode per conversation; switch when your task changes.
+**Custom skills** live as Markdown under **`OSINTCopilot/skills/`** (configurable in **Settings → OSINT Copilot → Skills folder**). Each file uses `skill_kind: vault` and an `id` in frontmatter; the planner can invoke them as `SKILL_<id>`. Use **Add new skill…** in the Skills menu to create a template file.
+
+Toggle skills on or off per vault; the planner only sees **enabled** skills. Your **vault prompts** (rules, agents under the prompts folder) still apply to orchestration.
 
 ---
 
-### Feature 1: Vault Q&A (local search)
+### Feature 1: Vault Q&A (local search via orchestration)
 
-**Purpose:** Ask questions over your vault; answers use **Claude Code CLI** and selected note context.
+**Purpose:** Ask questions over your vault; the orchestration planner may use the **Local search** skill (`LOCAL_VAULT`) and synthesize answers with **Claude Code CLI**.
 
 **How it works**
-1. Select **Local search** in the mode dropdown.
-2. Type your question.
-3. The plugin indexes/selects notes, then calls **local** `claude` with that context.
-4. Use **Reload vault prompts** after editing rules under `.osint-copilot/prompts/`.
+1. Ensure **Local search** is enabled under **Skills**.
+2. Type your question; the planner proposes tools — approve the plan when prompted.
+3. Use **Reload vault prompts** after editing rules under `.osint-copilot/prompts/`.
 
 **Example Queries**:
 ```
@@ -198,7 +206,7 @@ What TTPs are associated with Lazarus Group?
 - **Zoom/Pan** with mouse wheel and drag
 
 **Creating Entities**:
-1. Use **Graph generation** mode in chat to auto-extract from text
+1. Enable **Graph generation** under **Skills**, attach or paste source text, and run orchestration so the planner can use `EXTRACT_TO_GRAPH`
 2. Manually create via Command Palette: "Create Entity"
 3. Entities are saved as markdown notes with YAML frontmatter
 
@@ -209,12 +217,12 @@ What TTPs are associated with Lazarus Group?
 **Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`.osint-copilot/prompts/skills/graph-extraction.md`**.
 
 **How to use**
-1. Select **Graph generation** in the mode dropdown.
-2. Paste source text (or use assistant output in the same thread).
-3. The plugin runs **local** `claude` with the graph-extraction skill.
+1. Enable **Graph generation** under **Skills**.
+2. Attach files, paste a URL (or text), or include content so the orchestration run has attachment/context for `EXTRACT_TO_GRAPH`.
+3. The plugin runs **local** `claude` with the graph-extraction skill when that tool is executed.
 
-**A. Entity-focused** — Use **Graph generation** alone and paste raw intel.  
-**B. After Q&A** — Run **Local search** first, then switch to **Graph generation** to structure findings into entities.
+**A. Entity-focused** — Paste raw intel with **Graph generation** enabled.  
+**B. After vault search** — Run a turn with **Local search** enabled, then continue in the same thread with attachments if you need extraction.
 
 **Extracted Information**:
 - Entity type and properties

@@ -28,6 +28,8 @@ describe('ChatView', () => {
             preferredTaskAgentId: '',
             taskAgentGlobalOutputAllowlist: '.osint-copilot/outputs/',
             taskAgentOverrides: {},
+            skillsFolder: 'OSINTCopilot/skills',
+            skillToggles: {},
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
@@ -45,6 +47,11 @@ describe('ChatView', () => {
             registerVaultEvents: vi.fn(),
         };
         (plugin as any).taskAgentRunner = { run: vi.fn(), updateOptions: vi.fn() };
+        (plugin as any).skillRegistry = {
+            listVaultSkills: vi.fn().mockResolvedValue([]),
+            invalidate: vi.fn(),
+            registerVaultEvents: vi.fn(),
+        };
 
         leaf = new App().workspace.getLeaf(false);
         chatView = new ChatView(leaf, plugin);

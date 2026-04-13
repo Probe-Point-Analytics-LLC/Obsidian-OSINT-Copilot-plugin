@@ -16,10 +16,7 @@ function applyModeToView(view: ChatView, mode: 'general' | 'graph' | 'local') {
 }
 
 /**
- * Tri-mode send routing:
- * - chatMode === 'graph' → handleGraphOnlyMode (local processTextInChunks)
- * - chatMode === 'general' → handleOrchestrationAgent → orchestrationService.processRequest
- * - chatMode === 'local' → handleNormalChat (vault Q&A)
+ * Send routing: orchestration (handleOrchestrationAgent) except vault graph ingest mode.
  */
 describe('ChatView send routing', () => {
   let plugin: VaultAIPlugin;
@@ -46,6 +43,8 @@ describe('ChatView send routing', () => {
       preferredTaskAgentId: '',
       taskAgentGlobalOutputAllowlist: '.osint-copilot/outputs/',
       taskAgentOverrides: {},
+      skillsFolder: 'OSINTCopilot/skills',
+      skillToggles: {},
       apiProvider: 'claude-code' as const,
       claudeCodeCliPath: 'claude',
       claudeCodeModel: 'sonnet',
@@ -111,6 +110,13 @@ describe('ChatView send routing', () => {
       updateOptions: vi.fn(),
     } as any;
 
+    plugin.skillRegistry = {
+      listVaultSkills: vi.fn().mockResolvedValue([]),
+      getVaultSkillById: vi.fn(),
+      invalidate: vi.fn(),
+      registerVaultEvents: vi.fn(),
+    } as any;
+
     const leaf = {
       view: null,
       openFile: vi.fn(),
@@ -165,19 +171,14 @@ describe('ChatView send routing', () => {
     view.saveCurrentConversation = vi.fn();
   });
 
-  it('routes local mode to vault Q&A (handleNormalChat)', async () => {
+  it('routes local mode to orchestration (legacy mode ignored)', async () => {
     applyModeToView(view, 'local');
     view.inputEl.value = 'What is in my vault?';
 
     await view.handleSend();
 
-    expect(plugin.extractEntitiesFromQuery).toHaveBeenCalledWith('What is in my vault?', true);
-    expect(plugin.retrieveNotes).toHaveBeenCalled();
-    expect(plugin.askVaultStream).toHaveBeenCalled();
-    expect(plugin.orchestrationService.processRequest).not.toHaveBeenCalled();
-
-    const lastMsg = view.chatHistory[view.chatHistory.length - 1];
-    expect(lastMsg.role).toBe('assistant');
+    expect(plugin.orchestrationService.processRequest).toHaveBeenCalled();
+    expect(plugin.askVaultStream).not.toHaveBeenCalled();
   });
 
   it('routes general mode to orchestration (processRequest)', async () => {
@@ -190,72 +191,15 @@ describe('ChatView send routing', () => {
     expect(plugin.askVaultStream).not.toHaveBeenCalled();
   });
 
-  it('routes general mode with task agent to taskAgentRunner', async () => {
-    applyModeToView(view, 'general');
-    view.selectedTaskAgentId = 'memo-writer';
-    view.inputEl.value = 'Write a short memo';
-
-    const manifest = {
-      agentKind: 'task' as const,
-      id: 'memo-writer',
-      name: 'Memo',
-      description: '',
-      outputSchema: 'vault_files_v1' as const,
-      outputRoots: ['.osint-copilot/outputs/memos/'],
-      contextRoots: [] as string[],
-      maxNotes: 10,
-      maxContextChars: 5000,
-      enabledDefault: true,
-      model: '',
-      body: 'instructions',
-      sourcePath: 'x.md',
-    };
-    (plugin.taskAgentRegistry.getById as ReturnType<typeof vi.fn>).mockResolvedValue(manifest);
-    (plugin.taskAgentRunner.run as ReturnType<typeof vi.fn>).mockResolvedValue({
-      assistantText: 'Done.',
-      appliedPaths: ['.osint-copilot/outputs/memos/a.md'],
-    });
-
-    await view.handleSend();
-
-    expect(plugin.taskAgentRunner.run).toHaveBeenCalledWith(
-      manifest,
-      'Write a short memo',
-      expect.any(AbortSignal),
-    );
-    expect(plugin.orchestrationService.processRequest).not.toHaveBeenCalled();
-  });
-
-  it('routes graph mode to processTextInChunks', async () => {
+  it('routes graph mode to orchestration (legacy graph-only path removed)', async () => {
     applyModeToView(view, 'graph');
-    expect(view.isGraphOnlyMode()).toBe(true);
+    expect(view.isGraphOnlyMode()).toBe(false);
 
     const text = 'Apple Inc. CEO Tim Cook announced new iPhone.';
     view.inputEl.value = text;
 
-    const mockResponse = {
-      success: true,
-      operations: [
-        {
-          action: 'create',
-          entities: [{ type: 'Person', properties: { name: 'Tim Cook' } }],
-        },
-      ],
-    };
-    (plugin.graphApiService.processTextInChunks as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockResponse,
-    );
-
     await view.handleSend();
 
-    expect(plugin.graphApiService.processTextInChunks).toHaveBeenCalledWith(
-      text,
-      [],
-      undefined,
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(AbortSignal),
-    );
-    expect(plugin.orchestrationService.processRequest).not.toHaveBeenCalled();
+    expect(plugin.orchestrationService.processRequest).toHaveBeenCalled();
   });
 });
