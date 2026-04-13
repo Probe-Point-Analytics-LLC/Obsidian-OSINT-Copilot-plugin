@@ -4,9 +4,9 @@ import { describe, it, expect } from 'vitest';
 // Use native fetch (Node 18+)
 
 
-// Configuration from user
-const REPORT_API_KEY = "enc:gAAAAABpYFzA3eh491NP_1A-sR0YKtBcA_uc-cHP7eDT8UMcbdEEDHLhjghkf2C4c36WwRLL-ILrwZt52L2pCGk4Wjfs3IxQT7_uEUqnEgXm4xTxm09UyTUCYl-MndJhVZEJP-XuOaEj";
-const BASE_URL = "https://api.osint-copilot.com"; // Assuming this is the base URL based on code reading or I should default to what's in code.
+// Set RUN_REAL_E2E=1 and OSINT_COPILOT_E2E_KEY to run (hits production API).
+const REPORT_API_KEY = process.env.OSINT_COPILOT_E2E_KEY ?? '';
+const BASE_URL = "https://api.osint-copilot.com";
 // Checking main.ts line 5003: const endpoint = `${REPORT_API_BASE_URL}/api/darkweb/investigate`;
 // Need to confirm REPORT_API_BASE_URL. Usually defined at top of file.
 // I will assume it is "https://api.osint-copilot.com" or similar.
@@ -52,7 +52,7 @@ async function requestUrl(options: any) {
 describe('Report Generation Loop Reproduction', () => {
 
     // Set timeout to 5 minutes to allow for realistic polling
-    it('should reproduce the report generation loop', async () => {
+    it.skipIf(!process.env.RUN_REAL_E2E || !REPORT_API_KEY)('should reproduce the report generation loop', async () => {
         const query = "Lukoil";
         console.log(`Starting report generation for: ${query}`);
 

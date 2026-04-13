@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 
-// Configuration
-const REPORT_API_KEY = "guest";
-const API_BASE_URL = "http://localhost:5000";
+// Local stack: RUN_REAL_E2E=1, OSINT_COPILOT_E2E_KEY=guest (or your key), optional OSINT_COPILOT_E2E_API_URL
+const REPORT_API_KEY = process.env.OSINT_COPILOT_E2E_KEY ?? '';
+const API_BASE_URL = process.env.OSINT_COPILOT_E2E_API_URL ?? 'http://localhost:5000';
 
 async function requestUrl(options: any) {
     const { url, method, headers, body } = options;
@@ -42,7 +42,7 @@ async function requestUrl(options: any) {
 describe('Real End-to-End Report Generation', () => {
 
     // Set timeout to 5 minutes
-    it.skipIf(!process.env.RUN_REAL_E2E)('should generate and download a report from production', async () => {
+    it.skipIf(!process.env.RUN_REAL_E2E || !REPORT_API_KEY)('should generate and download a report from production', async () => {
         const query = "E2E Test " + Date.now(); // Unique query
         console.log(`Starting real report generation for: ${query}`);
 

@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 
 // Configuration
-const REPORT_API_KEY = "enc:gAAAAABpYFzA3eh491NP_1A-sR0YKtBcA_uc-cHP7eDT8UMcbdEEDHLhjghkf2C4c36WwRLL-ILrwZt52L2pCGk4Wjfs3IxQT7_uEUqnEgXm4xTxm09UyTUCYl-MndJhVZEJP-XuOaEj";
+const REPORT_API_KEY = process.env.OSINT_COPILOT_E2E_KEY ?? '';
 const API_BASE_URL = "https://api.osint-copilot.com";
 
 async function requestUrl(options: any) {
@@ -41,7 +41,7 @@ async function requestUrl(options: any) {
 
 describe('Simulated E2E Report Generation', () => {
 
-    it('should generate report, simulate callback, and download', async () => {
+    it.skipIf(!process.env.RUN_REAL_E2E || !REPORT_API_KEY)('should generate report, simulate callback, and download', async () => {
         const query = "Simulated Callback Test " + Date.now();
         console.log(`Starting simulated report generation for: ${query}`);
 
