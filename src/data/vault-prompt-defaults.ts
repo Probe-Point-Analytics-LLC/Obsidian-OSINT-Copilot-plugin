@@ -23,6 +23,8 @@ This folder is **managed by you**. The plugin copies these files once when they 
 | \`agents/*.md\` | One file per agent; YAML frontmatter \`id\`, \`name\`, \`description\`; body = extra system instructions. |
 | \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (Claude CLI). Edits apply on next extraction after reload. |
 
+**Task agents** (separate folder, default \`.osint-copilot/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude — see **Settings → Task agents** and the README inside that folder.
+
 ## Settings
 
 **Settings → OSINT Copilot → Vault prompts** — folder path, active agent id, install missing files, reload cache.

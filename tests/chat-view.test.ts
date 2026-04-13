@@ -16,21 +16,35 @@ describe('ChatView', () => {
         plugin.settings = {
             systemPrompt: 'Test Prompt',
             maxNotes: 5,
-            reportApiKey: 'test-key',
-            reportOutputDir: 'Reports',
-            graphApiUrl: 'https://api.test.com',
             entityBasePath: 'Test',
             enableGraphFeatures: true,
             autoRefreshGraph: true,
             autoOpenGraphOnEntityCreation: true,
             conversationFolder: '.test/conversations',
-            apiProvider: 'default',
-            customCheckpoints: []
+            promptsFolder: '.osint-copilot/prompts',
+            activeAgentId: 'default',
+            taskAgentsFolder: '.osint-copilot/task-agents',
+            taskAgentsEnabled: true,
+            preferredTaskAgentId: '',
+            taskAgentGlobalOutputAllowlist: '.osint-copilot/outputs/',
+            taskAgentOverrides: {},
+            apiProvider: 'claude-code',
+            claudeCodeCliPath: 'claude',
+            claudeCodeModel: 'sonnet',
+            themeMode: 'system',
+            customCheckpoints: [],
         } as any;
 
         (plugin as any).conversationService = {
             getMostRecentConversation: vi.fn().mockResolvedValue(null),
         };
+        (plugin as any).taskAgentRegistry = {
+            listAgents: vi.fn().mockResolvedValue([]),
+            getById: vi.fn(),
+            invalidate: vi.fn(),
+            registerVaultEvents: vi.fn(),
+        };
+        (plugin as any).taskAgentRunner = { run: vi.fn(), updateOptions: vi.fn() };
 
         leaf = new App().workspace.getLeaf(false);
         chatView = new ChatView(leaf, plugin);
@@ -50,9 +64,11 @@ describe('ChatView', () => {
         expect(chatView.getDisplayText()).toBe('Osint copilot');
     });
 
-    it('should initialize with default modes', () => {
-        expect(chatView.localSearchMode).toBe(true);
-        expect(chatView.graphGenerationMode).toBe(true);
+    it('should initialize with default tri-mode (general agent)', () => {
+        expect(chatView.chatMode).toBe('general');
+        expect(chatView.orchestrationMode).toBe(true);
+        expect(chatView.localSearchMode).toBe(false);
+        expect(chatView.graphGenerationMode).toBe(false);
     });
 
     it('should render basic UI on open', async () => {

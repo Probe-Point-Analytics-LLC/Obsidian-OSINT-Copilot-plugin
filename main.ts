@@ -14,8 +14,6 @@ import {
   WorkspaceLeaf,
   MarkdownRenderer,
   Menu,
-  requestUrl,
-  RequestUrlResponse,
   CachedMetadata,
   Component,
   ButtonComponent,
@@ -25,9 +23,17 @@ import {
 // Graph plugin imports
 import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
-import { GraphApiService, AISearchRequest, AISearchResponse, DetectedEntity } from './src/services/api-service';
+import { GraphApiService } from './src/services/api-service';
 import { ClaudeCodeService } from './src/services/claude-code-service';
-import { ConversationService, Conversation, ConversationMetadata, ConversationMessage } from './src/services/conversation-service';
+import {
+  ConversationService,
+  Conversation,
+  ConversationMetadata,
+  ConversationMessage,
+  type CopilotChatMode,
+  legacyFlagsForChatMode,
+  inferChatModeFromLegacyFields,
+} from './src/services/conversation-service';
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
@@ -40,10 +46,12 @@ import {
   type OrchestrationProgressMeta,
 } from './src/services/orchestration-service';
 import { UpdaterService } from './src/services/updater-service';
-import { EvidenceService } from './src/services/evidence-service';
-import { EvidencePickerModal } from './src/modals/evidence-picker-modal';
 import { VaultPromptLoader } from './src/services/vault-prompt-loader';
 import { VaultPromptBootstrapService } from './src/services/vault-prompt-bootstrap';
+import { TaskAgentRegistry } from './src/task-agents/task-agent-registry';
+import { TaskAgentRunner } from './src/task-agents/task-agent-runner';
+import { TaskAgentBootstrapService } from './src/task-agents/task-agent-bootstrap';
+import { isTaskAgentRunnable } from './src/task-agents/task-agent-settings';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -52,10 +60,6 @@ import { VaultPromptBootstrapService } from './src/services/vault-prompt-bootstr
 interface VaultAISettings {
   systemPrompt: string;
   maxNotes: number;
-  reportApiKey: string;
-  reportOutputDir: string;
-  // Graph plugin settings
-  graphApiUrl: string;
   entityBasePath: string;
   enableGraphFeatures: boolean;
   autoRefreshGraph: boolean;
@@ -67,6 +71,16 @@ interface VaultAISettings {
   promptsFolder: string;
   /** Agent id matching agents/<id>.md in prompts folder (frontmatter id). */
   activeAgentId: string;
+  /** Vault folder for task-agent manifests (agent_kind: task). */
+  taskAgentsFolder: string;
+  /** Master switch for vault task agents (General mode). */
+  taskAgentsEnabled: boolean;
+  /** Default task agent id for new chats (empty = orchestration only). */
+  preferredTaskAgentId: string;
+  /** Newlines or commas; paths must prefix any file a task agent creates. */
+  taskAgentGlobalOutputAllowlist: string;
+  /** Per task-agent id: true/false overrides manifest enabled_default. */
+  taskAgentOverrides: Record<string, boolean>;
   // Custom API settings
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
@@ -89,7 +103,6 @@ export interface CustomCheckpoint {
 // These model constants are no longer used for remote routing but kept for reference.
 const CHAT_MODEL = "claude-code";
 const ENTITY_EXTRACTION_MODEL = "claude-code";
-const DARKWEB_MODEL = "claude-code";
 const LOCAL_VAULT_MODEL = "claude-code";
 
 
@@ -115,10 +128,6 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   systemPrompt:
     "You are a vault assistant. Answer questions clearly and concisely based on the provided notes. Cite note paths in-line where useful.",
   maxNotes: 15,
-  reportApiKey: "",
-  reportOutputDir: "Reports",
-  // Graph plugin defaults - production API by default, can switch to localhost in settings
-  graphApiUrl: "https://api.osint-copilot.com",
   entityBasePath: "OSINTCopilot",
   enableGraphFeatures: true,
   autoRefreshGraph: true,
@@ -128,6 +137,11 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   conversationFolder: ".osint-copilot/conversations",
   promptsFolder: ".osint-copilot/prompts",
   activeAgentId: "default",
+  taskAgentsFolder: ".osint-copilot/task-agents",
+  taskAgentsEnabled: true,
+  preferredTaskAgentId: "",
+  taskAgentGlobalOutputAllowlist: ".osint-copilot/outputs/\nResearch/",
+  taskAgentOverrides: {},
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
@@ -138,11 +152,6 @@ const DEFAULT_SETTINGS: VaultAISettings = {
 
 
 export const CHAT_VIEW_TYPE = "vault-ai-chat-view";
-
-interface ReportProgress {
-  message: string;
-  percent: number;
-}
 
 // ============================================================================
 // MAIN PLUGIN CLASS
@@ -159,9 +168,10 @@ export default class VaultAIPlugin extends Plugin {
   customTypesService!: CustomTypesService;
   orchestrationService!: OrchestrationService;
   updaterService!: UpdaterService;
-  evidenceService!: EvidenceService;
   claudeCodeService: ClaudeCodeService | null = null;
   vaultPromptLoader!: VaultPromptLoader;
+  taskAgentRegistry!: TaskAgentRegistry;
+  taskAgentRunner!: TaskAgentRunner;
 
   attachVaultSkillFromVault(): void {
     if (this.claudeCodeService && this.vaultPromptLoader) {
@@ -195,10 +205,7 @@ export default class VaultAIPlugin extends Plugin {
 
     // Initialize graph plugin components
     this.entityManager = new EntityManager(this.app, this.settings.entityBasePath);
-    this.graphApiService = new GraphApiService(
-      this.settings.graphApiUrl,
-      this.settings.reportApiKey
-    );
+    this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
       apiProvider: 'claude-code',
       customApiUrl: '',
@@ -220,6 +227,22 @@ export default class VaultAIPlugin extends Plugin {
     this.vaultPromptLoader.registerVaultEvents(this);
     this.initClaudeCodeService();
 
+    this.taskAgentRegistry = new TaskAgentRegistry(this.app, () => this.settings.taskAgentsFolder);
+    this.taskAgentRegistry.registerVaultEvents(this);
+    try {
+      await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
+    } catch (e) {
+      console.warn('OSINTCopilot: task-agent bootstrap failed:', e);
+    }
+    this.taskAgentRunner = new TaskAgentRunner(
+      this.app,
+      () => this.claudeCodeService,
+      this.vaultPromptLoader,
+      () => this.index,
+      () => this.settings.claudeCodeModel || 'sonnet',
+      { globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist },
+    );
+
     // Initialize conversation service
     this.conversationService = new ConversationService(this.app, this.settings.conversationFolder);
     try {
@@ -231,9 +254,6 @@ export default class VaultAIPlugin extends Plugin {
 
     // Initialize Orchestration Service
     this.orchestrationService = new OrchestrationService(this);
-
-    // Initialize Evidence Service
-    this.evidenceService = new EvidenceService(this);
 
     // Initialize Updater Service
     this.updaterService = new UpdaterService(this);
@@ -255,13 +275,12 @@ export default class VaultAIPlugin extends Plugin {
       // This sets the online status for the API service
       this.graphApiService.checkHealth().then(health => {
         if (health) {
-          console.debug('OSINTCopilot: Graph API connected', health);
+          console.debug('OSINTCopilot: Claude Code CLI available for extraction', health);
         } else {
-          console.debug('OSINTCopilot: Graph API unavailable - running in local-only mode');
+          console.debug('OSINTCopilot: Claude Code CLI not detected — install `claude` for entity extraction');
         }
-      }).catch(error => {
-        // Silently handle connection errors - API is optional
-        console.debug('OSINTCopilot: Graph API unavailable - running in local-only mode');
+      }).catch(() => {
+        console.debug('OSINTCopilot: Claude Code health check failed');
       });
     }
 
@@ -299,7 +318,6 @@ export default class VaultAIPlugin extends Plugin {
     );
 
     // Add ribbon icons for all OSINT Copilot features (grouped together)
-    // Chat icon is always shown, but requires license key to use
     // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
     const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt: MouseEvent) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
@@ -456,20 +474,13 @@ export default class VaultAIPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "analyze-evidence",
-      name: "Analyze vault evidence",
-      callback: () => {
-        void this.runEvidenceAnalysis();
-      },
-    });
-
-    this.addCommand({
       id: "reload-vault-prompts",
       name: "Reload vault prompts",
       callback: () => {
         this.vaultPromptLoader?.invalidateAll();
+        this.taskAgentRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new Notice("Vault prompts cache cleared.");
+        new Notice("Vault prompts and task-agent registry refreshed.");
       },
     });
 
@@ -480,9 +491,11 @@ export default class VaultAIPlugin extends Plugin {
         void (async () => {
           try {
             await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
+            await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
             this.vaultPromptLoader?.invalidateAll();
+            this.taskAgentRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new Notice("Missing default prompt files were created (existing files unchanged).");
+            new Notice("Missing default prompt and task-agent files were created (existing files unchanged).");
           } catch (e) {
             new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
           }
@@ -500,62 +513,37 @@ export default class VaultAIPlugin extends Plugin {
 
   }
 
-  /**
-   * Open the evidence picker, run analysis via the backend, and present
-   * generated graph commands for user review.
-   */
-  async runEvidenceAnalysis(): Promise<void> {
-    const picker = new EvidencePickerModal(this.app);
-    const result = await picker.pick();
-    if (!result || result.files.length === 0) return;
-
-    const statusNotice = new Notice("Evidence analysis starting…", 0);
-    const updateStatus = (msg: string) => {
-      statusNotice.setMessage(msg);
-    };
-
-    try {
-      const commands = await this.evidenceService.analyze(
-        result.files,
-        (message, percent, detail) => {
-          updateStatus(`[${percent}%] ${message}`);
-          if (detail?.error) {
-            new Notice(`Evidence error: ${detail.error}`, 5000);
-          }
-        },
-      );
-
-      statusNotice.hide();
-
-      if (commands.length === 0) {
-        new Notice("No entities or relationships were extracted from the selected files.");
-        return;
-      }
-
-      new Notice(`Applying ${commands.length} graph commands…`, 3000);
-      const lines = await this.orchestrationService.executeGraphCommandsImmediate(
-        commands,
-        { showErrorNotices: true },
-      );
-      new Notice(`Evidence ingested: ${lines.length} operations applied.`, 5000);
-    } catch (err) {
-      statusNotice.hide();
-      const msg = err instanceof Error ? err.message : String(err);
-      new Notice(`Evidence analysis failed: ${msg}`, 8000);
-      console.error("[OSINT Copilot] Evidence analysis error:", err);
-    }
-  }
-
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const raw = (await this.loadData()) as Record<string, unknown>;
+    const legacyKeys = [
+      "reportApiKey",
+      "graphApiUrl",
+      "reportOutputDir",
+      "subscriptionPlan",
+      "subscriptionStatus",
+      "subscriptionCredits",
+      "subscriptionExpires",
+    ] as const;
+    let stripped = false;
+    for (const k of legacyKeys) {
+      if (k in raw) {
+        delete raw[k];
+        stripped = true;
+      }
+    }
+    const merged = Object.assign({}, DEFAULT_SETTINGS, raw) as Record<string, unknown>;
+    if (!merged.taskAgentOverrides || typeof merged.taskAgentOverrides !== 'object') {
+      merged.taskAgentOverrides = {};
+    }
+    this.settings = merged as unknown as VaultAISettings;
+    if (stripped) {
+      await this.saveData(this.settings);
+    }
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // Update graph API service with new settings
     if (this.graphApiService) {
-      this.graphApiService.setBaseUrl(this.settings.graphApiUrl);
-      this.graphApiService.setApiKey(this.settings.reportApiKey);
       this.graphApiService.setSettings({
         apiProvider: 'claude-code',
         customApiUrl: '',
@@ -574,6 +562,11 @@ export default class VaultAIPlugin extends Plugin {
       this.vaultPromptLoader.invalidateAll();
       this.attachVaultSkillFromVault();
     }
+
+    this.taskAgentRegistry?.invalidate();
+    this.taskAgentRunner?.updateOptions({
+      globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
+    });
 
     // Refresh all chat views to update mode dropdowns
     this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).forEach((leaf) => {
@@ -1147,434 +1140,6 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   // ============================================================================
-  // REPORT GENERATION
-  // ============================================================================
-
-  async generateReport(
-    description: string,
-    currentConversation: Conversation | null,
-    statusCallback?: (status: string, progress?: ReportProgress, intermediateResults?: string[]) => void,
-    signal?: AbortSignal
-  ): Promise<{ content: string; filename: string; conversationId?: string }> {
-    // Use the license key for report generation
-    const reportApiKey = this.settings.reportApiKey;
-
-    if (!reportApiKey) {
-      throw new Error("License key required. Please configure it in settings.");
-    }
-
-    const baseUrl = this.settings.graphApiUrl;
-
-    try {
-      // Step 1: Request report generation and get job_id with retry logic
-      statusCallback?.("Requesting report generation...");
-
-      let jobId = "";
-      const maxInitialRetries = 3;
-
-      // Get conversation_id from current conversation (if exists)
-      // Each conversation has its own conversation_id for report generation
-      const savedConversationId = currentConversation?.reportConversationId || null;
-
-      for (let initAttempt = 1; initAttempt <= maxInitialRetries; initAttempt++) {
-        try {
-          // Build request body - include conversation_id if we have one
-          const requestBody: Record<string, unknown> = {
-            description: description,
-            vault_context: "", // Can be extended to include vault context
-            force_new_report: true // Always create new reports instead of overwriting
-          };
-
-          // Include conversation_id only if we have a saved one
-          if (savedConversationId) {
-            requestBody.conversation_id = savedConversationId;
-            console.debug('[OSINT Copilot] Sending request with existing conversation_id:', savedConversationId);
-          } else {
-            console.debug('[OSINT Copilot] Sending first request (no conversation_id)');
-          }
-
-          const generateResponse: RequestUrlResponse = await requestUrl({
-            url: `${baseUrl}/api/generate-report`,
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${reportApiKey}`,
-            },
-            body: JSON.stringify(requestBody),
-            throw: false,
-          });
-
-          if (generateResponse.status < 200 || generateResponse.status >= 300) {
-            const errorText = generateResponse.text || "";
-
-            // Handle quota exhaustion specifically - don't retry these
-            if (generateResponse.status === 403) {
-              const lowerError = errorText.toLowerCase();
-              if (lowerError.includes("quota") || lowerError.includes("exhausted")) {
-                throw new Error(
-                  "Companies&People quota exhausted. Please upgrade your plan or wait for quota renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
-                );
-              }
-              if (lowerError.includes("expired")) {
-                throw new Error(
-                  "Your license key or trial has expired. Please renew your subscription at https://osint-copilot.com/dashboard/"
-                );
-              }
-              if (lowerError.includes("inactive")) {
-                throw new Error(
-                  "Your license key is inactive. Please check your account status at https://osint-copilot.com/dashboard/"
-                );
-              }
-            }
-
-            throw new Error(
-              `Companies&People generation request failed (${generateResponse.status}): ${errorText.substring(0, 200)}`
-            );
-          }
-
-          const generateData = generateResponse.json;
-          jobId = generateData.job_id;
-
-          if (!jobId) {
-            throw new Error("No job_id received from server");
-          }
-
-          // ✅ IMPORTANT: Save conversation_id from server response to current conversation
-          // This will be saved to the conversation file when saveConversation() is called
-          if (generateData.conversation_id && currentConversation) {
-            currentConversation.reportConversationId = generateData.conversation_id;
-            console.debug('[OSINT Copilot] Updated conversation with reportConversationId:', generateData.conversation_id);
-          }
-
-          break; // Success, exit retry loop
-        } catch (initError) {
-          const isNetworkError = initError instanceof Error && this.isTransientNetworkError(initError);
-
-          if (isNetworkError && initAttempt < maxInitialRetries) {
-            console.debug(`[OSINT Copilot] Companies&People init network error, retrying (${initAttempt}/${maxInitialRetries}):`, initError);
-            statusCallback?.(`Network interrupted, retrying... (attempt ${initAttempt}/${maxInitialRetries})`);
-            await this.sleep(1000 * initAttempt); // Exponential backoff
-          } else {
-            throw initError;
-          }
-        }
-      }
-
-      statusCallback?.(`Companies&People generation started (Job ID: ${jobId}). Processing... This might take up to 5 minutes, don't close the tab.`);
-
-      // Step 2: Poll for job status with adaptive polling and retry logic
-      let attempts = 0;
-      const maxElapsedMs = 20 * 60 * 1000; // 20 minutes max timeout (increased for deep research)
-      let elapsedMs = 0;
-      let jobStatus = "processing";
-      let reportFilename = "";
-      let consecutiveNetworkErrors = 0;
-      const maxConsecutiveNetworkErrors = 5; // Allow up to 5 consecutive network errors before failing
-
-      // Adaptive polling: start fast (2s), gradually increase to max (5s) as job takes longer
-      const getPollingInterval = (elapsed: number): number => {
-        if (elapsed < 15000) return 2000;      // First 15s: poll every 2s (fast feedback)
-        if (elapsed < 45000) return 3000;      // 15-45s: poll every 3s
-        return 5000;                            // After 45s: poll every 5s (reduce load)
-      };
-
-      while (elapsedMs < maxElapsedMs && jobStatus === "processing") {
-        if (signal?.aborted) {
-          throw new Error('Cancelled by user');
-        }
-
-        const pollInterval = getPollingInterval(elapsedMs);
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        elapsedMs += pollInterval;
-        attempts++;
-
-        const elapsedSecs = Math.round(elapsedMs / 1000);
-        statusCallback?.(`Checking report status... (${elapsedSecs}s elapsed)`);
-
-        try {
-          // Use Obsidian's requestUrl to bypass CORS restrictions
-          const statusResponse: RequestUrlResponse = await requestUrl({
-            url: `${baseUrl}/api/report-status/${jobId}`,
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${reportApiKey}`,
-            },
-            throw: false,
-          });
-
-          if (statusResponse.status < 200 || statusResponse.status >= 300) {
-            throw new Error(`Failed to check job status: ${statusResponse.status}`);
-          }
-
-          const statusData = statusResponse.json;
-          jobStatus = statusData.status;
-
-          // Reset consecutive error counter on successful fetch
-          consecutiveNetworkErrors = 0;
-
-          // Parse and forward progress and intermediate results
-          console.debug(`[OSINT Copilot] Polling status for job ${jobId}:`, statusData);
-          if (statusData.progress) {
-            statusCallback?.(
-              statusData.status,
-              {
-                message: statusData.progress.message || "Processing...",
-                percent: statusData.progress.percent || 0,
-              },
-              statusData.intermediate_results
-            );
-          } else {
-            statusCallback?.(statusData.status, undefined, statusData.intermediate_results);
-          }
-
-          // ✅ Check response_ready for answers (new feature)
-          if (statusData.response_ready) {
-            statusCallback?.("Response ready, retrieving from conversation...");
-
-            const conversationId = currentConversation?.reportConversationId || statusData.conversation_id;
-
-            if (!conversationId) {
-              throw new Error("Response ready but no conversation_id available");
-            }
-
-            // Backend should return content in statusData when response_ready = true
-            // Check multiple possible field names
-            let responseContent = statusData.content ||
-              statusData.response_content ||
-              statusData.message ||
-              statusData.response;
-
-            // If not in statusData, try to get from conversation via API (fallback)
-            if (!responseContent) {
-              try {
-                responseContent = await this.getConversationResponse(
-                  conversationId,
-                  baseUrl,
-                  reportApiKey
-                );
-              } catch (apiError) {
-                // If API endpoint doesn't exist, throw clear error
-                throw new Error(
-                  `Response is ready but content not found. ` +
-                  `Backend must return 'content' or 'response_content' in statusData when response_ready = true. ` +
-                  `Conversation ID: ${conversationId}`
-                );
-              }
-            }
-
-            if (!responseContent) {
-              throw new Error(
-                `Response is ready but no content found. ` +
-                `Backend must return 'content' or 'response_content' in statusData when response_ready = true.`
-              );
-            }
-
-            // Save conversation_id if not already saved
-            if (currentConversation && !currentConversation.reportConversationId) {
-              currentConversation.reportConversationId = conversationId;
-            }
-
-            // Sanitize the markdown content
-            const sanitizedContent = this.sanitizeMarkdownContent(responseContent);
-
-            return {
-              content: sanitizedContent,
-              filename: `response_${jobId}.md`,
-              conversationId: conversationId
-            };
-          }
-
-          if (jobStatus === "completed") {
-            reportFilename = statusData.filename;
-            break;
-          } else if (jobStatus === "failed") {
-            // Parse the error message for user-friendly display
-            const backendError = statusData.error || "Unknown error";
-            console.error(`[OSINT Copilot] Job ${jobId} failed with error:`, backendError);
-
-            // Check for common backend issues
-            if (backendError.toLowerCase().includes("ssl") ||
-              backendError.toLowerCase().includes("certificate") ||
-              backendError.toLowerCase().includes("n8n")) {
-              throw new Error("Backend service temporarily unavailable. Please try again in a few minutes.");
-            }
-
-            throw new Error(`Companies&People generation failed: ${backendError}`);
-          }
-        } catch (pollError) {
-          // Check if this is a transient network error
-          const isNetworkError = pollError instanceof Error && this.isTransientNetworkError(pollError);
-
-          if (isNetworkError) {
-            consecutiveNetworkErrors++;
-
-            // Enhanced logging for network errors
-            const errorType = pollError instanceof Error ? pollError.name : 'Unknown';
-            const errorMsg = pollError instanceof Error ? pollError.message : String(pollError);
-            console.debug(
-              `[OSINT Copilot] Companies&People status poll network error (${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors}):`,
-              `Type: ${errorType}, Message: ${errorMsg}`
-            );
-
-            if (consecutiveNetworkErrors >= maxConsecutiveNetworkErrors) {
-              throw new Error("Network connection lost after multiple retries. Please check your internet connection and try again.");
-            }
-
-            // Show retry status to user with more detail
-            const retryMsg = `Network interrupted (${errorType}), retrying... (attempt ${consecutiveNetworkErrors}/${maxConsecutiveNetworkErrors})`;
-            statusCallback?.(retryMsg);
-            console.debug(`[OSINT Copilot] ${retryMsg}`);
-            // Continue polling - don't throw
-          } else {
-            // Non-network error, re-throw immediately
-            console.error('[OSINT Copilot] Non-retryable error during status polling:', pollError);
-            throw pollError;
-          }
-        }
-      }
-
-      const elapsedSecsTotal = Math.round(elapsedMs / 1000);
-      console.info(`[OSINT Copilot] Polling loop finished for job ${jobId}. Final status: ${jobStatus}, Elapsed: ${elapsedSecsTotal}s`);
-
-      // Check if job completed or response is ready (for answers)
-      // Note: response_ready case is handled inside the loop and returns early
-      if (jobStatus !== "completed") {
-        throw new Error("Companies&People generation timed out. Please try again.");
-      }
-
-      // Step 3: Download the report with retry logic
-      statusCallback?.("Downloading report...");
-
-      let reportContent = "";
-      const maxDownloadRetries = 3;
-
-      for (let downloadAttempt = 1; downloadAttempt <= maxDownloadRetries; downloadAttempt++) {
-        try {
-          const downloadResponse: RequestUrlResponse = await requestUrl({
-            url: `${baseUrl}/api/download-report/${jobId}/md`,
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${reportApiKey}`,
-            },
-            throw: false,
-          });
-
-          if (downloadResponse.status < 200 || downloadResponse.status >= 300) {
-            const errorText = downloadResponse.text || "";
-            throw new Error(`Failed to download report: ${downloadResponse.status} - ${errorText}`);
-          }
-
-          // Get the raw response text
-          const rawContent = downloadResponse.text;
-
-          // Check if the response is JSON and extract markdown content if so
-          reportContent = this.extractMarkdownFromResponse(rawContent);
-
-          break; // Success, exit retry loop
-        } catch (downloadError) {
-          const isNetworkError = downloadError instanceof Error && this.isTransientNetworkError(downloadError);
-
-          if (isNetworkError && downloadAttempt < maxDownloadRetries) {
-            console.debug(`[OSINT Copilot] Companies&People download network error, retrying (${downloadAttempt}/${maxDownloadRetries}):`, downloadError);
-            statusCallback?.(`Download interrupted, retrying... (attempt ${downloadAttempt}/${maxDownloadRetries})`);
-            await this.sleep(1000 * downloadAttempt); // Exponential backoff
-          } else {
-            throw downloadError;
-          }
-        }
-      }
-
-      const finalReportFilename = reportFilename || `report_${jobId}.md`;
-
-      if (!reportContent) {
-        throw new Error("No content received from server");
-      }
-
-      statusCallback?.("Companies&People downloaded successfully!");
-
-      // Sanitize the markdown content
-      const sanitizedContent = this.sanitizeMarkdownContent(reportContent);
-
-      return {
-        content: sanitizedContent,
-        filename: finalReportFilename
-      };
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Companies&People generation failed: ${error.message}`);
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Получает последнее сообщение ассистента из conversation
-   * Используется когда response_ready = true для получения ответа
-   */
-  async getConversationResponse(
-    conversationId: string,
-    baseUrl: string,
-    apiKey: string
-  ): Promise<string> {
-    // Try multiple possible endpoints for getting conversation messages
-    const possibleEndpoints = [
-      `/api/conversation/${conversationId}/messages`,
-      `/api/conversations/${conversationId}/messages`,
-      `/api/chat/conversation/${conversationId}`,
-      `/api/conversation/${conversationId}`
-    ];
-
-    for (const endpoint of possibleEndpoints) {
-      try {
-        const response: RequestUrlResponse = await requestUrl({
-          url: `${baseUrl}${endpoint}`,
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-          throw: false,
-        });
-
-        if (response.status >= 200 && response.status < 300) {
-          const data = response.json;
-
-          // Try different response structures
-          let messages: Record<string, unknown>[] = [];
-          if (Array.isArray(data)) {
-            messages = data;
-          } else if (data.messages && Array.isArray(data.messages)) {
-            messages = data.messages;
-          } else if (data.conversation && Array.isArray(data.conversation.messages)) {
-            messages = data.conversation.messages;
-          }
-
-          // Find last assistant message
-          const lastAssistantMessage = messages
-            .filter((msg: Record<string, unknown>) => msg.role === 'assistant' || msg.role === 'AI')
-            .pop();
-
-          if (lastAssistantMessage && lastAssistantMessage.content) {
-            return lastAssistantMessage.content as string;
-          }
-        } else if (response.status !== 404) {
-          // If it's not 404, it might be a different error (403, 500, etc.)
-          // Continue to next endpoint
-          continue;
-        }
-      } catch (fetchError) {
-        // Network error or other fetch issue, continue to next endpoint
-        continue;
-      }
-    }
-
-    // If all endpoints failed, throw error
-    throw new Error(
-      `No API endpoint found to retrieve conversation messages. ` +
-      `Backend must return 'content' or 'response_content' in statusData when response_ready = true.`
-    );
-  }
-
-  // ============================================================================
   // CLASSIFICATION HELPERS
   // ============================================================================
 
@@ -1638,84 +1203,6 @@ export default class VaultAIPlugin extends Plugin {
 
 
 
-  sanitizeMarkdownContent(content: string): string {
-    // Remove any HTML script tags
-    content = content.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-
-    // Remove any HTML iframe tags
-    content = content.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
-
-    // Remove any HTML object/embed tags
-    content = content.replace(/<(object|embed)\b[^<]*(?:(?!<\/\1>)<[^<]*)*<\/\1>/gi, '');
-
-    // Remove any javascript: protocol links
-    content = content.replace(/\[([^\]]+)\]\(javascript:[^\)]*\)/gi, '[$1](#)');
-
-    // Remove any data: protocol links (except images)
-    content = content.replace(/\[([^\]]+)\]\(data:(?!image)[^\)]*\)/gi, '[$1](#)');
-
-    return content;
-  }
-
-  /**
-   * Extract markdown content from API response.
-   * The API may return either:
-   * 1. Plain markdown text
-   * 2. JSON object with markdown in a field like 'content', 'markdown', 'report', 'text', or 'data'
-   * This method detects the format and extracts the markdown content.
-   */
-  extractMarkdownFromResponse(rawContent: string): string {
-    const trimmedContent = rawContent.trim();
-
-    // Check if the response looks like JSON (starts with { or [)
-    if (trimmedContent.startsWith('{') || trimmedContent.startsWith('[')) {
-      try {
-        const jsonData = JSON.parse(trimmedContent);
-
-        // If it's an array, try to get the first element
-        const data = Array.isArray(jsonData) ? jsonData[0] : jsonData;
-
-        if (data && typeof data === 'object') {
-          // Try common field names for markdown content (in order of priority)
-          const contentFields = ['content', 'markdown', 'report', 'text', 'data', 'body', 'result', 'output'];
-
-          for (const field of contentFields) {
-            if (data[field] && typeof data[field] === 'string') {
-              console.debug(`[OSINT Copilot] Extracted markdown from JSON field: ${field}`);
-              return data[field];
-            }
-          }
-
-          // If no known field found, check for nested 'report' object
-          if (data.report && typeof data.report === 'object') {
-            for (const field of contentFields) {
-              if (data.report[field] && typeof data.report[field] === 'string') {
-                console.debug(`[OSINT Copilot] Extracted markdown from JSON field: report.${field}`);
-                return data.report[field];
-              }
-            }
-          }
-
-          // Last resort: if there's only one string field, use it
-          const stringFields = Object.entries(data).filter(([_, v]) => typeof v === 'string' && v.length > 100);
-          if (stringFields.length === 1) {
-            console.debug(`[OSINT Copilot] Extracted markdown from single string field: ${stringFields[0][0]}`);
-            return stringFields[0][1] as string;
-          }
-
-          // If we still can't find markdown, log the structure and return raw
-          console.warn('[OSINT Copilot] Could not find markdown content in JSON response. Fields:', Object.keys(data));
-        }
-      } catch (parseError) {
-        // Not valid JSON, treat as plain text
-        console.debug('[OSINT Copilot] Response is not valid JSON, treating as plain markdown');
-      }
-    }
-
-    // Return as-is if not JSON or couldn't extract
-    return rawContent;
-  }
-
   getVaultContext(): string {
     // Get a summary of vault content for context
     const notes = Array.from(this.index.values());
@@ -1729,119 +1216,6 @@ export default class VaultAIPlugin extends Plugin {
     }
 
     return context;
-  }
-
-  async saveReportToVault(reportContent: string, description: string, originalFilename?: string): Promise<string> {
-    const now = new Date();
-    const date = now.toISOString().split("T")[0];
-    // Add timestamp (HH-MM-SS) for uniqueness to prevent overwrites
-    const timestamp = now.toISOString().split("T")[1].split(".")[0].replace(/:/g, "-");
-
-    // Extract entity name from description for meaningful filename
-    // Common patterns: "Tell me about X", "Companies&People on X", "Who is X", "What is X", etc.
-    let entityName = description;
-    const patterns = [
-      /(?:tell me about|report on|who is|what is|investigate|research|find|look up|search for)\s+(.+)/i,
-      /(.+?)(?:\s+report|\s+investigation|\s+research)?$/i
-    ];
-
-    for (const pattern of patterns) {
-      const match = description.match(pattern);
-      if (match && match[1]) {
-        entityName = match[1].trim();
-        break;
-      }
-    }
-
-    // Sanitize entity name for filename: replace spaces with underscores, remove special chars
-    const sanitizedEntity = entityName
-      .substring(0, 50)
-      .replace(/[^a-zA-Z0-9\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "_");
-
-    // Create filename with timestamp: EntityName_Report_YYYY-MM-DD_HH-MM-SS.md
-    // This ensures each report is unique and maintains chronological order
-    const baseFilename = sanitizedEntity ? `${sanitizedEntity}_Report` : "Corporate_Report";
-    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}.md`;
-
-    // Ensure Reports folder exists
-    const reportsFolder = this.app.vault.getAbstractFileByPath(this.settings.reportOutputDir);
-    if (!reportsFolder) {
-      await this.app.vault.createFolder(this.settings.reportOutputDir);
-    }
-
-    // Add metadata header to the report
-    let content = `---\n`;
-    content += `report_description: "${description.replace(/"/g, '\\"')}"\n`;
-    content += `generated: ${now.toISOString()}\n`;
-    content += `source: OpenDossier API\n`;
-    content += `---\n\n`;
-    content += reportContent;
-
-    // Check if file exists (unlikely with timestamp, but add counter as fallback)
-    // This provides an additional safety layer to prevent any potential overwrites
-    let finalFileName = fileName;
-    let counter = 1;
-    while (this.app.vault.getAbstractFileByPath(finalFileName)) {
-      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}-${counter}.md`;
-      counter++;
-    }
-
-    // Create new file - guaranteed to be unique
-    await this.app.vault.create(finalFileName, content);
-
-    console.debug(`[OSINT Copilot] Report saved to: ${finalFileName}`);
-    return finalFileName;
-  }
-
-  async saveDarkWebReportToVault(reportContent: string, query: string, jobId: string): Promise<string> {
-    const now = new Date();
-    const date = now.toISOString().split("T")[0];
-    // Add timestamp (HH-MM-SS) for uniqueness to prevent overwrites
-    const timestamp = now.toISOString().split("T")[1].split(".")[0].replace(/:/g, "-");
-
-    // Sanitize query for filename: replace spaces with underscores, remove special chars
-    const sanitizedQuery = query
-      .substring(0, 50)
-      .replace(/[^a-zA-Z0-9\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "_");
-
-    // Create filename with timestamp: DarkWeb_QueryTopic_YYYY-MM-DD_HH-MM-SS.md
-    // This ensures each dark web investigation is unique and maintains chronological order
-    const baseFilename = sanitizedQuery ? `DarkWeb_${sanitizedQuery}` : `DarkWeb_Investigation`;
-    const fileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}.md`;
-
-    // Ensure Reports folder exists
-    const reportsFolder = this.app.vault.getAbstractFileByPath(this.settings.reportOutputDir);
-    if (!reportsFolder) {
-      await this.app.vault.createFolder(this.settings.reportOutputDir);
-    }
-
-    // Add metadata header to the report
-    let content = `---\n`;
-    content += `investigation_query: "${query.replace(/"/g, '\\"')}"\n`;
-    content += `job_id: "${jobId}"\n`;
-    content += `generated: ${now.toISOString()}\n`;
-    content += `source: Dark Web Investigation\n`;
-    content += `---\n\n`;
-    content += reportContent;
-
-    // Check if file exists (unlikely with timestamp, but add counter as fallback)
-    // This provides an additional safety layer to prevent any potential overwrites
-    let finalFileName = fileName;
-    let counter = 1;
-    while (this.app.vault.getAbstractFileByPath(finalFileName)) {
-      finalFileName = `${this.settings.reportOutputDir}/${baseFilename}_${date}_${timestamp}-${counter}.md`;
-      counter++;
-    }
-
-    // Create new file - guaranteed to be unique
-    await this.app.vault.create(finalFileName, content);
-
-    console.debug(`[OSINT Copilot] Dark web report saved to: ${finalFileName}`);
-    return finalFileName;
   }
 
   // ============================================================================
@@ -2116,22 +1490,25 @@ export class ChatView extends ItemView {
   messagesContainer!: HTMLDivElement;
   sidebarContainer!: HTMLDivElement;
   conversationListEl!: HTMLDivElement;
-  // Main modes (mutually exclusive - only one can be active, or all can be off for Entity-Only Mode)
-  localSearchMode: boolean = true; // Default mode (formerly "lookup mode")
-  customChatMode: boolean = false; // Custom OpenAI-compatible chat mode
-  activeCheckpointId: string | undefined; // Selected custom checkpoint ID
-  darkWebMode: boolean = false;
-  reportGenerationMode: boolean = false;
-  osintSearchMode: boolean = false; // Digital Footprint mode
-  orchestrationMode: boolean = false; // Orchestration agent mode
-  vaultGraphIngestMode: boolean = false; // Vault-wide graph ingest (markdown, PDF, images, etc.)
-  // Mode dropdown element (replaces individual toggle checkboxes)
+  /** Tri-mode chat: general (orchestration), graph (entity extract only), local (vault Q&A). */
+  chatMode: CopilotChatMode = 'general';
+  // Legacy flags — kept in sync with `chatMode` via `legacyFlagsForChatMode` for YAML and older code paths
+  localSearchMode: boolean = false;
+  customChatMode: boolean = false;
+  activeCheckpointId: string | undefined;
+  orchestrationMode: boolean = true;
+  vaultGraphIngestMode: boolean = false;
   modeDropdown!: HTMLSelectElement;
-  // Digital Footprint options removed for global search
-  // Graph generation is independent (can be enabled with any main mode, or alone for Graph only Mode)
-  graphGenerationMode: boolean = true;
+  /** Shown only when `chatMode === 'general'`; bound to `settings.activeAgentId`. */
+  agentDropdown!: HTMLSelectElement;
+  agentSelectContainer!: HTMLElement;
+  /** Vault task agent (General mode); empty = orchestration. */
+  taskAgentDropdown!: HTMLSelectElement;
+  taskAgentSelectContainer!: HTMLElement;
+  selectedTaskAgentId: string = "";
+  graphGenerationMode: boolean = false;
   graphGenerationToggle!: HTMLInputElement;
-  entityGenContainer!: HTMLElement;  // Container for the toggle - hidden when Graph mode selected
+  entityGenContainer!: HTMLElement;
   pollingIntervals: Map<string, number> = new Map();
   currentConversation: Conversation | null = null;
   sidebarVisible: boolean = true;
@@ -2163,6 +1540,95 @@ export class ChatView extends ItemView {
     return "message-square";
   }
 
+  private applyChatMode(mode: CopilotChatMode) {
+    this.chatMode = mode;
+    const f = legacyFlagsForChatMode(mode);
+    this.localSearchMode = f.localSearchMode;
+    this.graphGenerationMode = f.graphGenerationMode;
+    this.orchestrationMode = f.orchestrationMode;
+    this.vaultGraphIngestMode = f.vaultGraphIngestMode;
+    this.customChatMode = false;
+    this.activeCheckpointId = undefined;
+  }
+
+  private syncModesFromConversation(conv: ConversationMetadata) {
+    const mode = conv.chatMode ?? inferChatModeFromLegacyFields(conv);
+    this.applyChatMode(mode);
+  }
+
+  private updateTaskAgentRowVisibility(): void {
+    if (!this.taskAgentSelectContainer) return;
+    const show =
+      this.chatMode === "general" && this.plugin.settings.taskAgentsEnabled;
+    this.taskAgentSelectContainer.style.display = show ? "" : "none";
+  }
+
+  private async populateTaskAgentDropdown() {
+    if (!this.taskAgentDropdown) return;
+    this.taskAgentDropdown.empty();
+    const none = this.taskAgentDropdown.createEl("option", {
+      text: "None (orchestration)",
+      value: "",
+    });
+    try {
+      const all = await this.plugin.taskAgentRegistry.listAgents();
+      const cur = this.selectedTaskAgentId || "";
+      let matched = cur === "";
+      for (const a of all) {
+        if (!isTaskAgentRunnable(a, this.plugin.settings)) continue;
+        const opt = this.taskAgentDropdown.createEl("option", {
+          text: a.name || a.id,
+          value: a.id,
+        });
+        if (a.id === cur) {
+          opt.selected = true;
+          matched = true;
+        }
+      }
+      if (!matched && cur) {
+        const opt = this.taskAgentDropdown.createEl("option", {
+          text: `${cur} (disabled)`,
+          value: "",
+        });
+        opt.selected = true;
+      } else if (matched && cur === "") {
+        none.selected = true;
+      }
+    } catch {
+      none.selected = true;
+    }
+  }
+
+  private async populateAgentDropdown() {
+    if (!this.agentDropdown) return;
+    this.agentDropdown.empty();
+    try {
+      const agents = await this.plugin.vaultPromptLoader.listAgents();
+      const list = agents.length > 0 ? agents : [{ id: "default", name: "Default" }];
+      const active = this.plugin.settings.activeAgentId || "default";
+      let matched = false;
+      for (const a of list) {
+        const opt = this.agentDropdown.createEl("option", {
+          text: a.name || a.id,
+          value: a.id,
+        });
+        if (a.id === active) {
+          opt.selected = true;
+          matched = true;
+        }
+      }
+      if (!matched) {
+        const opt = this.agentDropdown.createEl("option", {
+          text: active,
+          value: active,
+        });
+        opt.selected = true;
+      }
+    } catch {
+      this.agentDropdown.createEl("option", { text: "Default", value: "default" }).selected = true;
+    }
+  }
+
   async onOpen() {
     await this.loadMostRecentConversation();
     await this.render();
@@ -2173,34 +1639,12 @@ export class ChatView extends ItemView {
     if (conversation) {
       this.currentConversation = conversation;
       this.chatHistory = this.conversationMessagesToHistory(conversation.messages);
-      this.darkWebMode = conversation.darkWebMode || false;
-      this.reportGenerationMode = conversation.reportGenerationMode || false;
-      this.osintSearchMode = conversation.osintSearchMode || false;
-      this.orchestrationMode = conversation.orchestrationMode || false; // Load orchestration mode
-      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
-
-      // Check if any main mode is explicitly set in the conversation
-      const hasMainMode =
-        conversation.darkWebMode ||
-        conversation.reportGenerationMode ||
-        conversation.osintSearchMode ||
-        conversation.localSearchMode ||
-        conversation.orchestrationMode ||
-        conversation.vaultGraphIngestMode;
-
-      if (hasMainMode) {
-        // Use the saved modes
-        this.localSearchMode = conversation.localSearchMode || false;
-        this.graphGenerationMode = conversation.graphGenerationMode || false;
-      } else {
-        // No conversation - default to Graph Generation mode
-        this.localSearchMode = false;
-        this.graphGenerationMode = true;
-      }
+      this.syncModesFromConversation(conversation);
+      this.selectedTaskAgentId =
+        conversation.taskAgentId ?? this.plugin.settings.preferredTaskAgentId ?? "";
     } else {
-      // No conversation - default to Graph Generation mode
-      this.localSearchMode = false;
-      this.graphGenerationMode = true;
+      this.applyChatMode('general');
+      this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     }
   }
 
@@ -2239,22 +1683,18 @@ export class ChatView extends ItemView {
     if (!this.currentConversation) {
       this.currentConversation = await this.plugin.conversationService.createConversation(
         this.chatHistory.length > 0 ? this.chatHistory[0].content : undefined,
-        this.darkWebMode,
-        this.graphGenerationMode,
-        this.reportGenerationMode,
-        this.osintSearchMode,
-        this.orchestrationMode,
-        this.vaultGraphIngestMode
+        this.chatMode,
+        this.selectedTaskAgentId,
       );
     }
     this.currentConversation.messages = this.historyToConversationMessages();
-    this.currentConversation.localSearchMode = this.localSearchMode;
-    this.currentConversation.darkWebMode = this.darkWebMode;
-    this.currentConversation.graphGenerationMode = this.graphGenerationMode;
-    this.currentConversation.reportGenerationMode = this.reportGenerationMode;
-    this.currentConversation.osintSearchMode = this.osintSearchMode;
-    this.currentConversation.orchestrationMode = this.orchestrationMode; // Save orchestration mode
-    this.currentConversation.vaultGraphIngestMode = this.vaultGraphIngestMode;
+    this.currentConversation.chatMode = this.chatMode;
+    this.currentConversation.taskAgentId = this.selectedTaskAgentId.trim() || undefined;
+    const f = legacyFlagsForChatMode(this.chatMode);
+    this.currentConversation.localSearchMode = f.localSearchMode;
+    this.currentConversation.graphGenerationMode = f.graphGenerationMode;
+    this.currentConversation.orchestrationMode = f.orchestrationMode;
+    this.currentConversation.vaultGraphIngestMode = f.vaultGraphIngestMode;
     await this.plugin.conversationService.saveConversation(this.currentConversation);
     this.renderConversationList();
   }
@@ -2321,59 +1761,63 @@ export class ChatView extends ItemView {
     });
     this.modeDropdown.id = "vault-ai-mode-dropdown";
 
-    // Add mode options
-    // Add mode options
-    const modeOptions: { value: string; label: string; mode: string; checkpointId?: string }[] = [];
-
-    // Add custom checkpoints dynamically
-    this.plugin.settings.customCheckpoints.forEach((cp) => {
-      modeOptions.push({
-        value: `custom-${cp.id}`,
-        label: `💬 ${cp.name}`,
-        mode: "customChatMode",
-        checkpointId: cp.id,
-      });
-    });
-
-    // Validate activeCheckpointId - if it doesn't exist anymore, reset it
-    if (this.activeCheckpointId && !this.plugin.settings.customCheckpoints.find(c => c.id === this.activeCheckpointId)) {
-      this.activeCheckpointId = undefined;
-      // If we were in custom mode, either switch to first available or disable custom mode
-      if (this.customChatMode) {
-        if (this.plugin.settings.customCheckpoints.length > 0) {
-          this.activeCheckpointId = this.plugin.settings.customCheckpoints[0].id;
-        } else {
-          this.customChatMode = false;
-          this.localSearchMode = true; // Fallback to local search
-        }
-      }
-    }
-
-    // Add standard options
-    modeOptions.push(
-      { value: "none", label: "🏷️ Graph Generation", mode: "none" },
-      { value: "local", label: "🔍 Local Search", mode: "localSearchMode" },
-    );
-
-    for (const option of modeOptions) {
+    const triModeOptions: { value: CopilotChatMode; label: string }[] = [
+      { value: "general", label: "🤖 General agent" },
+      { value: "graph", label: "🏷️ Graph generation" },
+      { value: "local", label: "🔍 Local search" },
+    ];
+    for (const option of triModeOptions) {
       const optEl = this.modeDropdown.createEl("option", {
         text: option.label,
         value: option.value,
       });
-      // Set selected based on current mode
-      if (option.mode === "customChatMode") {
-        if (this.customChatMode && this.activeCheckpointId === option.checkpointId) {
-          optEl.selected = true;
-        } else if (this.customChatMode && !this.activeCheckpointId && option.checkpointId === this.plugin.settings.customCheckpoints[0]?.id) {
-          // Fallback: if custom mode is on but no ID set, select first
-          this.activeCheckpointId = option.checkpointId;
-          optEl.selected = true;
-        }
-      }
-      else if (option.value === "none" && this.isGraphOnlyMode()) optEl.selected = true;
-      else if (option.value === "local" && this.localSearchMode) optEl.selected = true;
-      
+      if (option.value === this.chatMode) optEl.selected = true;
     }
+
+    this.agentSelectContainer = buttonGroup.createDiv("vault-ai-agent-select-container");
+    const agentLabel = this.agentSelectContainer.createEl("label", {
+      text: "Agent:",
+      cls: "vault-ai-mode-select-label",
+    });
+    agentLabel.htmlFor = "vault-ai-agent-dropdown";
+    this.agentDropdown = this.agentSelectContainer.createEl("select", {
+      cls: "vault-ai-agent-dropdown",
+    });
+    this.agentDropdown.id = "vault-ai-agent-dropdown";
+    void this.populateAgentDropdown();
+    this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
+    this.agentDropdown.addEventListener("change", () => {
+      this.plugin.settings.activeAgentId = this.agentDropdown.value || "default";
+      void this.plugin.saveSettings();
+      this.plugin.vaultPromptLoader?.invalidateAll();
+      this.plugin.attachVaultSkillFromVault();
+      new Notice(`Active agent: ${this.plugin.settings.activeAgentId}`);
+    });
+
+    this.taskAgentSelectContainer = buttonGroup.createDiv("vault-ai-task-agent-select-container");
+    const taskAgentLabel = this.taskAgentSelectContainer.createEl("label", {
+      text: "Task:",
+      cls: "vault-ai-mode-select-label",
+    });
+    taskAgentLabel.htmlFor = "vault-ai-task-agent-dropdown";
+    this.taskAgentDropdown = this.taskAgentSelectContainer.createEl("select", {
+      cls: "vault-ai-task-agent-dropdown",
+    });
+    this.taskAgentDropdown.id = "vault-ai-task-agent-dropdown";
+    void this.populateTaskAgentDropdown();
+    this.updateTaskAgentRowVisibility();
+    this.taskAgentDropdown.addEventListener("change", () => {
+      this.selectedTaskAgentId = this.taskAgentDropdown.value || "";
+      this.plugin.settings.preferredTaskAgentId = this.selectedTaskAgentId;
+      void this.plugin.saveSettings();
+      void this.saveCurrentConversation();
+      this.updateInputPlaceholder();
+      new Notice(
+        this.selectedTaskAgentId
+          ? `Task agent: ${this.selectedTaskAgentId}`
+          : "Task agent: None (orchestration)",
+      );
+    });
 
     // Settings shortcut button
     const settingsBtn = buttonGroup.createEl("button", {
@@ -2388,63 +1832,43 @@ export class ChatView extends ItemView {
       this.app.setting.openTabById(this.plugin.manifest.id);
     });
 
-    // Handle mode selection
     this.modeDropdown.addEventListener("change", () => {
-      const selectedValue = this.modeDropdown.value;
-
-      // Reset all modes
-      this.customChatMode = false;
-      this.localSearchMode = false;
-      this.darkWebMode = false;
-      this.reportGenerationMode = false;
-      this.osintSearchMode = false;
-      this.orchestrationMode = false;
-      this.vaultGraphIngestMode = false;
-
-      // Enable selected mode
-      // Enable selected mode
-      if (selectedValue.startsWith("custom-")) {
-        const cpId = selectedValue.replace("custom-", "");
-        this.customChatMode = true;
-        this.activeCheckpointId = cpId;
-        const cpName = this.plugin.settings.customCheckpoints.find(c => c.id === cpId)?.name || "Custom Chat";
-        new Notice(`${cpName} enabled`);
-      } else {
-        this.activeCheckpointId = undefined; // Reset if switching away
-        switch (selectedValue) {
-          case "local":
-            this.localSearchMode = true;
-            new Notice("Local search mode enabled");
-            break;
-          case "none":
-            // All modes off - Graph only Mode if graph generation is on
-            if (this.graphGenerationMode) {
-              new Notice("Graph only mode enabled - extract entities from your text");
-            } else {
-              // Enable graph generation automatically for Graph Generation mode
-              this.graphGenerationMode = true;
-              this.graphGenerationToggle.checked = true;
-              this.updateGraphGenerationLabel();
-              new Notice("Graph only mode enabled - extract entities from your text");
-            }
-            break;
-        }
+      const selectedValue = this.modeDropdown.value as CopilotChatMode;
+      if (selectedValue === "general" || selectedValue === "graph" || selectedValue === "local") {
+        this.applyChatMode(selectedValue);
       }
-
-      this.updateAllModeLabels();
-      this.updateInputPlaceholder();
+      if (this.agentSelectContainer) {
+        this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
+      }
+      this.updateTaskAgentRowVisibility();
+      if (this.chatMode === "general") {
+        void this.populateAgentDropdown();
+        void this.populateTaskAgentDropdown();
+      }
+      if (this.graphGenerationToggle) {
+        this.graphGenerationToggle.checked = this.graphGenerationMode;
+      }
+      this.updateGraphGenerationLabel();
       this.updateAllModeLabels();
       this.updateInputPlaceholder();
       this.updateModeDisclaimer();
       this.updateUploadButtonVisibility();
       this.updateUrlButtonVisibility();
       this.updateGraphToggleVisibility();
+      void this.saveCurrentConversation();
+      new Notice(
+        selectedValue === "general"
+          ? "General agent mode — orchestration and tools"
+          : selectedValue === "graph"
+            ? "Graph generation — extract entities from text (local Claude)"
+            : "Local search — vault Q&A",
+      );
     });
 
-    // === Graph Generation Toggle (Independent - enables Graph only Mode when all main modes are off) ===
+    // Legacy graph toggle hidden — graph vs local vs general is controlled by the mode dropdown only
     this.entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
     this.entityGenContainer.addClass("vault-ai-toggle-container");
-    this.entityGenContainer.setAttribute("title", "Extract entities (works with any mode, or alone for graph only mode)");
+    this.entityGenContainer.style.display = "none";
 
     this.graphGenerationToggle = this.entityGenContainer.createEl("input", {
       type: "checkbox",
@@ -2456,17 +1880,9 @@ export class ChatView extends ItemView {
       this.graphGenerationMode = this.graphGenerationToggle.checked;
       this.updateGraphGenerationLabel();
       this.updateInputPlaceholder();
-      this.updateInputPlaceholder();
       this.updateModeDisclaimer();
       this.updateUploadButtonVisibility();
       this.updateUrlButtonVisibility();
-      if (this.isGraphOnlyMode()) {
-        new Notice("Graph only mode enabled - extract entities from your text");
-      } else if (this.graphGenerationMode) {
-        new Notice("Graph generation enabled");
-      } else {
-        new Notice("Graph generation disabled");
-      }
     });
 
     const entityGenLabel = this.entityGenContainer.createEl("label", {
@@ -2475,7 +1891,6 @@ export class ChatView extends ItemView {
     });
     entityGenLabel.htmlFor = "graph-gen-mode-toggle";
 
-    // Hide toggle if Graph Generation mode is selected from dropdown
     this.updateGraphToggleVisibility();
 
     // Messages container
@@ -2683,7 +2098,9 @@ export class ChatView extends ItemView {
       }
     });
 
-    // Digital Footprint Options Panel removed
+    this.updateAllModeLabels();
+
+    // Hosted OSINT options panel removed
   }
 
   /**
@@ -2695,25 +2112,27 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
-    if (this.isGraphOnlyMode()) {
+    if (this.chatMode === "graph") {
       return {
         icon: "🏷️",
-        title: "Graph Generation Mode:",
-        text: "Your text will be analyzed to extract and create entities in the graph (people, companies, locations, etc.) without AI chat."
+        title: "Graph generation:",
+        text: "Text is sent to local Claude to propose entities and links (no general chat).",
       };
     }
-
-    if (this.localSearchMode) {
-      if (this.graphGenerationMode) {
-        return {
-          icon: "🔍",
-          title: "Local Search + Graph Gen:",
-          text: "Search your vault and automatically create entities from AI responses."
-        };
-      }
-      return null;
+    if (this.chatMode === "general") {
+      return {
+        icon: "🤖",
+        title: "General agent:",
+        text: "Orchestration runs tools (local vault search, attachment extraction) using your vault agent and rules.",
+      };
     }
-
+    if (this.chatMode === "local") {
+      return {
+        icon: "🔍",
+        title: "Local search:",
+        text: "Answers from your vault index; follow-up graph extraction from notes uses local Claude.",
+      };
+    }
     return null;
   }
 
@@ -2893,19 +2312,9 @@ export class ChatView extends ItemView {
     });
   }
 
-  /**
-   * Hide/show the Graph Generation toggle based on mode selection.
-   * When "Graph Generation" is selected from the dropdown, the toggle is redundant.
-   */
   updateGraphToggleVisibility() {
     if (this.entityGenContainer) {
-      // Hide toggle when Graph Generation mode is selected from dropdown (value="none")
-      // Show toggle for other modes (so user can optionally enable graph gen alongside main mode)
-      if (this.modeDropdown && this.modeDropdown.value === "none") {
-        this.entityGenContainer.style.display = "none";
-      } else {
-        this.entityGenContainer.style.display = "flex";
-      }
+      this.entityGenContainer.style.display = "none";
     }
   }
 
@@ -3096,9 +2505,8 @@ export class ChatView extends ItemView {
 
 
 
-  // Check if Graph only Mode is active (graph generation ON, all main modes OFF)
   isGraphOnlyMode(): boolean {
-    return this.graphGenerationMode && !this.localSearchMode && !this.customChatMode;
+    return this.chatMode === "graph";
   }
 
   // Show notice when entering Graph only Mode
@@ -3110,11 +2518,16 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    if (this.isGraphOnlyMode()) {
+    if (this.chatMode === "graph") {
       return "Enter text to extract entities...";
-    } else {
-      return "Ask a question about your vault...";
     }
+    if (this.chatMode === "general") {
+      if (this.selectedTaskAgentId.trim() && this.plugin.settings.taskAgentsEnabled) {
+        return "Describe what to write in the vault (task agent runs local Claude + JSON file apply)...";
+      }
+      return "Ask for an investigation (orchestration, tools, vault context)...";
+    }
+    return "Ask a question about your vault...";
   }
 
   // Update the input placeholder text
@@ -3202,28 +2615,14 @@ export class ChatView extends ItemView {
   }
 
   updateAllModeLabels() {
-    // Update mode dropdown selection
     if (this.modeDropdown) {
-      if (this.customChatMode && this.activeCheckpointId) {
-        this.modeDropdown.value = `custom-${this.activeCheckpointId}`;
-      } else if (this.localSearchMode) {
-        this.modeDropdown.value = "local";
-      } else if (this.darkWebMode) {
-        this.modeDropdown.value = "darkweb";
-      } else if (this.reportGenerationMode) {
-        this.modeDropdown.value = "report";
-      } else if (this.osintSearchMode) {
-        this.modeDropdown.value = "osint";
-      } else if (this.orchestrationMode) {
-        this.modeDropdown.value = "orchestration";
-      } else if (this.vaultGraphIngestMode) {
-        this.modeDropdown.value = "vaultingest";
-      } else {
-        this.modeDropdown.value = "none";
-      }
+      this.modeDropdown.value = this.chatMode;
     }
-
-    // Also update graph generation label (for Graph only Mode indicator)
+    if (this.agentSelectContainer) {
+      this.agentSelectContainer.style.display = this.chatMode === "general" ? "" : "none";
+    }
+    this.updateTaskAgentRowVisibility();
+    void this.populateTaskAgentDropdown();
     this.updateGraphGenerationLabel();
   }
 
@@ -3264,41 +2663,25 @@ export class ChatView extends ItemView {
       const meta = convContent.createDiv("vault-ai-conversation-meta");
       const date = new Date(conv.updatedAt);
       meta.createEl("span", { text: this.formatDate(date), cls: "vault-ai-conversation-date" });
-      // Check if Graph only Mode (graph gen ON, all main modes OFF)
-      const convOsintSearchMode = conv.osintSearchMode || false;
-      const convOrchestration = conv.orchestrationMode || false;
-      const convVaultIngest = conv.vaultGraphIngestMode || false;
-      const isGraphOnly =
-        conv.graphGenerationMode &&
-        !conv.localSearchMode &&
-        !conv.darkWebMode &&
-        !conv.reportGenerationMode &&
-        !convOsintSearchMode &&
-        !convOrchestration &&
-        !convVaultIngest;
-      // Show main mode badge or Graph only badge
-      if (isGraphOnly) {
-        meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphonly", title: "Graph only mode" });
-      } else if (convOsintSearchMode) {
-        meta.createEl("span", { text: "🔎", cls: "vault-ai-conversation-osint-search", title: "Leak search mode" });
-        if (conv.graphGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph generation" });
-        }
-      } else if (conv.darkWebMode) {
-        meta.createEl("span", { text: "🕵️", cls: "vault-ai-conversation-darkweb", title: "Dark web mode" });
-        if (conv.graphGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph generation" });
-        }
-      } else if (conv.reportGenerationMode) {
-        meta.createEl("span", { text: "📄", cls: "vault-ai-conversation-report", title: "Companies&people generation mode" });
-        if (conv.graphGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph generation" });
-        }
+      const convMode = conv.chatMode ?? inferChatModeFromLegacyFields(conv);
+      if (convMode === "general") {
+        meta.createEl("span", {
+          text: "🤖",
+          cls: "vault-ai-conversation-orchestration",
+          title: "General agent",
+        });
+      } else if (convMode === "graph") {
+        meta.createEl("span", {
+          text: "🏷️",
+          cls: "vault-ai-conversation-graphonly",
+          title: "Graph generation",
+        });
       } else {
-        meta.createEl("span", { text: "🔍", cls: "vault-ai-conversation-local-search", title: "Local search mode" });
-        if (conv.graphGenerationMode) {
-          meta.createEl("span", { text: "🏷️", cls: "vault-ai-conversation-graphgen", title: "Graph generation" });
-        }
+        meta.createEl("span", {
+          text: "🔍",
+          cls: "vault-ai-conversation-local-search",
+          title: "Local search",
+        });
       }
 
       // Click to load conversation
@@ -3352,21 +2735,9 @@ export class ChatView extends ItemView {
     if (conversation) {
       this.currentConversation = conversation;
       this.chatHistory = this.conversationMessagesToHistory(conversation.messages);
-      this.darkWebMode = conversation.darkWebMode || false;
-      this.graphGenerationMode = conversation.graphGenerationMode || false;
-      this.reportGenerationMode = conversation.reportGenerationMode || false;
-      this.osintSearchMode = conversation.osintSearchMode || false;
-      this.orchestrationMode = conversation.orchestrationMode || false;
-      this.vaultGraphIngestMode = conversation.vaultGraphIngestMode || false;
-      // Use localSearchMode from conversation, or infer from other modes for backward compatibility
-      this.localSearchMode =
-        conversation.localSearchMode !== undefined
-          ? conversation.localSearchMode
-          : !this.darkWebMode &&
-            !this.reportGenerationMode &&
-            !this.osintSearchMode &&
-            !this.orchestrationMode &&
-            !this.vaultGraphIngestMode;
+      this.syncModesFromConversation(conversation);
+      this.selectedTaskAgentId =
+        conversation.taskAgentId ?? this.plugin.settings.preferredTaskAgentId ?? "";
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
@@ -3381,14 +2752,8 @@ export class ChatView extends ItemView {
     }
     this.currentConversation = null;
     this.chatHistory = [];
-    // Reset mode toggles for new conversation (Graph Generation Mode is default)
-    this.localSearchMode = false;
-    this.darkWebMode = false;
-    this.graphGenerationMode = true;
-    this.reportGenerationMode = false;
-    this.osintSearchMode = false;
-    this.orchestrationMode = true; // Set Main Copilot as default
-    this.vaultGraphIngestMode = false;
+    this.applyChatMode('general');
+    this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
     new Notice("Started new conversation");
@@ -3456,18 +2821,6 @@ export class ChatView extends ItemView {
         `vault-ai-chat-message vault-ai-chat-${item.role}`
       );
       messageDiv.setAttribute("data-message-index", i.toString());
-
-      // Add special styling for DarkWeb investigations
-      if (item.jobId) {
-        messageDiv.addClass("vault-ai-darkweb-message");
-        if (item.status === "processing") {
-          messageDiv.addClass("vault-ai-darkweb-processing");
-        } else if (item.status === "completed") {
-          messageDiv.addClass("vault-ai-darkweb-completed");
-        } else if (item.status === "failed") {
-          messageDiv.addClass("vault-ai-darkweb-failed");
-        }
-      }
 
       const roleLabel = messageDiv.createEl("strong", {
         text: item.role === "user" ? "You: " : "AI: ",
@@ -4052,22 +3405,6 @@ export class ChatView extends ItemView {
         });
       }
 
-      // Feature: Add disclaimer below progress bar for Report Generation
-      const progressMsg = currentProgress.message || "";
-      // Check if it's a report generation (usually has 📄 or "Report" in message/content)
-      const isReportGeneration = progressMsg.includes("📄") ||
-        progressMsg.includes("Report") ||
-        (this.chatHistory[messageIndex]?.content && this.chatHistory[messageIndex].content.includes("Generating report"));
-
-      if (isReportGeneration) {
-        const disclaimer = progressContainer.createDiv("vault-ai-progress-disclaimer");
-        disclaimer.style.marginTop = "4px";
-        disclaimer.style.fontSize = "11px";
-        disclaimer.style.color = "var(--text-muted)";
-        disclaimer.style.fontStyle = "italic";
-        disclaimer.innerText = "It might take up to 5-6 minutes, don't close the tab";
-      }
-
       const vaultLive = this.chatHistory[messageIndex]?.vaultIngestLiveLog;
       const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
       const existingIngestPreview = messageDiv.querySelector(".vault-ai-vault-ingest-preview") as HTMLElement;
@@ -4590,17 +3927,75 @@ export class ChatView extends ItemView {
     // Save conversation after user message
     await this.saveCurrentConversation();
 
-    // Route to appropriate handler based on mode
-    // Pass processingValue (includes file content) to handlers, not displayValue
-    if (this.isGraphOnlyMode()) {
+    // Route by tri-mode (plus optional vault-wide ingest flag from legacy conversations)
+    if (this.vaultGraphIngestMode) {
+      await this.handleVaultGraphIngestOnly(processingValue, "");
+    } else if (this.chatMode === "graph") {
       await this.handleGraphOnlyMode(processingValue);
+    } else if (
+      this.chatMode === "general" &&
+      this.selectedTaskAgentId.trim() &&
+      this.plugin.settings.taskAgentsEnabled
+    ) {
+      await this.handleVaultTaskAgent(processingValue);
+    } else if (this.chatMode === "general") {
+      await this.handleOrchestrationAgent(processingValue, "");
     } else {
-      // Default: Local Search Mode (normal chat)
       await this.handleNormalChat(processingValue);
     }
 
     // Save conversation after assistant response
     await this.saveCurrentConversation();
+  }
+
+  async handleVaultTaskAgent(query: string) {
+    const assistantIndex = this.chatHistory.length;
+    this.chatHistory.push({
+      role: "assistant",
+      content: "",
+      progress: { message: "Running task agent (local Claude)...", percent: 15 },
+    });
+    await this.renderMessages();
+
+    try {
+      const controller = new AbortController();
+      this.activeAbortControllers.set(assistantIndex, controller);
+
+      const id = this.selectedTaskAgentId.trim();
+      const manifest = await this.plugin.taskAgentRegistry.getById(id);
+      if (!manifest) {
+        this.chatHistory[assistantIndex].content = `Unknown task agent: \`${id}\`. Check the task agents folder and settings.`;
+        this.chatHistory[assistantIndex].progress = undefined;
+        this.activeAbortControllers.delete(assistantIndex);
+        await this.renderMessages();
+        return;
+      }
+      if (!isTaskAgentRunnable(manifest, this.plugin.settings)) {
+        this.chatHistory[assistantIndex].content =
+          `Task agent **${manifest.name}** is disabled. Enable it under Settings → Task agents.`;
+        this.chatHistory[assistantIndex].progress = undefined;
+        this.activeAbortControllers.delete(assistantIndex);
+        await this.renderMessages();
+        return;
+      }
+
+      const { assistantText } = await this.plugin.taskAgentRunner.run(
+        manifest,
+        query,
+        controller.signal,
+      );
+      this.activeAbortControllers.delete(assistantIndex);
+      this.chatHistory[assistantIndex].content = assistantText;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    } catch (e) {
+      this.activeAbortControllers.delete(assistantIndex);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "Cancelled by user" || msg.includes("Aborted")) return;
+      this.chatHistory[assistantIndex].content = `Task agent error: ${msg}`;
+      this.chatHistory[assistantIndex].progress = undefined;
+      await this.renderMessages();
+    }
   }
 
   async handleOrchestrationAgent(query: string, attachmentsContext: string = "") {
@@ -4873,9 +4268,6 @@ export class ChatView extends ItemView {
     `;
 
     const toolIcons: Record<string, string> = {
-      "DARK_WEB": "🕸️ DarkWeb Search",
-      "OSINT_SEARCH": "🌐 Digital Footprint",
-      "CORPORATE_REPORTS": "🏢 Companies & People",
       "LOCAL_VAULT": "📁 Local Search",
       "EXTRACT_TO_GRAPH": "🏷️ Graph Extraction",
       "VAULT_GRAPH_INGEST": "🗂️ Vault graph ingest"
@@ -6132,848 +5524,6 @@ export class ChatView extends ItemView {
     }
   }
 
-  async handleReportGeneration(description: string) {
-    // Add status placeholder
-    const messageIndex = this.chatHistory.length;
-    this.chatHistory.push({
-      role: "assistant",
-      content: "📄 Generating report, 3-6 mins, don\'t close the tab",
-      progress: { message: "Initializing research...", percent: 5 }
-    });
-    await this.renderMessages();
-
-    try {
-      // Create new abort controller for this operation
-      const controller = new AbortController();
-      this.activeAbortControllers.set(messageIndex, controller);
-
-      // Generate report with status updates, progress, and intermediate results
-      // Pass current conversation so it can use and update reportConversationId
-      const reportData = await this.plugin.generateReport(
-        description,
-        this.currentConversation,
-        (status: string, progress?: { message: string; percent: number }, intermediateResults?: string[]) => {
-          // Build status message with progress and intermediate results
-          let statusDisplay = status;
-          if (status === "processing") statusDisplay = "Generating report...";
-          if (status === "queued") statusDisplay = "Queued for processing...";
-
-          let statusMessage = `📄 ${statusDisplay}`;
-
-          if (progress) {
-            statusMessage = `📄 ${progress.message}`;
-            console.info(`[OSINT Copilot] Report progress update: ${progress.percent}% - ${progress.message}`);
-          } else {
-            console.info(`[OSINT Copilot] Report status update: ${status}`);
-          }
-
-          // Update the processing message in real-time
-          this.chatHistory[messageIndex].content = statusMessage;
-
-          // Store progress and intermediate results for rendering (preserve if not provided)
-          if (progress) {
-            this.chatHistory[messageIndex].progress = progress;
-          }
-          // Don't clear progress if not provided - keep the last known progress
-
-          if (intermediateResults && intermediateResults.length > 0) {
-            this.chatHistory[messageIndex].intermediateResults = intermediateResults;
-          }
-          // Don't clear intermediate results if not provided - keep the last known results
-
-          // Always update progress bar - it will use saved progress if new one is not provided
-          this.updateProgressBar(messageIndex, progress, intermediateResults);
-        },
-        controller.signal
-      );
-
-      // Clear controller on completion
-      this.activeAbortControllers.delete(messageIndex);
-
-      // Save to vault
-      const fileName = await this.plugin.saveReportToVault(
-        reportData.content,
-        description,
-        reportData.filename
-      );
-
-      // ✅ IMPORTANT: Save conversation after report generation to persist reportConversationId
-      // The conversation.reportConversationId was updated in generateReport() if server returned one
-      if (this.currentConversation) {
-        await this.saveCurrentConversation();
-      }
-
-      // Update message with success header, file link, and full report content
-      let finalContent =
-        `📄 **Companies&People Generated Successfully!**\n\n` +
-        `**Request:** ${description}\n\n` +
-        `**Saved to:** \`${fileName}\`\n\n` +
-        `---\n\n` +
-        reportData.content;
-      this.chatHistory[messageIndex].content = finalContent;
-      this.chatHistory[messageIndex].reportFilePath = fileName; // Store report file path for button
-      await this.renderMessages();
-
-      // Graph Generation Mode: Extract and create entities from the report
-      if (this.graphGenerationMode) {
-        try {
-          await this.processGraphGeneration(messageIndex, reportData.content, description, finalContent);
-        } catch (graphError) {
-          console.error("[OSINT Copilot] Graph generation from report failed:", graphError);
-          // Don't re-throw - we want to keep the successfully generated report
-          new Notice("Graph generation failed, but the report was saved successfully.");
-        }
-      }
-
-      // Open the report file
-      const file = this.app.vault.getAbstractFileByPath(fileName);
-      if (file instanceof TFile) {
-        await this.app.workspace.getLeaf().openFile(file);
-      }
-
-      new Notice(`Companies&People saved to ${fileName}`);
-    } catch (error) {
-      this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
-      const errorMsg = error instanceof Error ? error.message : String(error);
-
-      // Handle user cancellation gracefully
-      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) {
-        return; // UI already handled by handleCancel
-      }
-
-      // Provide user-friendly error messages for common issues
-      let userMessage = errorMsg;
-      let suggestion = "";
-
-      if (errorMsg.toLowerCase().includes("ssl") || errorMsg.toLowerCase().includes("certificate")) {
-        userMessage = "Backend service temporarily unavailable (SSL/certificate issue)";
-        suggestion = "\n\n💡 **Suggestion:** This is a temporary server-side issue. Please try again in a few minutes.";
-      } else if (errorMsg.toLowerCase().includes("timeout")) {
-        userMessage = "Companies&People generation timed out";
-        suggestion = "\n\n💡 **Suggestion:** The server may be busy. Please try again with a simpler query.";
-      } else if (errorMsg.toLowerCase().includes("quota")) {
-        suggestion = "\n\n💡 **Suggestion:** Visit https://osint-copilot.com/dashboard/ to check your quota.";
-      } else if (errorMsg.toLowerCase().includes("network") || errorMsg.toLowerCase().includes("fetch")) {
-        userMessage = "Network connection error";
-        suggestion = "\n\n💡 **Suggestion:** Check your internet connection and try again.";
-      } else if (errorMsg.toLowerCase().includes("n8n") || errorMsg.toLowerCase().includes("workflow")) {
-        userMessage = "Backend workflow error";
-        suggestion = "\n\n💡 **Suggestion:** This is a temporary server-side issue. Please try again in a few minutes.";
-      }
-
-      this.chatHistory[messageIndex].content =
-        `📄 **Companies&People Generation Failed**\n\n` +
-        `**Request:** ${description}\n\n` +
-        `**Error:** ${userMessage}${suggestion}`;
-      await this.renderMessages();
-      new Notice(`Companies&People generation failed: ${userMessage}`);
-    }
-  }
-
-  /**
-   * Handle Digital Footprint Mode: AI-powered multi-provider OSINT search.
-   */
-  async handleOSINTSearch(query: string) {
-    // Add processing placeholder with progress bar
-    const messageIndex = this.chatHistory.length;
-    this.chatHistory.push({
-      role: "assistant",
-      content: "🔎 Searching OSINT databases...",
-      progress: { message: "Analyzing query...", percent: 10 },
-    });
-    await this.renderMessages();
-
-    // Helper to update progress
-    const updateProgress = (message: string, percent: number) => {
-      // Check if cancelled
-      if (this.activeAbortControllers.has(messageIndex)) {
-        this.chatHistory[messageIndex].progress = { message, percent };
-        this.chatHistory[messageIndex].content = `🔎 ${message}`;
-        this.updateProgressBar(messageIndex, { message, percent });
-      }
-    };
-
-    try {
-      // Check for API key
-      if (!this.plugin.settings.reportApiKey) {
-        this.chatHistory[messageIndex].progress = undefined;
-        this.chatHistory[messageIndex].content =
-          `🔎 **Digital Footprint Failed**\n\n` +
-          `**Error:** License key required for Digital Footprint.\n\n` +
-          `Please configure your API key in Settings → OSINT Copilot → API Key.`;
-        await this.renderMessages();
-        new Notice("License key required for leak search. Configure in settings.");
-        return;
-      }
-
-      updateProgress("Detecting entities in query...", 20);
-
-      const searchRequest: any = {
-        query: query,
-        country: "ALL",
-        max_providers: 10,
-        parallel: true
-      };
-
-      // Retry callback for progress updates
-      const onRetry = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => {
-        const delaySeconds = Math.round(nextDelayMs / 1000);
-        let reasonText = 'Network interrupted';
-        if (reason === 'timeout') {
-          reasonText = 'Request takes longer than usual, please wait';
-        } else if (reason === 'network') {
-          reasonText = 'Network connection lost';
-        } else if (reason.startsWith('server-error')) {
-          reasonText = 'Server temporarily unavailable';
-        } else if (reason === 'rate-limited') {
-          reasonText = 'Rate limited';
-        }
-        updateProgress(`⚠️ ${reasonText}. Retrying in ${delaySeconds}s... (${attempt + 1}/${maxAttempts})`, 40);
-      };
-
-      updateProgress("Searching OSINT databases...", 50);
-
-      // Create new abort controller for this operation
-      const controller = new AbortController();
-      this.activeAbortControllers.set(messageIndex, controller);
-
-      // Call the AI search API
-      const result: AISearchResponse = await this.plugin.graphApiService.aiSearch(
-        searchRequest,
-        onRetry,
-        controller.signal
-      );
-
-      // Clear controller on completion
-      this.activeAbortControllers.delete(messageIndex);
-
-      updateProgress("Processing results...", 80);
-
-      // Render the search results and get the content for entity extraction
-      const searchResultsContent = this.renderOSINTSearchResults(messageIndex, query, result);
-
-      // Graph Generation Mode: Extract and create entities from search results
-      if (this.graphGenerationMode && result.results && result.results.length > 0) {
-        try {
-          // Convert search results to text for entity extraction
-          const resultsText = this.formatOSINTResultsForEntityExtraction(query, result);
-          await this.processGraphGeneration(messageIndex, resultsText, query, searchResultsContent);
-        } catch (entityError) {
-          // Log error but don't fail the whole operation - search results are already displayed
-          console.error('[ChatView] Graph generation from OSINT results failed:', entityError);
-          const errorMsg = entityError instanceof Error ? entityError.message : String(entityError);
-          this.chatHistory[messageIndex].content = searchResultsContent +
-            `\n\n⚠️ Graph generation failed: ${errorMsg}`;
-          this.chatHistory[messageIndex].progress = undefined;
-          await this.renderMessages();
-        }
-      }
-
-    } catch (error) {
-      this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
-      console.error('[ChatView] Digital Footprint error:', error);
-      this.chatHistory[messageIndex].progress = undefined;
-
-      let errorMessage = error instanceof Error ? error.message : String(error);
-
-      // Handle user cancellation gracefully
-      if (errorMessage === 'Cancelled by user' || errorMessage.includes('Aborted')) {
-        return; // UI already handled by handleCancel
-      }
-
-      let suggestion = '';
-
-      if (errorMessage.includes('timeout')) {
-        suggestion = '\n\n💡 Try reducing the number of providers or simplifying your query.';
-      } else if (errorMessage.includes('unavailable')) {
-        suggestion = '\n\n💡 The service may be temporarily down. Please try again later.';
-      } else if (errorMessage.includes('Authentication') || errorMessage.includes('API key')) {
-        suggestion = '\n\n💡 Please check your API key in Settings → OSINT Copilot → API Key.';
-      }
-
-      this.chatHistory[messageIndex].content =
-        `🔎 **Digital Footprint Failed**\n\n` +
-        `**Query:** ${query}\n\n` +
-        `**Error:** ${errorMessage}${suggestion}`;
-      await this.renderMessages();
-      new Notice(`Digital Footprint failed: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Render OSINT search results in a structured format.
-   * Returns the content string for use in entity extraction.
-   */
-  private renderOSINTSearchResults(messageIndex: number, query: string, result: AISearchResponse): string {
-    this.chatHistory[messageIndex].progress = undefined;
-
-    // Build the result content
-    let content = `🔎 **Digital Footprint Results**\n\n`;
-    content += `**Query:** ${query}\n`;
-    content += `⏱️ ${(result.execution_time_ms / 1000).toFixed(1)}s | 📊 ${result.total_results} result(s)\n\n`;
-
-    // Detected Entities section
-    if (result.detected_entities && result.detected_entities.length > 0) {
-      content += `---\n\n### 📋 Detected Entities\n\n`;
-      for (const entity of result.detected_entities) {
-        const icon = this.getEntityTypeIcon(entity.type);
-        const confidence = Math.round(entity.confidence * 100);
-        content += `${icon} **${entity.type}:** \`${entity.value}\` (${confidence}% confidence)\n`;
-      }
-      content += '\n';
-    } else {
-      content += `---\n\n### 📋 Detected Entities\n\n`;
-      content += `⚠️ No searchable entities detected in your query.\n`;
-      content += `Try including an email, phone, name, or other identifier.\n\n`;
-    }
-
-    // Results section
-    if (result.results && result.results.length > 0) {
-      content += `---\n\n### 📊 Results\n\n`;
-
-      // Render each result item from the results array
-      for (let i = 0; i < result.results.length; i++) {
-        const item = result.results[i];
-        content += `**Result ${i + 1}:**\n`;
-        content += '```json\n';
-        content += JSON.stringify(item, null, 2);
-        content += '\n```\n\n';
-      }
-    } else if (result.detected_entities && result.detected_entities.length > 0) {
-      content += `---\n\n### 📊 Results\n\n`;
-      content += `No results found.\n\n`;
-    }
-
-    // Explanation section
-    if (result.explanation) {
-      content += `---\n\n### 💡 Explanation\n\n`;
-      content += `${result.explanation}\n`;
-    }
-
-    this.chatHistory[messageIndex].content = content;
-    void this.renderMessages();
-    return content;
-  }
-
-  /**
-   * Format OSINT search results for entity extraction.
-   * Converts the JSON results into a text format suitable for the AI entity extraction.
-   */
-  private formatOSINTResultsForEntityExtraction(query: string, result: AISearchResponse): string {
-    let text = `Digital Footprint Results for query: "${query}"\n\n`;
-
-    // Include detected entities from the search
-    if (result.detected_entities && result.detected_entities.length > 0) {
-      text += "Detected search entities:\n";
-      for (const entity of result.detected_entities) {
-        text += `- ${entity.type}: ${entity.value}\n`;
-      }
-      text += "\n";
-    }
-
-    // Include the raw results data
-    if (result.results && result.results.length > 0) {
-      text += `Found ${result.total_results} results:\n\n`;
-      for (let i = 0; i < result.results.length; i++) {
-        const item = result.results[i];
-        text += `Result ${i + 1}:\n`;
-        text += JSON.stringify(item, null, 2);
-        text += "\n\n";
-      }
-    }
-
-    // Include the explanation
-    if (result.explanation) {
-      text += `\nExplanation: ${result.explanation}\n`;
-    }
-
-    return text;
-  }
-
-  /**
-   * Get icon for entity type in OSINT search results.
-   */
-  private getEntityTypeIcon(entityType: string): string {
-    const icons: Record<string, string> = {
-      'email': '📧',
-      'phone': '📞',
-      'name': '👤',
-      'ip': '🌐',
-      'domain': '🔗',
-      'passport': '🛂',
-      'inn': '💳',
-      'snils': '🆔',
-      'address': '📍',
-      'auto': '🚗',
-      'ogrn': '🏢',
-    };
-    return icons[entityType.toLowerCase()] || '📦';
-  }
-
-  async handleDarkWebInvestigation(query: string) {
-    // Add status placeholder with progress bar
-    const messageIndex = this.chatHistory.length;
-    this.chatHistory.push({
-      role: "assistant",
-      content: "🕵️ Starting dark web investigation...",
-      status: "starting",
-      progress: { message: "Initializing investigation...", percent: 5 },
-    });
-    await this.renderMessages();
-
-    // Helper to update progress
-    const updateProgress = (message: string, percent: number) => {
-      this.chatHistory[messageIndex].progress = { message, percent };
-      this.updateProgressBar(messageIndex, { message, percent });
-    };
-
-    const maxRetries = 3;
-    const baseDelayMs = 1000;
-    let lastError: Error | null = null;
-
-    // Create new abort controller for this operation
-    const controller = new AbortController();
-    this.activeAbortControllers.set(messageIndex, controller);
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      // Check cancellation before each attempt
-      if (controller.signal.aborted) {
-        this.activeAbortControllers.delete(messageIndex);
-        return;
-      }
-      try {
-        updateProgress("Connecting to dark web API...", 10);
-
-        // Start DarkWeb investigation
-        const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/investigate`;
-        const response: RequestUrlResponse = await requestUrl({
-          url: endpoint,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
-          },
-          body: JSON.stringify({
-            query: query,
-            model: DARKWEB_MODEL,
-            threads: 8,
-          }),
-          throw: false,
-        });
-
-        if (response.status < 200 || response.status >= 300) {
-          const errorText = response.text || "";
-
-          // Handle quota exhaustion specifically - don't retry these
-          if (response.status === 403) {
-            const lowerError = errorText.toLowerCase();
-            if (lowerError.includes("quota") || lowerError.includes("exceeded")) {
-              throw new Error(
-                "Investigation credits exhausted. Please upgrade your plan or wait for credit renewal. Visit https://osint-copilot.com/dashboard/ to manage your subscription."
-              );
-            }
-            if (lowerError.includes("expired")) {
-              throw new Error(
-                "Your license key or trial has expired. Please renew your subscription at https://osint-copilot.com/dashboard/"
-              );
-            }
-            if (lowerError.includes("inactive")) {
-              throw new Error(
-                "Your license key is inactive. Please check your account status at https://osint-copilot.com/dashboard/"
-              );
-            }
-          }
-
-          throw new Error(`DarkWeb API request failed (${response.status}): ${errorText.substring(0, 200)}`);
-        }
-
-        updateProgress("Processing API response...", 15);
-        const result = response.json;
-        const jobId = result.job_id;
-
-        if (!jobId) {
-          throw new Error("No job ID returned from DarkWeb API");
-        }
-
-        updateProgress("Investigation started, searching dark web engines...", 20);
-        console.debug(`[OSINT Copilot] Dark web investigation started with Job ID: ${jobId}`);
-
-        // Update message and start polling (Job ID stored internally but not shown to user)
-        this.chatHistory[messageIndex] = {
-          role: "assistant",
-          content: `🕵️ Dark web investigation started\n\n**Query:** ${query}\n**Status:** Processing\n**Estimated time:** 2-3 minutes\n\nSearching 15+ dark web engines...`,
-          jobId: jobId,
-          status: "processing",
-          query: query, // Store query for later use when saving report
-          progress: { message: "Searching dark web engines...", percent: 20 },
-        };
-        await this.renderMessages();
-
-        // Start polling for status (pass query for report saving)
-        this.pollDarkWebStatus(jobId, messageIndex, query);
-        return; // Success, exit the retry loop
-
-      } catch (error) {
-        // If aborted during initial request (rare but possible if we implemented abortable fetch)
-        if (this.activeAbortControllers.has(messageIndex) && this.activeAbortControllers.get(messageIndex)?.signal.aborted) {
-          return;
-        }
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        // Only retry on transient network errors
-        if (!this.plugin.isTransientNetworkError(lastError)) {
-          break;
-        }
-
-        // Don't retry on the last attempt
-        if (attempt < maxRetries) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.debug(`[OSINT Copilot] DarkWeb API network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
-
-          updateProgress(`Network error. Retrying... (${attempt}/${maxRetries})`, 8);
-          // Show retry status to user
-          this.chatHistory[messageIndex] = {
-            role: "assistant",
-            content: `🕵️ Starting dark web investigation...\n\n⚠️ Network interrupted. Retrying... (${attempt}/${maxRetries})`,
-            status: "starting",
-          };
-          await this.renderMessages();
-
-          await this.plugin.sleep(delayMs);
-        }
-      }
-    }
-
-    // All retries exhausted or non-retryable error
-    const errorMsg = lastError ? lastError.message : "Unknown error";
-    const isNetworkError = lastError && this.plugin.isTransientNetworkError(lastError);
-
-    this.chatHistory[messageIndex] = {
-      role: "assistant",
-      content: `❌ Error starting dark web investigation: ${isNetworkError ? "Network connection error. Please check your internet connection and try again." : errorMsg}\n\n💡 Tip: Your query was saved. You can try sending it again.`,
-      status: "failed",
-    };
-    await this.renderMessages();
-
-    // Restore the query to the input field so user can retry
-    this.inputEl.value = query;
-    this.activeAbortControllers.delete(messageIndex);
-  }
-
-  pollDarkWebStatus(jobId: string, messageIndex: number, query: string) {
-    // Clear any existing polling for this job
-    const existingTimeoutId = this.pollingIntervals.get(jobId);
-    if (existingTimeoutId) {
-      window.clearTimeout(existingTimeoutId);
-    }
-
-    // Track elapsed time for adaptive polling
-    let elapsedMs = 0;
-    let consecutiveErrors = 0;
-    const maxConsecutiveErrors = 5;
-    const maxElapsedMs = 10 * 60 * 1000; // 10 minutes max timeout (dark web searches can take longer)
-
-    // Adaptive polling: start fast (3s), gradually increase to max (8s) as job takes longer
-    const getPollingInterval = (elapsed: number): number => {
-      if (elapsed < 20000) return 3000;      // First 20s: poll every 3s (fast feedback)
-      if (elapsed < 60000) return 5000;      // 20s-60s: poll every 5s
-      return 8000;                            // After 60s: poll every 8s (reduce load)
-    };
-
-    const poll = async () => {
-      // Check cancellation
-      if (!this.activeAbortControllers.has(messageIndex)) {
-        this.pollingIntervals.delete(jobId);
-        return;
-      }
-
-      // Check if we've exceeded the maximum elapsed time
-      if (elapsedMs >= maxElapsedMs) {
-        this.pollingIntervals.delete(jobId);
-        console.warn(`[OSINT Copilot] Dark web investigation timed out after ${Math.round(maxElapsedMs / 1000)}s`);
-        this.chatHistory[messageIndex] = {
-          role: "assistant",
-          content: `⏱️ Dark web investigation timed out\n\n**Job ID:** ${jobId}\n\nThe investigation is taking longer than expected (${Math.round(maxElapsedMs / 60000)} minutes).\n\nThe job may still be processing on the server. You can try checking the status later or contact support.`,
-          jobId: jobId,
-          status: "timeout",
-          progress: undefined,
-        };
-        await this.renderMessages();
-        return;
-      }
-
-      try {
-        const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/status/${jobId}`;
-
-        // Use Obsidian's requestUrl to bypass CORS restrictions
-        const response: RequestUrlResponse = await requestUrl({
-          url: endpoint,
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
-          },
-          throw: false,
-        });
-
-        if (response.status < 200 || response.status >= 300) {
-          // Handle 404 - job not found (backend lost job status, likely Redis issue)
-          if (response.status === 404) {
-            this.pollingIntervals.delete(jobId);
-            console.warn(`[OSINT Copilot] Job ${jobId} not found in backend (404). Attempting to fetch results directly...`);
-
-            // Try to fetch results directly from summary endpoint
-            // The job may have completed but status was lost
-            try {
-              await this.fetchDarkWebResults(jobId, messageIndex, query);
-              // Clean up controller is handled in fetchDarkWebResults or here?
-              // fetchDarkWebResults is async/recursive-ish via poll? No, it's a separate call.
-              // Actually fetchDarkWebResults handles completion.
-              // But we should clear it here if it returns successfully?
-              // Let's rely on fetchDarkWebResults to clear it or clear it here if it returns.
-              this.activeAbortControllers.delete(messageIndex);
-              return; // Success - results fetched
-            } catch (summaryError) {
-              console.error('[OSINT Copilot] Failed to fetch results after 404:', summaryError);
-              this.chatHistory[messageIndex] = {
-                role: "assistant",
-                content: `⚠️ Investigation status unavailable\n\n**Job ID:** ${jobId}\n\nThe backend lost track of this investigation (likely due to a Redis connection issue).\n\nThe investigation may have completed, but the results are not accessible. Please try starting a new investigation.`,
-                jobId: jobId,
-                status: "failed",
-                progress: undefined,
-              };
-              await this.renderMessages();
-              this.activeAbortControllers.delete(messageIndex);
-              return;
-            }
-          }
-          throw new Error(`Status check failed (${response.status})`);
-        }
-
-        const statusData = response.json;
-        const status = statusData.status;
-
-        // Reset error counter on success
-        consecutiveErrors = 0;
-
-        // Update message with progress
-        // Handle both "processing" and "queued" statuses (API returns these, not "processing (up to 5 mins)")
-        if (status === "processing" || status === "queued") {
-          // Use stage field from API for more accurate progress tracking
-          const stage = statusData.stage || "processing";
-          const searchResultsCount = statusData.search_results_count || 0;
-          const filteredResultsCount = statusData.filtered_results_count || 0;
-
-          // Map stages to progress percentages and human-readable messages
-          const stageProgress: { [key: string]: { percent: number; message: string } } = {
-            "initializing": { percent: 22, message: "Initializing investigation..." },
-            "refining_query": { percent: 28, message: "Refining search query with AI..." },
-            "searching": { percent: 40, message: `Searching dark web engines...` },
-            "filtering": { percent: 55, message: `Filtering ${searchResultsCount} results...` },
-            "scraping": { percent: 70, message: `Scraping ${filteredResultsCount} relevant sites...` },
-            "generating_summary": { percent: 85, message: "Generating intelligence summary..." },
-          };
-
-          const stageInfo = stageProgress[stage] || { percent: 25, message: "Processing..." };
-          const displayPercent = stageInfo.percent;
-          const progressMessage = stageInfo.message;
-
-          // Build status content with available info
-          let statusContent = `🕵️ Dark web investigation in progress\n\n**Stage:** ${progressMessage}\n`;
-          if (searchResultsCount > 0) {
-            statusContent += `**Search results:** ${searchResultsCount}\n`;
-          }
-          if (filteredResultsCount > 0) {
-            statusContent += `**Filtered results:** ${filteredResultsCount}\n`;
-          }
-          statusContent += `\nPlease wait...`;
-
-          this.chatHistory[messageIndex] = {
-            role: "assistant",
-            content: statusContent,
-            jobId: jobId, // Keep Job ID internally for API calls
-            status: "processing",
-            progress: { message: progressMessage, percent: displayPercent },
-            query: query,
-          };
-          this.updateProgressBar(messageIndex, { message: progressMessage, percent: displayPercent });
-
-          // Schedule next poll with adaptive interval
-          const nextInterval = getPollingInterval(elapsedMs);
-          elapsedMs += nextInterval;
-          const timeoutId = window.setTimeout(() => { void poll(); }, nextInterval);
-          this.pollingIntervals.set(jobId, timeoutId);
-        } else if (status === "completed") {
-          // Stop polling
-          this.pollingIntervals.delete(jobId);
-
-          // Update progress to show fetching results
-          this.chatHistory[messageIndex].progress = { message: "Fetching results...", percent: 92 };
-          this.updateProgressBar(messageIndex, { message: "Fetching results...", percent: 92 });
-
-          // Fetch the summary and save to vault
-          await this.fetchDarkWebResults(jobId, messageIndex, query);
-          this.activeAbortControllers.delete(messageIndex);
-        } else if (status === "failed") {
-          // Stop polling
-          this.pollingIntervals.delete(jobId);
-
-          console.error(`[OSINT Copilot] Dark web investigation failed. Job ID: ${jobId}, Error: ${statusData.error || "Unknown error"}`);
-          this.chatHistory[messageIndex] = {
-            role: "assistant",
-            content: `❌ Dark web investigation failed\n\n**Error:** ${statusData.error || "Unknown error"}\n\nPlease try again or contact support if the issue persists.`,
-            jobId: jobId, // Keep Job ID internally for debugging
-            status: "failed",
-            progress: undefined, // Clear progress bar on failure
-          };
-          await this.renderMessages();
-        }
-      } catch (error) {
-        consecutiveErrors++;
-
-        // Enhanced logging for network errors
-        const errorType = error instanceof Error ? error.name : 'Unknown';
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[OSINT Copilot] Dark web status poll error (${consecutiveErrors}/${maxConsecutiveErrors}):`,
-          `Type: ${errorType}, Message: ${errorMsg}`
-        );
-
-        // Continue polling unless too many consecutive errors
-        if (consecutiveErrors < maxConsecutiveErrors) {
-          const nextInterval = getPollingInterval(elapsedMs);
-          elapsedMs += nextInterval;
-
-          // Show retry status to user
-          const elapsedSecs = Math.round(elapsedMs / 1000);
-          const retryMsg = `Network interrupted (${errorType}), retrying... (${elapsedSecs}s elapsed, attempt ${consecutiveErrors}/${maxConsecutiveErrors})`;
-          console.debug(`[OSINT Copilot] ${retryMsg}`);
-
-          const timeoutId = window.setTimeout(() => { void poll(); }, nextInterval);
-          this.pollingIntervals.set(jobId, timeoutId);
-        } else {
-          // Too many errors, stop polling and show error
-          this.pollingIntervals.delete(jobId);
-          console.error('[OSINT Copilot] Dark web status polling failed after max retries');
-          this.chatHistory[messageIndex] = {
-            role: "assistant",
-            content: `❌ Dark web investigation status check failed\n\n**Error:** Network connection lost after ${maxConsecutiveErrors} attempts (${errorType}).\n\nPlease check your connection and try again.`,
-            jobId: jobId,
-            status: "failed",
-            progress: undefined,
-          };
-          await this.renderMessages();
-        }
-      }
-    };
-
-    // Start first poll after initial interval
-    const initialInterval = getPollingInterval(0);
-    elapsedMs = initialInterval;
-    const timeoutId = window.setTimeout(() => { void poll(); }, initialInterval);
-    this.pollingIntervals.set(jobId, timeoutId);
-  }
-
-  async fetchDarkWebResults(jobId: string, messageIndex: number, query: string) {
-    try {
-      // Strip darkweb_ prefix if present (backend expects clean UUID)
-      const cleanJobId = jobId.startsWith('darkweb_') ? jobId.replace('darkweb_', '') : jobId;
-      const endpoint = `${this.plugin.settings.graphApiUrl}/api/darkweb/summary/${cleanJobId}`;
-      const response: RequestUrlResponse = await requestUrl({
-        url: endpoint,
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.plugin.settings.reportApiKey}`,
-        },
-        throw: false,
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Failed to fetch results (${response.status})`);
-      }
-
-      const summary = response.json;
-      console.debug(`[OSINT Copilot] Dark web investigation completed. Job ID: ${jobId}`);
-
-      // Format the results as markdown for both display and saving
-      let reportContent = `# Dark Web Investigation: ${query}\n\n`;
-
-      if (summary.summary) {
-        reportContent += `## Summary\n\n${summary.summary}\n\n`;
-      }
-
-      if (summary.findings && summary.findings.length > 0) {
-        reportContent += `## Key Findings (${summary.findings.length})\n\n`;
-        summary.findings.forEach((finding: { title?: string; url?: string; snippet?: string }, index: number) => {
-          reportContent += `### ${index + 1}. ${finding.title || "Finding"}\n\n`;
-          if (finding.url) reportContent += `**URL:** ${finding.url}\n\n`;
-          if (finding.snippet) reportContent += `${finding.snippet}\n\n`;
-        });
-      }
-
-      // Save to vault
-      let savedFileName = "";
-      try {
-        savedFileName = await this.plugin.saveDarkWebReportToVault(reportContent, query, jobId);
-        new Notice(`Dark web report saved to ${savedFileName}`);
-      } catch (saveError) {
-        console.error("Error saving dark web report to vault:", saveError);
-        // Continue even if save fails - still show results in chat
-      }
-
-      // Format display text with file link if saved (no Job ID shown to user)
-      let displayText = `✅ Dark web investigation completed\n\n`;
-      displayText += `**Query:** ${query}\n`;
-      if (savedFileName) {
-        displayText += `**Saved to:** \`${savedFileName}\`\n`;
-      }
-      displayText += `\n---\n\n`;
-      displayText += reportContent;
-
-      // Clear progress bar and show final result
-      this.chatHistory[messageIndex] = {
-        role: "assistant",
-        content: displayText,
-        jobId: jobId,
-        status: "completed",
-        query: query,
-        progress: undefined, // Clear progress bar on completion
-        reportFilePath: savedFileName || undefined, // Store report file path for button
-      };
-      await this.renderMessages();
-
-      // Graph Generation Mode: Extract and create entities from the dark web results
-      if (this.graphGenerationMode) {
-        try {
-          await this.processGraphGeneration(messageIndex, reportContent, query, displayText);
-        } catch (graphError) {
-          console.error("[OSINT Copilot] Graph generation from dark web results failed:", graphError);
-          new Notice("Graph generation failed, but the report was saved successfully.");
-        }
-      }
-
-      // Open the saved file if it exists
-      if (savedFileName) {
-        const file = this.app.vault.getAbstractFileByPath(savedFileName);
-        if (file instanceof TFile) {
-          await this.app.workspace.getLeaf().openFile(file);
-        }
-      }
-
-      new Notice("Dark web investigation completed!");
-
-    } catch (error) {
-      console.error(`[OSINT Copilot] Failed to fetch dark web results. Job ID: ${jobId}, Error:`, error);
-      this.chatHistory[messageIndex] = {
-        role: "assistant",
-        content: `⚠️ Investigation completed but failed to fetch results\n\n**Query:** ${query}\n**Error:** ${error instanceof Error ? error.message : String(error)}\n\nPlease try again or contact support if the issue persists.`,
-        jobId: jobId, // Keep Job ID internally for debugging
-        status: "completed",
-        query: query,
-      };
-      await this.renderMessages();
-    }
-  }
-
   async onClose() {
     // Cleanup polling timeouts (using setTimeout for adaptive polling)
     for (const timeoutId of this.pollingIntervals.values()) {
@@ -7115,14 +5665,71 @@ class VaultAISettingTab extends PluginSettingTab {
         btn.setButtonText("Install missing").onClick(async () => {
           try {
             await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
+            await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
             this.plugin.vaultPromptLoader?.invalidateAll();
+            this.plugin.taskAgentRegistry?.invalidate();
             this.plugin.attachVaultSkillFromVault();
-            new Notice("Done. Open the prompts folder in the vault to edit.");
+            new Notice("Done. Open the prompts and task-agents folders in the vault to edit.");
           } catch (e) {
             new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
           }
         })
       );
+
+    new Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new Setting(containerEl)
+      .setName("Enable task agents")
+      .setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
+          this.plugin.settings.taskAgentsEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+    new Setting(containerEl)
+      .setName("Task agents folder")
+      .setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).")
+      .addText((text) =>
+        text
+          .setPlaceholder(".osint-copilot/task-agents")
+          .setValue(this.plugin.settings.taskAgentsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.taskAgentsFolder = value.trim() || ".osint-copilot/task-agents";
+            this.plugin.taskAgentRegistry?.invalidate();
+            await this.plugin.saveSettings();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Global output allowlist")
+      .setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.")
+      .addTextArea((text) => {
+        text
+          .setPlaceholder(".osint-copilot/outputs/\nResearch/")
+          .setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist)
+          .onChange(async (value) => {
+            this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.rows = 3;
+        text.inputEl.setCssProps({ width: "100%" });
+      });
+    new Setting(containerEl)
+      .setName("Install missing default task-agent files")
+      .setDesc("Creates README + sample agents when missing. Does not overwrite edits.")
+      .addButton((btn) =>
+        btn.setButtonText("Install missing").onClick(async () => {
+          try {
+            await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
+            this.plugin.taskAgentRegistry?.invalidate();
+            new Notice("Task-agent defaults installed where missing.");
+            this.display();
+          } catch (e) {
+            new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
+          }
+        }),
+      );
+    const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
+    void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
 
     // Custom Chat Configuration
     {
@@ -7352,20 +5959,6 @@ class VaultAISettingTab extends PluginSettingTab {
           }));
     }
 
-    // Companies&People Output Directory
-    new Setting(containerEl)
-      .setName("Companies&people output directory")
-      .setDesc("Directory where generated reports will be saved")
-      .addText((text) =>
-        text
-          .setPlaceholder("Reports")
-          .setValue(this.plugin.settings.reportOutputDir)
-          .onChange(async (value) => {
-            this.plugin.settings.reportOutputDir = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
     // Conversation Folder
     new Setting(containerEl)
       .setName("Conversation history folder")
@@ -7469,6 +6062,46 @@ class VaultAISettingTab extends PluginSettingTab {
     if (this._settingsDisplayQueued) {
       this._settingsDisplayQueued = false;
       queueMicrotask(() => this.display());
+    }
+  }
+
+  private async populateTaskAgentToggleSettings(host: HTMLElement): Promise<void> {
+    host.empty();
+    try {
+      const list = await this.plugin.taskAgentRegistry.listAgents();
+      if (list.length === 0) {
+        host.createEl("p", {
+          text: "No task agents found. Add .md files with agent_kind: task to the task agents folder.",
+          cls: "setting-item-description",
+        });
+        return;
+      }
+      for (const a of list) {
+        const runnable = isTaskAgentRunnable(a, this.plugin.settings);
+        new Setting(host)
+          .setName(a.name)
+          .setDesc(`${a.description || a.id} — output: ${a.outputRoots.join(", ")}`)
+          .addToggle((t) => {
+            t.setValue(runnable);
+            t.onChange(async (v) => {
+              if (v) {
+                if (a.enabledDefault) {
+                  delete this.plugin.settings.taskAgentOverrides[a.id];
+                } else {
+                  this.plugin.settings.taskAgentOverrides[a.id] = true;
+                }
+              } else {
+                this.plugin.settings.taskAgentOverrides[a.id] = false;
+              }
+              await this.plugin.saveSettings();
+            });
+          });
+      }
+    } catch (e) {
+      host.createEl("p", {
+        text: `Could not list task agents: ${e instanceof Error ? e.message : String(e)}`,
+        cls: "setting-item-description",
+      });
     }
   }
 

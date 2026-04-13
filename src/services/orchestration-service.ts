@@ -1,7 +1,7 @@
 import VaultAIPlugin from "../../main";
-import { App, Notice, requestUrl, TFile } from 'obsidian';
+import { App, Notice, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
-import { AIOperation, EntityType, getEntityLabel } from '../entities/types';
+import { AIOperation, EntityType, getEntityLabel, ProcessTextResponse } from '../entities/types';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
 
@@ -9,7 +9,7 @@ export interface OrchestrationPlan {
     reasoning: string;
     planSummary?: string; // Summary of what will be done for user review
     isProposal?: boolean; // If true, the agent is asking for approval
-    toolsToCall: string[]; // e.g., ['DARK_WEB', 'LOCAL_VAULT', 'OSINT_SEARCH', 'CORPORATE_REPORTS']
+    toolsToCall: string[]; // e.g., ['LOCAL_VAULT', 'EXTRACT_TO_GRAPH', 'VAULT_GRAPH_INGEST']
     graphCommands: string[]; // e.g., ['@@CREATE: {...}', '@@DELETE: {...}']
     directResponse?: string; // If no tools needed or as a final response
 }
@@ -89,7 +89,7 @@ export class OrchestrationService {
         };
 
         try {
-            onProgress("Verifying provider and credits...", 10);
+            onProgress("Preparing local tools...", 10);
             await this.verifyProviderAndCredits();
             checkAborted();
 
@@ -496,8 +496,7 @@ Respond with this exact JSON structure:
     }
 
     /**
-     * Walk ingestible vault files, send them in batches to the evidence
-     * analysis endpoint (server-side parallel classification + extraction),
+     * Walk ingestible vault files, extract entities per batch with local Claude CLI,
      * and auto-apply graph commands as each batch completes.
      */
     private async runVaultGraphIngest(
@@ -515,9 +514,6 @@ Respond with this exact JSON structure:
         truncatedFiles: number;
         extractFailures: number;
     }> {
-        const { EvidenceService } = await import("./evidence-service");
-        const svc = new EvidenceService(this.plugin);
-
         const vaultFiles = this.plugin.app.vault.getFiles();
         const files = vaultFiles
             .filter((f): f is TFile => f instanceof TFile)
@@ -528,11 +524,12 @@ Respond with this exact JSON structure:
         const maxFiles = Math.min(files.length, OrchestrationService.VAULT_INGEST_MAX_FILES);
         const filesToProcess = files.slice(0, maxFiles);
         const BATCH = OrchestrationService.VAULT_INGEST_BATCH_SIZE;
-        const totalBatches = Math.ceil(filesToProcess.length / BATCH);
+        const totalBatches = Math.ceil(filesToProcess.length / BATCH) || 1;
 
         const graphCommands: string[] = [];
         let filesProcessed = 0;
         let extractFailures = 0;
+        const refTime = new Date().toISOString();
 
         for (let b = 0; b < totalBatches; b++) {
             if (abortSignal?.aborted) break;
@@ -542,28 +539,61 @@ Respond with this exact JSON structure:
             const basePct = Math.floor((b / totalBatches) * 90) + 5;
 
             onFileProgress(
-                `${batchLabel}: sending ${batchFiles.length} files to server…`,
+                `${batchLabel}: reading ${batchFiles.length} file(s) for local extraction…`,
                 basePct,
             );
 
-            let batchCommands: string[];
-            try {
-                batchCommands = await svc.analyze(
-                    batchFiles,
-                    (msg, pct) => {
-                        if (abortSignal?.aborted) return;
-                        const scaled = basePct + Math.floor((pct / 100) * (90 / totalBatches));
-                        onFileProgress(`${batchLabel}: ${msg}`, Math.min(scaled, 94));
-                    },
-                );
-            } catch (e) {
-                if (e instanceof DOMException && e.name === "AbortError") break;
-                console.error(`[OrchestrationService] Evidence batch ${b + 1} failed:`, e);
+            const parts: string[] = [];
+            for (const f of batchFiles) {
+                try {
+                    const text = await this.plugin.app.vault.cachedRead(f);
+                    parts.push(`=== ${f.path} ===\n${text}`);
+                } catch (e) {
+                    console.error(`[OrchestrationService] Failed to read ${f.path}:`, e);
+                    extractFailures += 1;
+                }
+            }
+
+            const combined = parts.join("\n\n");
+            if (!combined.trim()) {
                 extractFailures += batchFiles.length;
                 continue;
             }
 
-            for (const cmd of batchCommands) {
+            let extraction: ProcessTextResponse;
+            try {
+                onFileProgress(`${batchLabel}: extracting entities (local Claude)…`, basePct + 2);
+                extraction = await this.plugin.graphApiService.processTextInChunks(
+                    combined,
+                    this.plugin.entityManager.getAllEntities(),
+                    refTime,
+                    (chunkIndex, totalChunks, message) => {
+                        if (abortSignal?.aborted) return;
+                        const scaled =
+                            basePct + 2 + Math.floor((chunkIndex / Math.max(totalChunks, 1)) * (80 / totalBatches));
+                        onFileProgress(`${batchLabel}: ${message}`, Math.min(scaled, 94));
+                    },
+                    undefined,
+                    abortSignal,
+                    true,
+                );
+            } catch (e) {
+                if (e instanceof DOMException && e.name === "AbortError") break;
+                console.error(`[OrchestrationService] Local ingest batch ${b + 1} failed:`, e);
+                extractFailures += batchFiles.length;
+                continue;
+            }
+
+            const batchCmds =
+                extraction.success && extraction.operations?.length
+                    ? this.operationsToGraphCommands(extraction.operations)
+                    : [];
+
+            if (!extraction.success) {
+                extractFailures += batchFiles.length;
+            }
+
+            for (const cmd of batchCmds) {
                 const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
                 graphCommands.push(cmd);
                 for (const line of lines) {
@@ -581,8 +611,8 @@ Respond with this exact JSON structure:
         const summary =
             (abortSignal?.aborted ? "**Cancelled by user.** " : "") +
             `Processed **${filesProcessed}** file(s) out of **${files.length}** eligible (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}), ` +
-            `sent in **${totalBatches}** batch(es) of up to ${BATCH} files (server-side parallel analysis). ` +
-            (extractFailures > 0 ? `**${extractFailures}** file(s) failed. ` : "") +
+            `in **${totalBatches}** batch(es) of up to ${BATCH} files (**local Claude** extraction). ` +
+            (extractFailures > 0 ? `**${extractFailures}** file(s) or batch(es) had issues. ` : "") +
             `**${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph.`;
 
         return {
@@ -657,27 +687,53 @@ Respond with this exact JSON structure:
                             onProgress(displayName, "Cancelled", 100);
                             break;
                         }
-                        onProgress(displayName, "Extracting entities to graph...", 40);
+                        onProgress(displayName, "Extracting entities to graph (local Claude)...", 40);
                         if (!attachmentsContext || attachmentsContext.trim() === '') {
                             results["EXTRACT_TO_GRAPH"] = "No attachments provided.";
                             onProgress(displayName, "No context", 100);
                             break;
                         }
-                        const graphGenRes = await requestUrl({
-                            url: `${this.plugin.settings.graphApiUrl}/api/process-text`,
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${this.plugin.settings.reportApiKey}`
-                            },
-                            body: JSON.stringify({
-                                text: attachmentsContext,
-                                existing_entities: [],
-                                reference_time: new Date().toISOString()
-                            }),
-                            throw: false
-                        });
-                        results["EXTRACT_TO_GRAPH"] = graphGenRes.status < 300 ? "Successfully extracted to graph." : "Extraction failed.";
+                        const extractSignal =
+                            options?.abortSignals?.["EXTRACT_TO_GRAPH"] ?? options?.globalAbort;
+                        const onChunkProgress = (chunkIndex: number, totalChunks: number, message: string) => {
+                            const pct = 40 + Math.round((chunkIndex / Math.max(totalChunks, 1)) * 50);
+                            onProgress(displayName, message, Math.min(95, pct));
+                        };
+                        const onRetry = (
+                            attempt: number,
+                            maxAttempts: number,
+                            _reason: string,
+                            _nextDelayMs: number
+                        ) => {
+                            onProgress(
+                                displayName,
+                                `Retrying extraction… (${attempt}/${maxAttempts})`,
+                                50
+                            );
+                        };
+                        const refTime = new Date().toISOString();
+                        const existing = this.plugin.entityManager.getAllEntities();
+                        const extraction = await this.plugin.graphApiService.processTextInChunks(
+                            attachmentsContext,
+                            existing,
+                            refTime,
+                            onChunkProgress,
+                            onRetry,
+                            extractSignal,
+                            true
+                        );
+                        const graphCommands = extraction.success && extraction.operations?.length
+                            ? this.operationsToGraphCommands(extraction.operations)
+                            : [];
+                        results["EXTRACT_TO_GRAPH"] = {
+                            __extractToGraph: true,
+                            graphCommands,
+                            summary: extraction.success
+                                ? graphCommands.length > 0
+                                    ? `Claude extracted **${graphCommands.length}** graph command(s) from attachment text. Confirm with **📊 Generate Analysis & Graph**.`
+                                    : "No entities or relationships were extracted from the attachment text."
+                                : `Extraction failed: ${extraction.error || "unknown error"}`,
+                        };
                         onProgress(displayName, "Complete", 100);
                         break;
                     }
@@ -713,6 +769,18 @@ Respond with this exact JSON structure:
                     commands.push(...result.graphCommands);
                 }
                 textToProcess += `\n\n--- TOOL: ${tool} (summary) ---\n${result.summary || ""}\n`;
+                continue;
+            }
+            if (
+                tool === "EXTRACT_TO_GRAPH" &&
+                result &&
+                typeof result === "object" &&
+                (result as { __extractToGraph?: boolean }).__extractToGraph === true &&
+                Array.isArray((result as { graphCommands?: string[] }).graphCommands)
+            ) {
+                const r = result as { graphCommands: string[]; summary?: string };
+                commands.push(...r.graphCommands);
+                textToProcess += `\n\n--- TOOL: ${tool} (summary) ---\n${r.summary || ""}\n`;
                 continue;
             }
             hasNonVaultTool = true;

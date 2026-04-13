@@ -17,8 +17,8 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — **Entity extraction**, **vault Q&A**, and **orchestration** (planner + follow-up) use the **Claude Code CLI** (`claude`) on your machine. You control prompts partly via **vault Markdown** under `.osint-copilot/prompts/`.
-3. **Optional hosted API** — **Report**, **dark web**, **digital footprint / OSINT search**, and **evidence analysis** use your configured **Graph API URL** and **license/API key** when you enable those modes.
+2. **Local AI** — **Graph generation** (entity extraction from text), **local search** (vault Q&A), and **general agent** (orchestration with vault prompts) use the **Claude Code CLI** (`claude`) on your machine. You control behavior partly via **vault Markdown** under `.osint-copilot/prompts/`.
+3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. All AI traffic goes through **Claude Code** when you use AI features.
 
 ### Who is this for?
 
@@ -92,43 +92,30 @@ On load, the plugin creates missing files under **`.osint-copilot/prompts/`** (p
 
 **Commands:** **Reload vault prompts**; **Install missing vault prompt files** (adds defaults without overwriting your edits).
 
-### 3. License / Graph API (optional hosted modes)
-
-- **Graph API URL** — Base URL for hosted report / dark web / footprint / evidence endpoints (default may point to the vendor cloud).  
-- **License or API key** — Sent as `Authorization: Bearer …` for those modes only.  
-
-Not required for **graph / timeline / map** or for **local Claude** extraction and Q&A.
-
-### 4. Entity base path
+### 3. Entity base path
 
 Default **`OSINTCopilot`**. Entity types become subfolders; **`Connections/`** holds relationship notes.
 
-### 5. Conversation folder
+### 4. Conversation folder
 
-Default **`.osint-copilot/conversations`**. Chat sessions as JSON.
+Default **`.osint-copilot/conversations`**. Each chat is a **Markdown** note with metadata and messages stored in an embedded **JSON** block (human-readable plus machine-parseable).
 
-### 6. Report output directory
+### 5. Max notes
 
-Default **`Reports`**. Used when **Report** mode completes successfully.
+Caps how many notes are pulled into context for **local search** and related flows (typical range **5–30**).
 
-### 7. Max notes
-
-Caps how many notes are pulled into context for Q&A-style flows (typical range **5–30**).
-
-### 8. System prompt
+### 6. System prompt
 
 Default text for vault-oriented answers; combine with **vault rules/agents** for orchestration.
 
 ### What needs what?
 
-| Capability | License/API | Claude CLI |
-|------------|-------------|------------|
-| Graph / timeline / map | No | No |
-| Entity extraction from chat | No | Yes |
-| Vault Q&A / local orchestration | No | Yes |
-| Report / dark web / footprint / evidence | Yes (hosted) | No* |
-
-\*Hosted modes use the remote service; local Claude is separate.
+| Capability | Claude CLI |
+|------------|------------|
+| Graph / timeline / map | No |
+| Graph generation (extract entities from pasted text) | Yes |
+| Local search (vault Q&A) | Yes |
+| General agent (orchestration) | Yes |
 
 ---
 
@@ -142,25 +129,24 @@ Access the main chat interface via:
 
 ### Operating modes
 
-Toggles in the chat header (labels may vary slightly by version):
+Use the **mode dropdown** in the chat header:
 
 | Mode | Role |
 |------|------|
-| **Lookup** | Vault-oriented Q&A — uses **local Claude** + indexed notes |
-| **Dark web** | **Hosted API** — requires URL + key |
-| **Report** | **Hosted API** — job-based reports |
-| **Entity generation** | **Local Claude** — extract entities from pasted text or responses |
+| **General agent** | Orchestration using **vault prompts** (rules, agents, skills) and **Claude Code CLI** |
+| **Graph generation** | Extract entities and relationships from text you paste or from assistant output |
+| **Local search** | Vault Q&A — **Claude Code CLI** + indexed note context |
 
-Lookup, dark web, and report are mutually exclusive as “main” modes; **entity** can stack with others.
+Pick one primary mode per conversation; switch when your task changes.
 
 ---
 
-### Feature 1: Vault Q&A (lookup / local search)
+### Feature 1: Vault Q&A (local search)
 
 **Purpose:** Ask questions over your vault; answers use **Claude Code CLI** and selected note context.
 
 **How it works**
-1. Enable **Lookup** (or equivalent local mode).
+1. Select **Local search** in the mode dropdown.
 2. Type your question.
 3. The plugin indexes/selects notes, then calls **local** `claude` with that context.
 4. Use **Reload vault prompts** after editing rules under `.osint-copilot/prompts/`.
@@ -212,57 +198,23 @@ What TTPs are associated with Lazarus Group?
 - **Zoom/Pan** with mouse wheel and drag
 
 **Creating Entities**:
-1. Use Entity Mode in chat to auto-extract from text
+1. Use **Graph generation** mode in chat to auto-extract from text
 2. Manually create via Command Palette: "Create Entity"
 3. Entities are saved as markdown notes with YAML frontmatter
 
 ---
 
-### Feature 3: Dark web investigation (hosted)
-
-**Purpose:** Run a **remote** dark-web investigation job when your **Graph API URL** and **key** are configured.
-
-**How to use**
-1. Set **Graph API URL** and license/API key in settings.
-2. Enable **Dark web** mode.
-3. Submit the query and wait for server-driven progress in chat.
-
-Quota and billing depend on **your** API operator (e.g. vendor dashboard if you use the default cloud).
-
----
-
-### Feature 4: Report generation (hosted)
-
-**Purpose:** Long-form reports via the **remote** job API.
-
-**How to use**
-1. Configure **Graph API URL** and key.
-2. Enable **Report** mode.
-3. Describe the report; wait for job completion.
-4. Markdown is saved under your **Report output directory** when the job finishes.
-
-**Example Prompts**:
-```
-Generate a threat actor profile for APT28
-Create an IOC report for the recent Log4j exploitation campaign
-Write a vulnerability assessment for CVE-2024-XXXX
-```
-
-**Report Features**:
-- Structured markdown format
-- Automatic file naming with timestamps
-- Opens automatically after generation
-- Can combine with Entity Mode to extract entities from the report
-
-
----
-
-### Feature 5: Entity extraction (local Claude)
+### Feature 3: Entity extraction (graph generation)
 
 **Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`.osint-copilot/prompts/skills/graph-extraction.md`**.
 
-**A. Entity-focused** — Turn off other main modes, enable **entity generation**, paste text.  
-**B. Combined** — Enable **entity** with lookup/report/dark web where supported; extraction still uses **local** Claude for the text pipeline (hosted modes add their own remote steps).
+**How to use**
+1. Select **Graph generation** in the mode dropdown.
+2. Paste source text (or use assistant output in the same thread).
+3. The plugin runs **local** `claude` with the graph-extraction skill.
+
+**A. Entity-focused** — Use **Graph generation** alone and paste raw intel.  
+**B. After Q&A** — Run **Local search** first, then switch to **Graph generation** to structure findings into entities.
 
 **Extracted Information**:
 - Entity type and properties
@@ -278,7 +230,7 @@ owns, operates, communicates_with, targets, and more...
 
 ---
 
-### Feature 6: Timeline View
+### Feature 4: Timeline View
 
 **Purpose**: Visualize events chronologically for incident timeline analysis.
 
@@ -298,7 +250,7 @@ owns, operates, communicates_with, targets, and more...
 
 ---
 
-### Feature 7: Map View
+### Feature 5: Map View
 
 **Purpose**: Visualize Location entities geographically using Leaflet maps.
 
@@ -318,15 +270,14 @@ owns, operates, communicates_with, targets, and more...
 
 ---
 
-### Feature 8: Conversation Management
+### Feature 6: Conversation Management
 
 **Purpose**: Organize and persist your research conversations.
 
 **Sidebar Features**:
 - Toggle sidebar with ☰ button
 - View all saved conversations
-- Mode indicators (🔍 🕵️ 📄 🏷️)
-- Timestamps and previews
+- Timestamps and previews (mode is stored per conversation)
 
 **Actions**:
 - **New Chat**: Start fresh conversation
@@ -335,7 +286,7 @@ owns, operates, communicates_with, targets, and more...
 - **Load**: Click any conversation to resume
 
 **Persistence**:
-- Conversations saved as JSON files
+- Conversations saved as Markdown files with embedded JSON
 - Survives Obsidian restarts
 - Includes mode settings and chat history
 
@@ -349,22 +300,15 @@ owns, operates, communicates_with, targets, and more...
 
 **Steps**:
 
-1. **Gather Initial Intelligence**
-   - Enable **🔍 Lookup** + **🏷️ Entities** modes
-   - Query: "What do we know about APT29?"
-   - Review AI response and auto-created entities
+1. **Gather initial intelligence**
+   - Select **Local search** and ask: "What do we know about APT29?"
+   - Review the answer and referenced notes
 
-2. **Conduct dark web research** *(requires **Graph API URL** + key)*  
-   - Switch to **Dark web** mode  
-   - Query: "APT29 Cozy Bear recent operations 2024"  
-   - Wait for hosted job results  
+2. **Structure findings**
+   - Switch to **Graph generation** and paste new intel (or summarize in chat first, then extract)
+   - Confirm entities and relationships in your vault
 
-3. **Generate report** *(requires **Graph API URL** + key)*  
-   - Switch to **Report** mode  
-   - Prompt: "Generate a comprehensive threat actor profile for APT29 including TTPs, infrastructure, and recent campaigns"  
-   - Review saved Markdown under your report folder  
-
-4. **Visualize Relationships**
+3. **Visualize relationships**
    - Open Graph View
    - Explore connections between APT29 and related entities
    - Identify infrastructure patterns
@@ -375,28 +319,24 @@ owns, operates, communicates_with, targets, and more...
 
 **Steps**:
 
-1. **Extract Entities**
-   - Enable **🏷️ Entity-Only** mode (all main modes OFF)
+1. **Extract entities**
+   - Select **Graph generation**
    - Paste your IOC list:
      ```
      Suspicious IPs: 192.168.1.100, 10.0.0.50
      Domains: malware-c2.evil.com, phishing-site.bad.org
-     Email: attacker@darkweb.onion
+     Email: attacker@phishing.bad
      ```
    - Entities are automatically created
 
-2. **Research Each IOC**
-   - Enable **🔍 Lookup** mode
+2. **Research each IOC**
+   - Select **Local search**
    - Query: "What do we know about malware-c2.evil.com?"
    - Cross-reference with your existing notes
 
-3. **Check dark web** *(hosted API + key)*  
-   - Enable **Dark web** mode  
-   - Query: "Find mentions of 192.168.1.100 or malware-c2.evil.com"  
-
-4. **Document Findings**
-   - Generate a report summarizing your analysis
-   - All entities are linked in your vault
+3. **Document findings**
+   - Write a summary note in the vault or ask **General agent** to draft a structured summary from context
+   - Keep entities linked via the graph and connections notes
 
 ### Example 3: Incident Response Documentation
 
@@ -404,8 +344,8 @@ owns, operates, communicates_with, targets, and more...
 
 **Steps**:
 
-1. **Create Event Entity**
-   - Use Entity Mode to create an Event for the incident
+1. **Create an event entity**
+   - Use **Graph generation** with incident text to create an **Event** (and related entities)
    - Include date, description, and initial findings
 
 2. **Link Related Entities**
@@ -417,9 +357,8 @@ owns, operates, communicates_with, targets, and more...
    - Visualize incident progression
    - Identify attack sequence
 
-4. **Generate Incident Report**
-   - Use Report Mode with your findings
-   - Prompt: "Generate an incident report for the ransomware attack on [date] including timeline, IOCs, and remediation steps"
+4. **Write the incident report**
+   - Use **General agent** or **Local search** with your vault context, or compose a note manually from the timeline and entities
 
 
 
@@ -443,43 +382,6 @@ owns, operates, communicates_with, targets, and more...
 
 ---
 
-### License / hosted API
-
-**Problem:** “License key required” (or similar) when using **Report**, **Dark web**, **Digital footprint**, or **Evidence**.
-
-**Solutions:**
-1. **Settings → OSINT Copilot** — set **Graph API URL** and **License / API key** per your operator.  
-2. Keys are **not** required for **graph / timeline / map** or for **local Claude** features.
-
-**Problem:** “Invalid license” or HTTP 403 from hosted modes.
-
-**Solutions:** Confirm the key, subscription, and endpoint URL; check operator dashboard (e.g. [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) if you use the default cloud).
-
----
-
-### Connection errors (hosted modes)
-
-**Problem:** `Failed to fetch` / timeout on report or dark web.
-
-**Solutions:**
-1. Check internet and firewall / proxy rules for your **Graph API URL**.  
-2. Retry later if the service is down.  
-3. Confirm corporate SSL inspection is not breaking HTTPS.
-
----
-
-### Quota Exhausted
-
-**Problem**: "Quota exhausted" or "Investigation quota exceeded"
-
-**Solutions**:
-1. Visit [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) to check usage
-2. Wait for quota renewal (typically monthly)
-3. Upgrade your subscription for higher limits
-4. Note: Chat queries are unlimited; Dark Web and Reports consume quota
-
----
-
 ### Entity Creation Failures
 
 **Problem**: Entities not being created or "Unknown entity type" errors
@@ -489,18 +391,6 @@ owns, operates, communicates_with, targets, and more...
 2. Check that the entity type is valid (Person, Company, Event, etc.)
 3. Review the console (Ctrl+Shift+I) for detailed error messages
 4. Verify you have write permissions to the vault folder
-
----
-
-### Dark Web Investigation Stuck
-
-**Problem**: Investigation shows "Processing" indefinitely
-
-**Solutions**:
-1. Wait up to 5 minutes (complex queries take longer)
-2. Check your internet connection
-3. If stuck beyond 5 minutes, start a new conversation and retry
-4. Check the console for error messages
 
 ---
 
@@ -567,35 +457,20 @@ owns, operates, communicates_with, targets, and more...
 3. **Iterate on Results**
    - Ask follow-up questions
    - Request clarification or more detail
-   - Use Entity Mode to capture key findings
-
-### Efficient Dark Web Research
-
-1. **Use Specific Queries**
-   - Include organization names, domains, or specific terms
-   - Avoid overly broad searches
-
-2. **Combine with Vault Research**
-   - First check what you already know (Lookup Mode)
-   - Then expand with Dark Web searches
-
-3. **Save Important Findings**
-   - Enable Entity Mode to auto-extract entities
-   - Reports are automatically saved to your vault
+   - Use **Graph generation** to capture key findings
 
 ### Building Knowledge Over Time
 
 1. **Create Entities Consistently**
-   - Use Entity Mode regularly to build your knowledge base
+   - Use **Graph generation** regularly to build your knowledge base
    - Relationships accumulate and become more valuable
 
 2. **Review Graph Periodically**
    - Visualize connections to spot patterns
    - Identify gaps in your research
 
-3. **Generate Summary Reports**
-   - Periodically create reports on key topics
-   - Helps consolidate and review knowledge
+3. **Summarize periodically**
+   - Use **Local search** or **General agent** to produce summaries from your vault notes
 
 ### Keyboard Shortcuts
 
@@ -608,10 +483,9 @@ owns, operates, communicates_with, targets, and more...
 
 ### Security considerations
 
-1. **Keys** — Hosted API key lives in Obsidian plugin data; treat like any secret.  
-2. **Claude** — Text you send in chat is processed by **Claude Code** per Anthropic’s terms.  
-3. **Hosted modes** — Report / dark web / footprint send data to **your configured Graph API URL**.  
-4. **Vault** — Entities, conversations, and `.osint-copilot/prompts/` are normal Markdown/JSON on disk.
+1. **Claude** — Text you send in chat is processed by **Claude Code** per Anthropic’s terms.  
+2. **Vault** — Entities, conversations, and `.osint-copilot/prompts/` are normal Markdown/JSON on disk.  
+3. **Geocoding** — Map view may send address strings to **Nominatim** (OpenStreetMap); see README privacy section.
 
 ### Vault prompts hygiene
 
@@ -626,8 +500,7 @@ owns, operates, communicates_with, targets, and more...
 - **README.md** — Overview, BRAT install, privacy summary  
 - **This guide** — Configuration and features  
 - **GitHub** — [Obsidian-OSINT-Copilot-plugin](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin) issues and releases  
-- **Hosted dashboard** — [osint-copilot.com/dashboard](https://osint-copilot.com/dashboard/) if you use the vendor cloud API  
 
 ---
 
-*OSINT Copilot — local investigation workspace + optional hosted OSINT API. See `manifest.json` for the current plugin version.*
+*OSINT Copilot — local-first investigation workspace with Claude Code CLI. See `manifest.json` for the current plugin version.*
