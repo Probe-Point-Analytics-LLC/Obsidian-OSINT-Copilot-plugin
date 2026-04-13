@@ -1,6 +1,6 @@
 {
   "name": "osint-copilot",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "OSINT Copilot for Obsidian - AI-powered Q&A and Report Generation",
   "main": "main.js",
   "scripts": {
@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "d3": "^7.9.0",
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "yaml": "^2.8.3"
   }
 }

@@ -217,6 +217,13 @@ What TTPs are associated with Lazarus Group?
 2. Manually create via Command Palette: "Create Entity"
 3. Entities are saved as markdown notes with YAML frontmatter
 
+**Multi-schema types (FTM, STIX 2, MITRE, user YAML)**:
+- **FTM (FollowTheMoney)** types ship inside the plugin. **STIX 2**- and **MITRE ATT&CK**-style starter types load from vault YAML under `OSINTCopilot/schemas/` (default files are created on first run if missing).
+- Add or override definitions in `OSINTCopilot/schemas/user/` using `.yaml` with `family: user` (see `schemas/README.md` in the vault).
+- Under plugin settings (**Graph view** → **Schema families in type pickers**), choose which families appear in the entity and connection type dialogs.
+- New notes are stored under `OSINTCopilot/<family>/<type>/` (for example `ftm/Person/` or `stix2/threat-actor/`). Older vaults that use the flat layout `OSINTCopilot/Person/` still work; those notes are treated as **FTM** unless frontmatter sets `schemaFamily`.
+- **Custom FTM types** in `OSINTCopilot/custom/custom-types.json` continue to work as before. Editing files under `schemas/` triggers a catalog refresh (or reload the plugin).
+
 ---
 
 ### Feature 3: Entity extraction (graph generation)

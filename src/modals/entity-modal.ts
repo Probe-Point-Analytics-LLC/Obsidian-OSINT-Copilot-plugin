@@ -9,6 +9,28 @@ import { EntityManager } from '../services/entity-manager';
 import { GeocodingService, GeocodingError, GeocodingErrorType } from '../services/geocoding-service';
 import { ftmSchemaService, FTMPropertyDefinition } from '../services/ftm-schema-service';
 import { CustomTypeCreationModal } from './custom-type-modal';
+import type { CatalogEntityType, CatalogRelationshipType, EnabledSchemaFamilies, SchemaFamily } from '../services/schema-catalog-types';
+
+/** Access plugin instance for schema catalog and settings (id: osint-copilot). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getOsintCopilotPlugin(app: App): any {
+	return (app as any).plugins?.plugins?.['osint-copilot'] ?? null;
+}
+
+function familyBadgeLabel(family: SchemaFamily): string {
+	switch (family) {
+		case 'ftm':
+			return 'FTM';
+		case 'stix2':
+			return 'STIX2';
+		case 'mitre':
+			return 'MITRE';
+		case 'user':
+			return 'USER';
+		default:
+			return String(family);
+	}
+}
 
 // Common relationship types for suggestions
 export const COMMON_RELATIONSHIPS = [
@@ -1581,17 +1603,20 @@ export class FTMEntityCreationModal extends Modal {
     private properties: Record<string, any> = {};
     private onEntityCreated: ((entityId: string) => void) | null;
     private optionalSectionExpanded: boolean = false;
+    private catalogType?: CatalogEntityType;
 
     constructor(
         app: App,
         entityManager: EntityManager,
         schemaName: string,
-        onEntityCreated?: (entityId: string) => void
+        onEntityCreated?: (entityId: string) => void,
+        catalogType?: CatalogEntityType
     ) {
         super(app);
         this.entityManager = entityManager;
         this.schemaName = schemaName;
         this.onEntityCreated = onEntityCreated || null;
+        this.catalogType = catalogType;
     }
 
     onOpen() {
@@ -1599,6 +1624,11 @@ export class FTMEntityCreationModal extends Modal {
         contentEl.empty();
         contentEl.addClass('graph_copilot-entity-modal');
         contentEl.addClass('graph_copilot-ftm-modal');
+
+        if (this.catalogType && this.catalogType.family !== 'ftm') {
+            this.openCatalogEntityForm();
+            return;
+        }
 
         const config = getFTMEntityConfig(this.schemaName);
         if (!config) {
@@ -1677,6 +1707,112 @@ export class FTMEntityCreationModal extends Modal {
 
         const cancelBtn = buttonContainer.createEl('button', { text: 'Cancel' });
         cancelBtn.onclick = () => this.close();
+    }
+
+    private openCatalogEntityForm(): void {
+        const cat = this.catalogType;
+        if (!cat) return;
+
+        const { contentEl } = this;
+        contentEl.createEl('h2', { text: `Create ${cat.label}` });
+        contentEl.createEl('p', {
+            text: cat.description,
+            cls: 'graph_copilot-entity-modal-description',
+        });
+
+        const formContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
+        const required = cat.required ?? [];
+        if (required.length > 0) {
+            formContainer.createEl('h4', { text: 'Required properties', cls: 'graph_copilot-section-header' });
+            for (const prop of required) {
+                this.createCatalogPropertyField(formContainer, prop, cat, true);
+            }
+        }
+
+        const featuredExtra = cat.featured.filter((p) => !required.includes(p));
+        if (featuredExtra.length > 0) {
+            formContainer.createEl('h4', { text: 'Key properties', cls: 'graph_copilot-section-header' });
+            for (const prop of featuredExtra) {
+                this.createCatalogPropertyField(formContainer, prop, cat, false);
+            }
+        }
+
+        const optionalKeys = Object.keys(cat.properties).filter(
+            (k) => !required.includes(k) && !cat.featured.includes(k),
+        );
+        if (optionalKeys.length > 0) {
+            const optionalSection = contentEl.createDiv({ cls: 'graph_copilot-optional-section' });
+            const optionalHeader = optionalSection.createDiv({ cls: 'graph_copilot-optional-header' });
+            const toggleIcon = optionalHeader.createSpan({ cls: 'graph_copilot-toggle-icon', text: '▶' });
+            optionalHeader.createSpan({ text: ` Additional properties (${optionalKeys.length})` });
+            const optionalContent = optionalSection.createDiv({ cls: 'graph_copilot-optional-content' });
+            optionalContent.style.display = 'none';
+            optionalHeader.onclick = () => {
+                this.optionalSectionExpanded = !this.optionalSectionExpanded;
+                toggleIcon.textContent = this.optionalSectionExpanded ? '▼' : '▶';
+                optionalContent.style.display = this.optionalSectionExpanded ? 'block' : 'none';
+            };
+            for (const prop of optionalKeys) {
+                this.createCatalogPropertyField(optionalContent, prop, cat, false);
+            }
+        }
+
+        const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
+        const createBtn = buttonContainer.createEl('button', { text: 'Create entity', cls: 'mod-cta' });
+        createBtn.onclick = () => void this.handleCreate();
+        const cancelBtn = buttonContainer.createEl('button', { text: 'Cancel' });
+        cancelBtn.onclick = () => this.close();
+    }
+
+    private createCatalogPropertyField(
+        container: HTMLElement,
+        propertyName: string,
+        cat: CatalogEntityType,
+        isRequired: boolean,
+    ): void {
+        const def = cat.properties[propertyName];
+        const fieldContainer = container.createDiv({ cls: 'graph_copilot-entity-field' });
+        const label = fieldContainer.createEl('label', {
+            text: (def?.label || propertyName) + (isRequired ? ' *' : ''),
+        });
+        label.setAttribute('for', `cat-entity-${propertyName}`);
+
+        const ptype = (def?.type || 'string').toLowerCase();
+        let input: HTMLInputElement | HTMLTextAreaElement;
+
+        if (ptype === 'text' || propertyName === 'description' || propertyName === 'notes') {
+            input = fieldContainer.createEl('textarea', {
+                placeholder: `Enter ${(def?.label || propertyName).toLowerCase()}...`,
+            }) as HTMLTextAreaElement;
+            input.rows = 3;
+        } else if (ptype === 'date') {
+            input = fieldContainer.createEl('input', { type: 'date' }) as HTMLInputElement;
+        } else if (ptype === 'number') {
+            input = fieldContainer.createEl('input', { type: 'number', placeholder: '…' }) as HTMLInputElement;
+            (input as HTMLInputElement).step = 'any';
+        } else if (ptype === 'url') {
+            input = fieldContainer.createEl('input', { type: 'url', placeholder: 'https://…' }) as HTMLInputElement;
+        } else if (ptype === 'email') {
+            input = fieldContainer.createEl('input', { type: 'email' }) as HTMLInputElement;
+        } else {
+            input = fieldContainer.createEl('input', {
+                type: 'text',
+                placeholder: `Enter ${(def?.label || propertyName).toLowerCase()}...`,
+            }) as HTMLInputElement;
+        }
+
+        input.id = `cat-entity-${propertyName}`;
+        input.addClass('graph_copilot-entity-input');
+        input.addEventListener('input', () => {
+            if (input.type === 'number') {
+                const value = parseFloat((input as HTMLInputElement).value);
+                if (!isNaN(value)) {
+                    this.properties[propertyName] = value;
+                }
+            } else {
+                this.properties[propertyName] = input.value;
+            }
+        });
     }
 
     private createFTMPropertyField(
@@ -1761,6 +1897,30 @@ export class FTMEntityCreationModal extends Modal {
     }
 
     private async handleCreate(): Promise<void> {
+        if (this.catalogType && this.catalogType.family !== 'ftm') {
+            const cat = this.catalogType;
+            const lf = cat.labelField;
+            if (this.properties[lf] && String(this.properties[lf]).trim() !== '') {
+                const nameValidation = validateEntityName(String(this.properties[lf]), cat.name);
+                if (!nameValidation.isValid) {
+                    new Notice(nameValidation.error || 'Invalid entity name');
+                    return;
+                }
+            }
+            try {
+                const entity = await this.entityManager.createCatalogEntity(cat, this.properties);
+                new Notice(`Created ${cat.label}: ${entity.label}`);
+                if (this.onEntityCreated) {
+                    this.onEntityCreated(entity.id);
+                }
+                this.close();
+            } catch (error) {
+                new Notice(`Failed to create entity: ${error}`);
+                console.error('Catalog entity creation error:', error);
+            }
+            return;
+        }
+
         const config = getFTMEntityConfig(this.schemaName);
         if (!config) return;
 
@@ -1949,7 +2109,11 @@ export class FTMEntityTypeSelectorModal extends Modal {
     private onEntityCreated: ((entityId: string) => void) | null;
     private searchInput: HTMLInputElement | null = null;
     private gridContainer: HTMLDivElement | null = null;
+    /** Legacy FTM-only list when schema catalog is unavailable. */
     private entityTypes: Array<{ name: string; label: string; description: string; color: string }> = [];
+    /** Unified catalog types (includes FTM) when plugin catalog is available. */
+    private catalogEntityTypes: CatalogEntityType[] = [];
+    private useCatalogUi = false;
 
     // Priority list for sorting entity types
     private readonly PRIORITY_ORDER = [
@@ -1999,6 +2163,39 @@ export class FTMEntityTypeSelectorModal extends Modal {
         };
         contentEl.createEl('p', { text: 'Select the type of entity to create:' });
 
+        const plugin = getOsintCopilotPlugin(this.app);
+        if (plugin?.schemaCatalogService) {
+            this.useCatalogUi = true;
+            const famRow = contentEl.createDiv();
+            famRow.style.cssText =
+                'display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; align-items: center;';
+            famRow.createEl('span', { text: 'Show:', cls: 'setting-item-description' });
+            const ef = plugin.settings.enabledSchemaFamilies as EnabledSchemaFamilies;
+            const addFamToggle = (key: keyof EnabledSchemaFamilies, caption: string) => {
+                const wrap = famRow.createDiv();
+                wrap.style.display = 'flex';
+                wrap.style.alignItems = 'center';
+                wrap.style.gap = '6px';
+                const cb = wrap.createEl('input', { type: 'checkbox' });
+                cb.checked = ef[key];
+                cb.addEventListener('change', async () => {
+                    ef[key] = cb.checked;
+                    await plugin.saveSettings();
+                    this.syncTypesFromPlugin();
+                    this.filterEntityTypes();
+                });
+                wrap.createEl('span', { text: caption });
+            };
+            addFamToggle('ftm', 'FTM');
+            addFamToggle('stix2', 'STIX2');
+            addFamToggle('mitre', 'MITRE');
+            addFamToggle('user', 'User');
+            this.syncTypesFromPlugin();
+        } else {
+            this.useCatalogUi = false;
+            this.entityTypes = getAvailableFTMEntityTypes();
+        }
+
         // Search input for filtering entity types
         const searchContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-search-container' });
         searchContainer.style.cssText = 'margin-bottom: 12px;';
@@ -2029,10 +2226,11 @@ export class FTMEntityTypeSelectorModal extends Modal {
 
         this.gridContainer = scrollContainer.createDiv({ cls: 'graph_copilot-entity-type-grid' });
 
-        // getAvailableFTMEntityTypes() returns types pre-sorted with LegalEntity first
-        this.entityTypes = getAvailableFTMEntityTypes();
-
-        this.renderEntityTypes(this.entityTypes);
+        if (this.useCatalogUi) {
+            this.renderCatalogEntityTypes(this.catalogEntityTypes);
+        } else {
+            this.renderEntityTypes(this.entityTypes);
+        }
 
         // Cancel button
         const cancelBtn = contentEl.createEl('button', {
@@ -2045,14 +2243,151 @@ export class FTMEntityTypeSelectorModal extends Modal {
         setTimeout(() => this.searchInput?.focus(), 50);
     }
 
+    private syncTypesFromPlugin(): void {
+        const plugin = getOsintCopilotPlugin(this.app);
+        if (!plugin?.schemaCatalogService) return;
+        this.catalogEntityTypes = plugin.schemaCatalogService.listEntityTypes(plugin.getEnabledSchemaFamilies());
+    }
+
     private filterEntityTypes(): void {
         const query = this.searchInput?.value.toLowerCase() || '';
-        const filtered = this.entityTypes.filter(type =>
-            type.label.toLowerCase().includes(query) ||
-            type.description.toLowerCase().includes(query) ||
-            type.name.toLowerCase().includes(query)
+        if (this.useCatalogUi) {
+            const filtered = this.catalogEntityTypes.filter(
+                (cat) =>
+                    cat.label.toLowerCase().includes(query) ||
+                    cat.description.toLowerCase().includes(query) ||
+                    cat.name.toLowerCase().includes(query) ||
+                    cat.family.toLowerCase().includes(query),
+            );
+            this.renderCatalogEntityTypes(filtered);
+            return;
+        }
+        const filtered = this.entityTypes.filter(
+            (type) =>
+                type.label.toLowerCase().includes(query) ||
+                type.description.toLowerCase().includes(query) ||
+                type.name.toLowerCase().includes(query),
         );
         this.renderEntityTypes(filtered);
+    }
+
+    private renderCatalogEntityTypes(types: CatalogEntityType[]): void {
+        if (!this.gridContainer) return;
+        this.gridContainer.empty();
+
+        if (types.length === 0) {
+            const noResults = this.gridContainer.createDiv({ cls: 'graph_copilot-no-results' });
+            noResults.style.cssText = `
+                text-align: center;
+                padding: 20px;
+                color: var(--text-muted);
+            `;
+            noResults.textContent = 'No entity types match your search.';
+            return;
+        }
+
+        const plugin = getOsintCopilotPlugin(this.app);
+        const sorted = [...types].sort((a, b) => {
+            const fa = a.family.localeCompare(b.family);
+            if (fa !== 0) return fa;
+            return a.label.localeCompare(b.label);
+        });
+
+        for (const cat of sorted) {
+            const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
+            typeBtn.style.borderLeftColor = cat.color;
+            typeBtn.style.position = 'relative';
+
+            const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
+            icon.style.backgroundColor = cat.color;
+            icon.style.fontSize = '20px';
+            icon.style.display = 'flex';
+            icon.style.alignItems = 'center';
+            icon.style.justifyContent = 'center';
+            icon.textContent = getEntityIcon(cat.name);
+
+            const badge = typeBtn.createDiv();
+            badge.textContent = familyBadgeLabel(cat.family);
+            badge.style.cssText =
+                'position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;';
+
+            const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });
+            info.createEl('strong', { text: cat.label });
+            info.createEl('small', { text: cat.description });
+
+            const isCustom =
+                plugin &&
+                plugin.customTypesService &&
+                cat.family === 'ftm' &&
+                plugin.customTypesService.getCustomSchema(cat.name);
+
+            if (isCustom) {
+                const actionsDiv = typeBtn.createDiv({ cls: 'graph_copilot-type-actions' });
+                actionsDiv.style.cssText =
+                    'position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;';
+
+                typeBtn.onmouseenter = () => {
+                    actionsDiv.style.display = 'flex';
+                };
+                typeBtn.onmouseleave = () => {
+                    actionsDiv.style.display = 'none';
+                };
+
+                const editBtn = actionsDiv.createEl('button', { text: '✎' });
+                editBtn.title = 'Edit type';
+                editBtn.style.cssText =
+                    'padding: 4px 8px; background: var(--interactive-accent); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.close();
+                    new CustomTypeCreationModal(
+                        this.app,
+                        plugin.customTypesService,
+                        plugin.customTypesService.getCustomSchema(cat.name),
+                        () => {
+                            new FTMEntityTypeSelectorModal(
+                                this.app,
+                                this.entityManager,
+                                this.onEntityCreated || undefined,
+                            ).open();
+                        },
+                    ).open();
+                };
+
+                const delBtn = actionsDiv.createEl('button', { text: '🗑' });
+                delBtn.title = 'Delete type';
+                delBtn.style.cssText =
+                    'padding: 4px 8px; background: var(--background-modifier-error); color: white; border: none; border-radius: 4px; cursor: pointer;';
+                delBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete custom type "${cat.label}"?`)) {
+                        await plugin.customTypesService.deleteCustomType(cat.name);
+                        this.syncTypesFromPlugin();
+                        this.filterEntityTypes();
+                    }
+                };
+            }
+
+            typeBtn.onclick = () => {
+                this.close();
+                if (cat.family === 'ftm') {
+                    new FTMEntityCreationModal(
+                        this.app,
+                        this.entityManager,
+                        cat.name,
+                        this.onEntityCreated || undefined,
+                    ).open();
+                } else {
+                    new FTMEntityCreationModal(
+                        this.app,
+                        this.entityManager,
+                        cat.name,
+                        this.onEntityCreated || undefined,
+                        cat,
+                    ).open();
+                }
+            };
+        }
     }
 
     private renderEntityTypes(types: Array<{ name: string; label: string; description: string; color: string }>): void {
@@ -3053,6 +3388,8 @@ export class FTMIntervalTypeSelectorModal extends Modal {
     private searchInput: HTMLInputElement | null = null;
     private gridContainer: HTMLDivElement | null = null;
     private intervalTypes: Array<{ name: string; label: string; description: string; color: string }> = [];
+    private catalogIntervalTypes: CatalogRelationshipType[] = [];
+    private useCatalogUi = false;
 
     constructor(
         app: App,
@@ -3112,6 +3449,39 @@ export class FTMIntervalTypeSelectorModal extends Modal {
 
         contentEl.createEl('p', { text: 'Select the type of relationship/interval to create:' });
 
+        const intPlugin = getOsintCopilotPlugin(this.app);
+        if (intPlugin?.schemaCatalogService) {
+            this.useCatalogUi = true;
+            const famRow = contentEl.createDiv();
+            famRow.style.cssText =
+                'display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; align-items: center;';
+            famRow.createEl('span', { text: 'Show:', cls: 'setting-item-description' });
+            const ef = intPlugin.settings.enabledSchemaFamilies as EnabledSchemaFamilies;
+            const addIntToggle = (key: keyof EnabledSchemaFamilies, caption: string) => {
+                const wrap = famRow.createDiv();
+                wrap.style.display = 'flex';
+                wrap.style.alignItems = 'center';
+                wrap.style.gap = '6px';
+                const cb = wrap.createEl('input', { type: 'checkbox' });
+                cb.checked = ef[key];
+                cb.addEventListener('change', async () => {
+                    ef[key] = cb.checked;
+                    await intPlugin.saveSettings();
+                    this.syncIntervalTypesFromPlugin();
+                    this.filterIntervalTypes();
+                });
+                wrap.createEl('span', { text: caption });
+            };
+            addIntToggle('ftm', 'FTM');
+            addIntToggle('stix2', 'STIX2');
+            addIntToggle('mitre', 'MITRE');
+            addIntToggle('user', 'User');
+            this.syncIntervalTypesFromPlugin();
+        } else {
+            this.useCatalogUi = false;
+            this.intervalTypes = getAvailableFTMIntervalTypes();
+        }
+
         // Search input for filtering interval types
         const searchContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-search-container' });
         searchContainer.style.cssText = 'margin-bottom: 12px;';
@@ -3122,30 +3492,31 @@ export class FTMIntervalTypeSelectorModal extends Modal {
             cls: 'graph_copilot-entity-search-input'
         });
         this.searchInput.style.cssText = `
-width: 100 %;
-padding: 8px 12px;
-border: 1px solid var(--background - modifier - border);
-border - radius: 6px;
-background: var(--background - primary);
-color: var(--text - normal);
-font - size: 14px;
-`;
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 6px;
+            background: var(--background-primary);
+            color: var(--text-normal);
+            font-size: 14px;
+        `;
         this.searchInput.addEventListener('input', () => this.filterIntervalTypes());
 
         // Grid container with scrolling
         const scrollContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-scroll-container' });
         scrollContainer.style.cssText = `
-max - height: 400px;
-overflow - y: auto;
-padding - right: 8px;
-`;
+            max-height: 400px;
+            overflow-y: auto;
+            padding-right: 8px;
+        `;
 
         this.gridContainer = scrollContainer.createDiv({ cls: 'graph_copilot-entity-type-grid' });
 
-        // getAvailableFTMIntervalTypes() returns types pre-sorted with UnknownLink first
-        this.intervalTypes = getAvailableFTMIntervalTypes();
-
-        this.renderIntervalTypes(this.intervalTypes);
+        if (this.useCatalogUi) {
+            this.renderCatalogIntervalTypes(this.catalogIntervalTypes);
+        } else {
+            this.renderIntervalTypes(this.intervalTypes);
+        }
 
         // Cancel button
         const cancelBtn = contentEl.createEl('button', {
@@ -3158,14 +3529,145 @@ padding - right: 8px;
         setTimeout(() => this.searchInput?.focus(), 50);
     }
 
+    private syncIntervalTypesFromPlugin(): void {
+        const plugin = getOsintCopilotPlugin(this.app);
+        if (!plugin?.schemaCatalogService) return;
+        this.catalogIntervalTypes = plugin.schemaCatalogService.listRelationshipTypes(plugin.getEnabledSchemaFamilies());
+    }
+
     private filterIntervalTypes(): void {
         const query = this.searchInput?.value.toLowerCase() || '';
-        const filtered = this.intervalTypes.filter(type =>
-            type.label.toLowerCase().includes(query) ||
-            type.description.toLowerCase().includes(query) ||
-            type.name.toLowerCase().includes(query)
+        if (this.useCatalogUi) {
+            const filtered = this.catalogIntervalTypes.filter(
+                (rel) =>
+                    rel.label.toLowerCase().includes(query) ||
+                    rel.description.toLowerCase().includes(query) ||
+                    rel.name.toLowerCase().includes(query) ||
+                    rel.family.toLowerCase().includes(query),
+            );
+            this.renderCatalogIntervalTypes(filtered);
+            return;
+        }
+        const filtered = this.intervalTypes.filter(
+            (type) =>
+                type.label.toLowerCase().includes(query) ||
+                type.description.toLowerCase().includes(query) ||
+                type.name.toLowerCase().includes(query),
         );
         this.renderIntervalTypes(filtered);
+    }
+
+    private renderCatalogIntervalTypes(types: CatalogRelationshipType[]): void {
+        if (!this.gridContainer) return;
+        this.gridContainer.empty();
+
+        if (types.length === 0) {
+            const noResults = this.gridContainer.createDiv({ cls: 'graph_copilot-no-results' });
+            noResults.style.cssText = `
+                text-align: center;
+                padding: 20px;
+                color: var(--text-muted);
+            `;
+            noResults.textContent = 'No relationship types match your search.';
+            return;
+        }
+
+        const plugin = getOsintCopilotPlugin(this.app);
+        const sorted = [...types].sort((a, b) => {
+            const fa = a.family.localeCompare(b.family);
+            if (fa !== 0) return fa;
+            return a.label.localeCompare(b.label);
+        });
+
+        for (const rel of sorted) {
+            const typeBtn = this.gridContainer.createDiv({ cls: 'graph_copilot-entity-type-btn' });
+            typeBtn.style.borderLeftColor = rel.color;
+            typeBtn.style.position = 'relative';
+
+            const icon = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-icon' });
+            icon.style.backgroundColor = rel.color;
+            icon.textContent = '🔗';
+
+            const badge = typeBtn.createDiv();
+            badge.textContent = familyBadgeLabel(rel.family);
+            badge.style.cssText =
+                'position: absolute; top: 6px; right: 8px; font-size: 10px; color: var(--text-muted); font-weight: 600;';
+
+            const info = typeBtn.createDiv({ cls: 'graph_copilot-entity-type-info' });
+            info.createEl('strong', { text: rel.label });
+            info.createEl('small', { text: rel.description });
+
+            const isCustom =
+                plugin &&
+                plugin.customTypesService &&
+                rel.family === 'ftm' &&
+                plugin.customTypesService.getCustomSchema(rel.name);
+
+            if (isCustom) {
+                const actionsDiv = typeBtn.createDiv({ cls: 'graph_copilot-type-actions' });
+                actionsDiv.style.cssText =
+                    'position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: none; gap: 6px; z-index: 10;';
+                typeBtn.onmouseenter = () => {
+                    actionsDiv.style.display = 'flex';
+                };
+                typeBtn.onmouseleave = () => {
+                    actionsDiv.style.display = 'none';
+                };
+                const editBtn = actionsDiv.createEl('button', { text: '✎' });
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.close();
+                    new CustomTypeCreationModal(
+                        this.app,
+                        plugin.customTypesService,
+                        plugin.customTypesService.getCustomSchema(rel.name),
+                        () => {
+                            new FTMIntervalTypeSelectorModal(
+                                this.app,
+                                this.entityManager,
+                                this.onConnectionCreated || undefined,
+                                this.sourceEntityId || undefined,
+                                this.targetEntityId || undefined,
+                            ).open();
+                        },
+                        'Interval',
+                    ).open();
+                };
+                const delBtn = actionsDiv.createEl('button', { text: '🗑' });
+                delBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete custom relationship type "${rel.label}"?`)) {
+                        await plugin.customTypesService.deleteCustomType(rel.name);
+                        this.syncIntervalTypesFromPlugin();
+                        this.filterIntervalTypes();
+                    }
+                };
+            }
+
+            typeBtn.onclick = () => {
+                this.close();
+                if (rel.family === 'ftm') {
+                    new FTMIntervalCreationModal(
+                        this.app,
+                        this.entityManager,
+                        rel.name,
+                        this.onConnectionCreated || undefined,
+                        this.sourceEntityId || undefined,
+                        this.targetEntityId || undefined,
+                    ).open();
+                } else {
+                    new FTMIntervalCreationModal(
+                        this.app,
+                        this.entityManager,
+                        rel.name,
+                        this.onConnectionCreated || undefined,
+                        this.sourceEntityId || undefined,
+                        this.targetEntityId || undefined,
+                        rel,
+                    ).open();
+                }
+            };
+        }
     }
 
     private renderIntervalTypes(types: Array<{ name: string; label: string; description: string; color: string }>): void {
@@ -3280,6 +3782,9 @@ export class FTMIntervalCreationModal extends Modal {
     private sourceEntityId: string | null = null;
     private targetEntityId: string | null = null;
     private entities: Entity[] = [];
+    private catalogRel: CatalogRelationshipType | null = null;
+    private catalogSourceId: string | null = null;
+    private catalogTargetId: string | null = null;
 
     constructor(
         app: App,
@@ -3287,7 +3792,8 @@ export class FTMIntervalCreationModal extends Modal {
         intervalType: string,
         onConnectionCreated?: (connectionId?: string) => void,
         preselectedSourceId?: string,
-        preselectedTargetId?: string
+        preselectedTargetId?: string,
+        catalogRel?: CatalogRelationshipType
     ) {
         super(app);
         this.entityManager = entityManager;
@@ -3295,6 +3801,9 @@ export class FTMIntervalCreationModal extends Modal {
         this.onConnectionCreated = onConnectionCreated || null;
         this.sourceEntityId = preselectedSourceId || null;
         this.targetEntityId = preselectedTargetId || null;
+        this.catalogRel = catalogRel ?? null;
+        this.catalogSourceId = preselectedSourceId || null;
+        this.catalogTargetId = preselectedTargetId || null;
     }
 
     onOpen() {
@@ -3304,6 +3813,11 @@ export class FTMIntervalCreationModal extends Modal {
 
         // Load entities
         this.entities = this.entityManager.getAllEntities();
+
+        if (this.catalogRel && this.catalogRel.family !== 'ftm') {
+            this.openCatalogIntervalForm();
+            return;
+        }
 
         const config = getFTMEntityConfig(this.intervalType);
         if (!config) {
@@ -3377,6 +3891,130 @@ export class FTMIntervalCreationModal extends Modal {
 
         const cancelBtn = buttonContainer.createEl('button', { text: 'Cancel' });
         cancelBtn.onclick = () => this.close();
+    }
+
+    private openCatalogIntervalForm(): void {
+        const rel = this.catalogRel;
+        if (!rel) return;
+
+        const { contentEl } = this;
+        contentEl.createEl('h2', { text: `Create ${rel.label}` });
+        contentEl.createEl('p', {
+            text: rel.description,
+            cls: 'graph_copilot-entity-modal-description',
+        });
+
+        if (this.entities.length < 2) {
+            contentEl.createEl('p', {
+                text: 'You need at least 2 entities to create a connection.',
+                cls: 'graph_copilot-connection-warning',
+            });
+            const closeBtn = contentEl.createEl('button', { text: 'Close' });
+            closeBtn.onclick = () => this.close();
+            return;
+        }
+
+        const formContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-form' });
+
+        const fromWrap = formContainer.createDiv({ cls: 'graph_copilot-entity-field' });
+        fromWrap.createEl('label', { text: 'From entity *' });
+        const fromSel = fromWrap.createEl('select', { cls: 'graph_copilot-entity-input' });
+        fromSel.createEl('option', { text: 'Select source…', value: '' });
+        for (const entity of this.entities) {
+            const opt = fromSel.createEl('option', {
+                text: `${entity.label} (${entity.type})`,
+                value: entity.id,
+            });
+            if (this.catalogSourceId === entity.id) {
+                opt.selected = true;
+            }
+        }
+        if (this.catalogSourceId) {
+            fromSel.value = this.catalogSourceId;
+        }
+        fromSel.onchange = () => {
+            this.catalogSourceId = fromSel.value || null;
+        };
+
+        const toWrap = formContainer.createDiv({ cls: 'graph_copilot-entity-field' });
+        toWrap.createEl('label', { text: 'To entity *' });
+        const toSel = toWrap.createEl('select', { cls: 'graph_copilot-entity-input' });
+        toSel.createEl('option', { text: 'Select target…', value: '' });
+        for (const entity of this.entities) {
+            const opt = toSel.createEl('option', {
+                text: `${entity.label} (${entity.type})`,
+                value: entity.id,
+            });
+            if (this.catalogTargetId === entity.id) {
+                opt.selected = true;
+            }
+        }
+        if (this.catalogTargetId) {
+            toSel.value = this.catalogTargetId;
+        }
+        toSel.onchange = () => {
+            this.catalogTargetId = toSel.value || null;
+        };
+
+        const ordered = [...rel.required, ...rel.featured, ...Object.keys(rel.properties)];
+        const seen = new Set<string>();
+        for (const propName of ordered) {
+            if (seen.has(propName)) continue;
+            seen.add(propName);
+            if (!rel.properties[propName]) continue;
+            this.createCatalogRelPropertyField(
+                formContainer,
+                propName,
+                rel,
+                rel.required.includes(propName),
+            );
+        }
+
+        const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-entity-modal-buttons' });
+        const createBtn = buttonContainer.createEl('button', {
+            text: `Create ${rel.label}`,
+            cls: 'mod-cta',
+        });
+        createBtn.onclick = () => void this.handleCreate();
+        const cancelBtn = buttonContainer.createEl('button', { text: 'Cancel' });
+        cancelBtn.onclick = () => this.close();
+    }
+
+    private createCatalogRelPropertyField(
+        container: HTMLElement,
+        propertyName: string,
+        rel: CatalogRelationshipType,
+        isRequired: boolean,
+    ): void {
+        const def = rel.properties[propertyName];
+        const fieldContainer = container.createDiv({ cls: 'graph_copilot-entity-field' });
+        fieldContainer.createEl('label', {
+            text: (def?.label || propertyName) + (isRequired ? ' *' : ''),
+        });
+        const ptype = (def?.type || 'string').toLowerCase();
+        let input: HTMLInputElement | HTMLTextAreaElement;
+        if (ptype === 'text') {
+            input = fieldContainer.createEl('textarea', { placeholder: '…' }) as HTMLTextAreaElement;
+            input.rows = 3;
+        } else if (ptype === 'date') {
+            input = fieldContainer.createEl('input', { type: 'date' }) as HTMLInputElement;
+        } else if (ptype === 'number') {
+            input = fieldContainer.createEl('input', { type: 'number' }) as HTMLInputElement;
+            (input as HTMLInputElement).step = 'any';
+        } else {
+            input = fieldContainer.createEl('input', { type: 'text' }) as HTMLInputElement;
+        }
+        input.addClass('graph_copilot-entity-input');
+        input.addEventListener('input', () => {
+            if (input.type === 'number') {
+                const value = parseFloat((input as HTMLInputElement).value);
+                if (!isNaN(value)) {
+                    this.properties[propertyName] = value;
+                }
+            } else {
+                this.properties[propertyName] = input.value;
+            }
+        });
     }
 
     private createEntityDropdown(container: HTMLElement, propertyName: string, propDef: FTMPropertyDefinition): void {
@@ -3472,6 +4110,45 @@ export class FTMIntervalCreationModal extends Modal {
     }
 
     private async handleCreate(): Promise<void> {
+        if (this.catalogRel && this.catalogRel.family !== 'ftm') {
+            const fromId = this.catalogSourceId || this.sourceEntityId;
+            const toId = this.catalogTargetId || this.targetEntityId;
+            if (!fromId || !toId) {
+                new Notice('Please select both entities for the connection');
+                return;
+            }
+            if (fromId === toId) {
+                new Notice('Source and target entities must be different');
+                return;
+            }
+            try {
+                const connection = await this.entityManager.createConnection(
+                    fromId,
+                    toId,
+                    this.intervalType,
+                    { ...this.properties },
+                    { schemaFamily: this.catalogRel.family },
+                );
+                if (connection) {
+                    const sourceEntity = this.entityManager.getEntity(fromId);
+                    const targetEntity = this.entityManager.getEntity(toId);
+                    new Notice(
+                        `Created: ${sourceEntity?.label} → ${this.intervalType} → ${targetEntity?.label} `,
+                    );
+                    if (this.onConnectionCreated) {
+                        this.onConnectionCreated(connection.id);
+                    }
+                    this.close();
+                } else {
+                    new Notice('Failed to create connection');
+                }
+            } catch (error) {
+                new Notice(`Failed to create connection: ${error} `);
+                console.error('Catalog interval creation error:', error);
+            }
+            return;
+        }
+
         const config = getFTMEntityConfig(this.intervalType);
         if (!config) return;
 
@@ -3502,7 +4179,9 @@ export class FTMIntervalCreationModal extends Modal {
                 const connection = await this.entityManager.createConnection(
                     sourceId,
                     targetId,
-                    this.intervalType
+                    this.intervalType,
+                    undefined,
+                    { schemaFamily: 'ftm' },
                 );
 
                 if (connection) {

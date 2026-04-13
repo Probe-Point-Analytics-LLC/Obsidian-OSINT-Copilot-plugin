@@ -2,6 +2,8 @@ import { App, Notice, Vault, normalizePath } from 'obsidian';
 import { ftmSchemaService, FTMSchemaDefinition } from './ftm-schema-service';
 import { CUSTOM_TYPES_CONFIG_DIR, CUSTOM_TYPES_FILE_NAME } from '../constants/vault-layout';
 
+/** JSON-backed FTM extensions. Non-FTM families use YAML under OSINTCopilot/schemas/ (see schema catalog). */
+
 export interface CustomTypeConfig {
     schemas: Partial<FTMSchemaDefinition>[];
 }

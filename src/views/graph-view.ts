@@ -22,6 +22,8 @@ export interface OSINTCopilotGraphHost {
     listGraphWorkspaces(): { id: string; name: string }[];
     addGraphWorkspace(name: string): Promise<string | null>;
     deleteGraphWorkspace(id: string): Promise<void>;
+    /** Resolve node color (and icon) from schema catalog when available. */
+    getGraphEntityVisual(entity: Entity): { color: string; icon: string };
 }
 
 // Cytoscape types (simplified for bundling)
@@ -161,6 +163,10 @@ export class GraphView extends ItemView {
         // Initialize history manager
         this.historyManager = new GraphHistoryManager();
         this.setupHistoryCallbacks();
+    }
+
+    private getNodeVisual(entity: Entity): { color: string; icon: string } {
+        return this.graphHost.getGraphEntityVisual(entity);
     }
 
     /**
@@ -502,7 +508,7 @@ export class GraphView extends ItemView {
         const existingNode = this.cy.getElementById(entity.id);
         if (existingNode.length > 0) return;
 
-        const config = ENTITY_CONFIGS[entity.type as EntityType] || ENTITY_CONFIGS[EntityType.Person];
+        const visual = this.getNodeVisual(entity);
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
         const thumbUrl = this.resolveThumbUrl(entity);
@@ -513,8 +519,8 @@ export class GraphView extends ItemView {
                 label: label,
                 fullLabel: entityLabel,
                 type: entity.type,
-                color: config.color,
-                icon: getEntityIcon(entity.type),
+                color: visual.color,
+                icon: visual.icon,
                 thumbUrl: thumbUrl || undefined
             },
             position: position
@@ -2486,6 +2492,7 @@ export class GraphView extends ItemView {
 
             const entityLabel = entity.label != null ? String(entity.label) : '';
             const thumbUrl = this.resolveThumbUrl(entity);
+            const visual = this.getNodeVisual(entity);
 
             return {
                 data: {
@@ -2493,8 +2500,8 @@ export class GraphView extends ItemView {
                     label: this.truncateLabel(entityLabel),
                     fullLabel: entityLabel,
                     type: entity.type,
-                    color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
-                    icon: getEntityIcon(entity.type),
+                    color: visual.color,
+                    icon: visual.icon,
                     hasCoordinates: hasCoordinates,
                     thumbUrl: thumbUrl || undefined
                 },
@@ -2581,6 +2588,7 @@ export class GraphView extends ItemView {
 
             const entityLabel = entity.label != null ? String(entity.label) : '';
             const thumbUrl = this.resolveThumbUrl(entity);
+            const visual = this.getNodeVisual(entity);
 
             const savedPos = this.nodePositionsCache.get(entity.id);
             let position: { x: number; y: number };
@@ -2599,8 +2607,8 @@ export class GraphView extends ItemView {
                     label: this.truncateLabel(entityLabel),
                     fullLabel: entityLabel,
                     type: entity.type,
-                    color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
-                    icon: getEntityIcon(entity.type),
+                    color: visual.color,
+                    icon: visual.icon,
                     hasCoordinates: hasCoordinates,
                     thumbUrl: thumbUrl || undefined
                 },
@@ -2957,6 +2965,7 @@ export class GraphView extends ItemView {
 
         // Ensure label is a string
         const entityLabel = entity.label != null ? String(entity.label) : '';
+        const visual = this.getNodeVisual(entity);
 
         this.cy.add({
             data: {
@@ -2964,8 +2973,8 @@ export class GraphView extends ItemView {
                 label: this.truncateLabel(entityLabel),
                 fullLabel: entityLabel,
                 type: entity.type,
-                color: ENTITY_CONFIGS[entity.type as EntityType]?.color || '#607D8B',
-                icon: getEntityIcon(entity.type)
+                color: visual.color,
+                icon: visual.icon
             },
             position: { x: 400, y: 300 }
         });
@@ -3328,7 +3337,7 @@ export class GraphView extends ItemView {
         const existingNode = this.cy.getElementById(entity.id);
         if (existingNode.length > 0) return;
 
-        const config = ENTITY_CONFIGS[entity.type as EntityType] || ENTITY_CONFIGS[EntityType.Person];
+        const visual = this.getNodeVisual(entity);
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
         const thumbUrl = this.resolveThumbUrl(entity);
@@ -3345,8 +3354,8 @@ export class GraphView extends ItemView {
                 label: label,
                 fullLabel: entityLabel,
                 type: entity.type,
-                color: config.color,
-                icon: getEntityIcon(entity.type),
+                color: visual.color,
+                icon: visual.icon,
                 thumbUrl: thumbUrl || undefined
             },
             position: position
@@ -3364,7 +3373,7 @@ export class GraphView extends ItemView {
         const node = this.cy.getElementById(entity.id);
         if (node.length === 0) return;
 
-        const config = ENTITY_CONFIGS[entity.type as EntityType] || ENTITY_CONFIGS[EntityType.Person];
+        const visual = this.getNodeVisual(entity);
         // Ensure label is a string
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
@@ -3372,8 +3381,8 @@ export class GraphView extends ItemView {
         node.data('label', label);
         node.data('fullLabel', entityLabel);
         node.data('type', entity.type);
-        node.data('color', config.color);
-        node.data('icon', getEntityIcon(entity.type));
+        node.data('color', visual.color);
+        node.data('icon', visual.icon);
     }
 
     /**

@@ -12,6 +12,14 @@ import {
 } from '../entities/types';
 import { geocodingService, GeocodingError, GeocodingErrorType } from './geocoding-service';
 import { ftmSchemaService } from './ftm-schema-service';
+import type { SchemaCatalogService } from './schema-catalog-service';
+import type { CatalogEntityType, SchemaFamily } from './schema-catalog-types';
+
+const SCHEMA_FAMILY_FOLDERS: SchemaFamily[] = ['ftm', 'stix2', 'mitre', 'user'];
+
+function isSchemaFamilyFolderName(name: string): name is SchemaFamily {
+    return SCHEMA_FAMILY_FOLDERS.includes(name as SchemaFamily);
+}
 
 export class EntityManager {
     private app: App;
@@ -19,11 +27,22 @@ export class EntityManager {
     private entities: Map<string, Entity> = new Map();
     private connections: Map<string, Connection> = new Map();
     private vaultLockService: VaultLockService | null = null;
+    private schemaCatalog: SchemaCatalogService | null = null;
 
     constructor(app: App, basePath: string = 'OSINTCopilot', vaultLockService?: VaultLockService | null) {
         this.app = app;
         this.basePath = basePath;
         this.vaultLockService = vaultLockService ?? null;
+    }
+
+    /** Wired from plugin after SchemaCatalogService is constructed. */
+    setSchemaCatalogService(catalog: SchemaCatalogService | null): void {
+        this.schemaCatalog = catalog;
+    }
+
+    /** Reload entities and connections from the vault (e.g. after base path change). */
+    async reloadFromVault(): Promise<void> {
+        await this.loadEntitiesFromNotes();
     }
 
     setVaultLockService(service: VaultLockService | null): void {
@@ -102,19 +121,14 @@ export class EntityManager {
         const baseFolder = this.app.vault.getAbstractFileByPath(this.basePath);
         if (baseFolder instanceof TFolder) {
             for (const child of baseFolder.children) {
-                if (child instanceof TFolder) {
-                    // Skip the Connections folder - it contains relationship notes, not entities
-                    if (child.name === 'Connections') continue;
+                if (!(child instanceof TFolder)) continue;
+                if (child.name === 'Connections') continue;
+                if (child.name === 'schemas') continue;
 
-                    // This is an entity type folder (e.g., Person, LegalEntity, etc.)
-                    for (const file of child.children) {
-                        if (file instanceof TFile && file.extension === 'md') {
-                            const entity = await this.parseEntityFromNote(file);
-                            if (entity) {
-                                this.entities.set(entity.id, entity);
-                            }
-                        }
-                    }
+                if (isSchemaFamilyFolderName(child.name)) {
+                    await this.loadFamilyEntityTree(child, child.name);
+                } else {
+                    await this.loadLegacyFlatTypeFolder(child);
                 }
             }
         }
@@ -126,10 +140,37 @@ export class EntityManager {
         await this.parseConnectionsFromNotes();
     }
 
+    /** e.g. OSINTCopilot/ftm/Person/*.md */
+    private async loadFamilyEntityTree(folder: TFolder, family: SchemaFamily): Promise<void> {
+        for (const typeFolder of folder.children) {
+            if (!(typeFolder instanceof TFolder)) continue;
+            for (const file of typeFolder.children) {
+                if (file instanceof TFile && file.extension === 'md') {
+                    const entity = await this.parseEntityFromNote(file, family);
+                    if (entity) {
+                        this.entities.set(entity.id, entity);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Legacy: OSINTCopilot/Person/*.md (no family segment). */
+    private async loadLegacyFlatTypeFolder(folder: TFolder): Promise<void> {
+        for (const file of folder.children) {
+            if (file instanceof TFile && file.extension === 'md') {
+                const entity = await this.parseEntityFromNote(file, 'ftm');
+                if (entity) {
+                    this.entities.set(entity.id, entity);
+                }
+            }
+        }
+    }
+
     /**
      * Parse an entity from a note file.
      */
-    private async parseEntityFromNote(file: TFile): Promise<Entity | null> {
+    private async parseEntityFromNote(file: TFile, defaultFamily: SchemaFamily): Promise<Entity | null> {
         try {
             const content = await this.app.vault.read(file);
             const frontmatter = this.parseFrontmatter(content);
@@ -143,8 +184,11 @@ export class EntityManager {
                 return null;
             }
 
+            const fmFamily = frontmatter.schemaFamily as SchemaFamily | undefined;
+            const schemaFamily: SchemaFamily | undefined = fmFamily ?? defaultFamily;
+
             const properties: Record<string, unknown> = {};
-            const internalKeys = ['id', 'type', 'label', 'filePath', 'aliases', 'color', 'created'];
+            const internalKeys = ['id', 'type', 'label', 'filePath', 'aliases', 'color', 'created', 'schemaFamily', 'ftmSchema'];
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!internalKeys.includes(key) && value !== undefined && value !== null) {
                     properties[key] = value;
@@ -163,13 +207,35 @@ export class EntityManager {
                 }
             }
 
-            return {
+            const ftmSchema = frontmatter.ftmSchema as string | undefined;
+
+            let label = (frontmatter.label as string) || '';
+            if (!label) {
+                if (this.schemaCatalog) {
+                    label = this.schemaCatalog.getInstanceLabel({
+                        schemaFamily,
+                        type,
+                        ftmSchema,
+                        label: '',
+                        properties,
+                    });
+                } else {
+                    label = ftmSchema
+                        ? ftmSchemaService.getEntityLabel(ftmSchema, properties)
+                        : getEntityLabel(type, properties);
+                }
+            }
+
+            const entity: Entity = {
                 id: frontmatter.id as string,
                 type,
-                label: (frontmatter.label as string) || getEntityLabel(type, properties),
+                label,
                 properties,
-                filePath: file.path
+                filePath: file.path,
+                ftmSchema,
+                schemaFamily,
             };
+            return entity;
         } catch (error) {
             console.error(`Error parsing entity from ${file.path}:`, error);
             return null;
@@ -269,13 +335,17 @@ export class EntityManager {
             // Extract connection properties from frontmatter
             const properties: Record<string, unknown> = {};
             const excludedKeys = ['id', 'type', 'relationship', 'fromEntityId', 'toEntityId',
-                'fromEntity', 'toEntity', 'ftmSchema', 'label'];
+                'fromEntity', 'toEntity', 'ftmSchema', 'label', 'schemaFamily'];
 
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!excludedKeys.includes(key) && value !== undefined && value !== null) {
                     properties[key] = value;
                 }
             }
+
+            const ftmSchema = frontmatter.ftmSchema as string | undefined;
+            const schemaFamily = (frontmatter.schemaFamily as SchemaFamily | undefined)
+                ?? (ftmSchema ? 'ftm' : 'ftm');
 
             return {
                 id: frontmatter.id as string,
@@ -284,7 +354,8 @@ export class EntityManager {
                 relationship: frontmatter.relationship as string,
                 label: frontmatter.label as string,
                 properties: Object.keys(properties).length > 0 ? properties : undefined,
-                ftmSchema: frontmatter.ftmSchema as string,
+                ftmSchema,
+                schemaFamily,
                 filePath: file.path
             };
         } catch (error) {
@@ -448,7 +519,8 @@ export class EntityManager {
             type: schemaName as EntityType,  // Use schema name as type
             label,
             properties,
-            ftmSchema: schemaName  // Store FTM schema name
+            ftmSchema: schemaName,  // Store FTM schema name
+            schemaFamily: 'ftm',
         };
 
         // Create the note using FTM-aware save
@@ -497,11 +569,61 @@ export class EntityManager {
     }
 
     /**
+     * Create an entity from a catalog definition (STIX, MITRE, user YAML).
+     * FTM family still uses {@link createFTMEntity} — call that from the UI when family is ftm.
+     */
+    async createCatalogEntity(
+        cat: CatalogEntityType,
+        properties: Record<string, unknown>,
+        options?: { manualLabel?: string }
+    ): Promise<Entity> {
+        if (cat.family === 'ftm') {
+            return this.createFTMEntity(cat.name, properties, {
+                skipAutoGeocode: true,
+                manualLabel: options?.manualLabel,
+            });
+        }
+
+        const id = generateId();
+        const lf = cat.labelField;
+        const rawLabel = options?.manualLabel ?? properties[lf];
+        const label =
+            rawLabel !== undefined && rawLabel !== null && String(rawLabel).trim() !== ''
+                ? String(rawLabel).trim()
+                : `New ${cat.label}`;
+
+        const entity: Entity = {
+            id,
+            type: cat.name,
+            label,
+            properties,
+            schemaFamily: cat.family,
+        };
+
+        const filePath = await this.saveCatalogEntityNote(entity, cat);
+        entity.filePath = filePath;
+        this.entities.set(id, entity);
+        return entity;
+    }
+
+    private resolveEntityStorageFolder(entity: Entity, typeFolderName: string): string {
+        if (entity.filePath) {
+            const p = entity.filePath;
+            const lastSlash = p.lastIndexOf('/');
+            if (lastSlash > 0) {
+                return normalizePath(p.substring(0, lastSlash));
+            }
+        }
+        const family = entity.schemaFamily ?? 'ftm';
+        return normalizePath(`${this.basePath}/${family}/${typeFolderName}`);
+    }
+
+    /**
      * Save an FTM entity as an Obsidian note.
      */
     private async saveFTMEntityAsNote(entity: Entity, schemaName: string): Promise<string> {
         const filename = sanitizeFilename(entity.label);
-        const folderPath = normalizePath(`${this.basePath}/${schemaName}`);
+        const folderPath = this.resolveEntityStorageFolder(entity, schemaName);
 
         // Ensure folder exists
         await this.ensureFolderExists(folderPath);
@@ -546,6 +668,87 @@ ${(entity.properties.notes as string) || ''}
         return filePath;
     }
 
+    private async saveCatalogEntityNote(entity: Entity, cat: CatalogEntityType): Promise<string> {
+        const filename = sanitizeFilename(entity.label);
+        const folderPath = this.resolveEntityStorageFolder(entity, cat.name);
+        await this.ensureFolderExists(folderPath);
+
+        const filePath = normalizePath(`${folderPath}/${filename}.md`);
+        const frontmatter = this.buildCatalogFrontmatter(entity, cat);
+        const content = `---
+${frontmatter}
+---
+
+# ${entity.label}
+
+## Properties
+
+${this.buildCatalogPropertiesSection(entity, cat)}
+
+## Relationships
+
+<!-- Add relationships using wikilinks: [[Entity Name]] RELATIONSHIP_TYPE [[Target Entity]] -->
+
+## Notes
+
+${(entity.properties.notes as string) || ''}
+`;
+
+        const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+        if (existingFile instanceof TFile) {
+            const pathToCheck = entity.filePath || filePath;
+            if (!this.assertPathWritable(pathToCheck, 'update entity note')) {
+                throw new Error('Path locked');
+            }
+            await this.app.vault.modify(existingFile, content);
+        } else {
+            await this.app.vault.create(filePath, content);
+        }
+
+        return filePath;
+    }
+
+    private buildCatalogFrontmatter(entity: Entity, cat: CatalogEntityType): string {
+        const lines: string[] = [
+            `id: "${entity.id}"`,
+            `type: ${entity.type}`,
+            `schemaFamily: ${cat.family}`,
+            `label: "${String(entity.label).replace(/"/g, '\\"')}"`,
+        ];
+
+        for (const [prop, value] of Object.entries(entity.properties)) {
+            if (value !== undefined && value !== null && value !== '') {
+                if (typeof value === 'string') {
+                    lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
+                } else if (typeof value === 'boolean') {
+                    lines.push(`${prop}: ${value}`);
+                } else {
+                    lines.push(`${prop}: ${String(value)}`);
+                }
+            }
+        }
+
+        return lines.join('\n');
+    }
+
+    private buildCatalogPropertiesSection(entity: Entity, cat: CatalogEntityType): string {
+        const lines: string[] = [];
+        const order = [...cat.required, ...cat.featured, ...Object.keys(entity.properties)];
+        const shown = new Set<string>();
+
+        for (const prop of order) {
+            if (shown.has(prop)) continue;
+            shown.add(prop);
+            const value = entity.properties[prop];
+            if (value === undefined || value === null || value === '') continue;
+            const def = cat.properties[prop];
+            const lab = def?.label || prop;
+            lines.push(`- **${lab}**: ${String(value)}`);
+        }
+
+        return lines.length > 0 ? lines.join('\n') : '_No properties set_';
+    }
+
     /**
      * Build YAML frontmatter for an FTM entity.
      */
@@ -553,6 +756,7 @@ ${(entity.properties.notes as string) || ''}
         const lines: string[] = [
             `id: "${entity.id}"`,
             `type: ${entity.type}`,
+            `schemaFamily: ftm`,
             `ftmSchema: ${schemaName}`,
             `label: "${entity.label}"`
         ];
@@ -907,16 +1111,23 @@ ${(entity.properties.notes as string) || ''}
 
         // Update label based on entity type
         if (entity.ftmSchema) {
-            // For FTM entities, use FTM schema service to get label
             entity.label = ftmSchemaService.getEntityLabel(entity.ftmSchema, entity.properties);
+        } else if (entity.schemaFamily && entity.schemaFamily !== 'ftm') {
+            entity.label = this.schemaCatalog?.getInstanceLabel(entity) ?? entity.label;
         } else {
-            // For legacy entities, use the legacy getEntityLabel function
             entity.label = getEntityLabel(entity.type, entity.properties);
         }
 
         // Save updated note using appropriate method
         if (entity.ftmSchema) {
             await this.saveFTMEntityAsNote(entity, entity.ftmSchema);
+        } else if (entity.schemaFamily && entity.schemaFamily !== 'ftm' && this.schemaCatalog) {
+            const cat = this.schemaCatalog.getEntityType(entity.schemaFamily, String(entity.type));
+            if (cat) {
+                await this.saveCatalogEntityNote(entity, cat);
+            } else {
+                await this.saveEntityAsNote(entity);
+            }
         } else {
             await this.saveEntityAsNote(entity);
         }
@@ -980,8 +1191,8 @@ ${(entity.properties.notes as string) || ''}
      */
     async restoreEntity(entity: Entity): Promise<boolean> {
         try {
-            // Ensure the folder exists
-            const folderPath = `${this.basePath}/${entity.type}`;
+            const family = entity.schemaFamily ?? 'ftm';
+            const folderPath = normalizePath(`${this.basePath}/${family}/${String(entity.type)}`);
             await this.ensureFolderExists(folderPath);
 
             // Generate note content
@@ -1159,7 +1370,8 @@ ${(entity.properties.notes as string) || ''}
         fromEntityId: string,
         toEntityId: string,
         relationship: string,
-        properties?: Record<string, unknown>
+        properties?: Record<string, unknown>,
+        options?: { schemaFamily?: SchemaFamily }
     ): Promise<Connection | null> {
         const fromEntity = this.entities.get(fromEntityId);
         const toEntity = this.entities.get(toEntityId);
@@ -1174,6 +1386,9 @@ ${(entity.properties.notes as string) || ''}
         // Create label for the connection
         const label = `${fromEntity.label} → ${relationship} → ${toEntity.label}`;
 
+        const family = options?.schemaFamily ?? 'ftm';
+        const isFtmFamily = family === 'ftm';
+
         const connection: Connection = {
             id,
             fromEntityId,
@@ -1181,7 +1396,8 @@ ${(entity.properties.notes as string) || ''}
             relationship: relationship,
             label,
             properties: properties || {},
-            ftmSchema: relationship  // Store the FTM interval schema name
+            ftmSchema: isFtmFamily ? relationship : undefined,
+            schemaFamily: family,
         };
 
         // Create the connection note file
@@ -1462,6 +1678,8 @@ ${this.buildConnectionPropertiesSection(connection)}
             `fromEntity: "[[${fromEntity.label}]]"`,
             `toEntity: "[[${toEntity.label}]]"`
         ];
+
+        lines.push(`schemaFamily: ${connection.schemaFamily ?? 'ftm'}`);
 
         if (connection.ftmSchema) {
             lines.push(`ftmSchema: "${connection.ftmSchema}"`);

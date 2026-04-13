@@ -21,7 +21,7 @@ import {
 } from "obsidian";
 
 // Graph plugin imports
-import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel } from './src/entities/types';
+import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel, getEntityIcon, getEntityColor } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { GraphApiService } from './src/services/api-service';
 import { ClaudeCodeService } from './src/services/claude-code-service';
@@ -64,6 +64,10 @@ import {
 } from './src/constants/vault-layout';
 import { VaultLockService } from './src/services/vault-lock-service';
 import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
+import { SchemaBootstrapService } from './src/services/schema-bootstrap-service';
+import { SchemaCatalogService, mergeEnabledFamilies } from './src/services/schema-catalog-service';
+import type { EnabledSchemaFamilies } from './src/services/schema-catalog-types';
+import { DEFAULT_ENABLED_SCHEMA_FAMILIES } from './src/services/schema-catalog-types';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -110,6 +114,8 @@ interface VaultAISettings {
   activeGraphId: string;
   /** Named graph workspaces (id + display name). */
   graphWorkspaces: { id: string; name: string }[];
+  /** Which schema families appear in entity and connection type pickers. */
+  enabledSchemaFamilies: EnabledSchemaFamilies;
 }
 
 export interface CustomCheckpoint {
@@ -176,6 +182,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   lockedVaultPaths: [],
   activeGraphId: 'default',
   graphWorkspaces: [{ id: 'default', name: 'Default' }],
+  enabledSchemaFamilies: { ...DEFAULT_ENABLED_SCHEMA_FAMILIES },
 };
 
 
@@ -202,6 +209,7 @@ export default class VaultAIPlugin extends Plugin {
   taskAgentRunner!: TaskAgentRunner;
   skillRegistry!: SkillRegistry;
   vaultLockService!: VaultLockService;
+  schemaCatalogService!: SchemaCatalogService;
 
   attachVaultSkillFromVault(): void {
     if (this.claudeCodeService && this.vaultPromptLoader) {
@@ -226,6 +234,19 @@ export default class VaultAIPlugin extends Plugin {
     this.attachVaultSkillFromVault();
   }
 
+  getEnabledSchemaFamilies(): EnabledSchemaFamilies {
+    return mergeEnabledFamilies(this.settings.enabledSchemaFamilies);
+  }
+
+  getGraphEntityVisual(entity: Entity): { color: string; icon: string } {
+    const icon = getEntityIcon(entity.type);
+    if (this.schemaCatalogService) {
+      const { color } = this.schemaCatalogService.getEntityVisualForGraph(entity);
+      return { color, icon };
+    }
+    return { color: getEntityColor(entity.type as string), icon };
+  }
+
   async onload() {
     await this.loadSettings();
 
@@ -236,8 +257,22 @@ export default class VaultAIPlugin extends Plugin {
     this.customTypesService = new CustomTypesService(this.app);
     await this.customTypesService.initialize();
 
+    try {
+      await new SchemaBootstrapService(this.app, () => this.settings.entityBasePath).ensureDefaultsInstalled();
+    } catch (e) {
+      console.warn('OSINTCopilot: schema vault bootstrap failed:', e);
+    }
+
     // Initialize graph plugin components
     this.entityManager = new EntityManager(this.app, this.settings.entityBasePath, this.vaultLockService);
+    this.schemaCatalogService = new SchemaCatalogService(this.app, () => this.settings.entityBasePath);
+    this.entityManager.setSchemaCatalogService(this.schemaCatalogService);
+    try {
+      await this.schemaCatalogService.rebuild();
+    } catch (e) {
+      console.warn('OSINTCopilot: schema catalog rebuild failed:', e);
+    }
+
     this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
       apiProvider: 'claude-code',
@@ -412,6 +447,34 @@ export default class VaultAIPlugin extends Plugin {
           this.index.delete(file.path);
         }
       })
+    );
+
+    let schemaCatalogDebounce: number | null = null;
+    const scheduleSchemaCatalogRebuild = () => {
+      if (schemaCatalogDebounce !== null) window.clearTimeout(schemaCatalogDebounce);
+      schemaCatalogDebounce = window.setTimeout(() => {
+        void this.schemaCatalogService?.rebuild();
+      }, 650);
+    };
+    const isUnderEntitySchemas = (path: string) => {
+      const base = normalizePath(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const prefix = normalizePath(`${base}/schemas`);
+      const p = normalizePath(path);
+      return p === prefix || p.startsWith(`${prefix}/`);
+    };
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (file instanceof TFile && isUnderEntitySchemas(file.path)) {
+          scheduleSchemaCatalogRebuild();
+        }
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (file instanceof TFile && isUnderEntitySchemas(file.path)) {
+          scheduleSchemaCatalogRebuild();
+        }
+      }),
     );
 
     // Register commands - grouped by feature
@@ -601,6 +664,9 @@ export default class VaultAIPlugin extends Plugin {
     if (!Array.isArray(merged.graphWorkspaces) || merged.graphWorkspaces.length === 0) {
       merged.graphWorkspaces = [{ id: 'default', name: 'Default' }];
     }
+    merged.enabledSchemaFamilies = mergeEnabledFamilies(
+      raw.enabledSchemaFamilies as Partial<EnabledSchemaFamilies> | undefined,
+    );
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
       await this.saveData(this.settings);
@@ -5855,6 +5921,28 @@ class VaultAISettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl).setName("Graph view").setHeading();
+
+    new Setting(containerEl)
+      .setName("Schema families in type pickers")
+      .setDesc(
+        "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/.",
+      );
+
+    const fam = this.plugin.settings.enabledSchemaFamilies;
+    const addFamToggle = (key: keyof EnabledSchemaFamilies, name: string) => {
+      new Setting(containerEl)
+        .setName(name)
+        .addToggle((toggle) =>
+          toggle.setValue(fam[key]).onChange(async (value) => {
+            fam[key] = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+    };
+    addFamToggle("ftm", "FTM (FollowTheMoney)");
+    addFamToggle("stix2", "STIX 2 (vault YAML)");
+    addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
+    addFamToggle("user", "User YAML (schemas/user)");
 
     // Auto-refresh graph view
     new Setting(containerEl)

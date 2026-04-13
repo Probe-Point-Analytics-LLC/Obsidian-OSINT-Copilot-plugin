@@ -4,6 +4,7 @@
  */
 
 import { ftmSchemaService, ResolvedFTMSchema, FTMPropertyDefinition } from '../services/ftm-schema-service';
+import type { SchemaFamily } from '../services/schema-catalog-types';
 
 // Legacy EntityType enum - kept for backward compatibility
 export enum EntityType {
@@ -314,6 +315,8 @@ export interface Entity {
     filePath?: string;
     /** FTM schema name if using FTM format */
     ftmSchema?: string;
+    /** Source schema family (defaults to ftm when missing — legacy notes). */
+    schemaFamily?: SchemaFamily;
 }
 
 /**
@@ -336,6 +339,8 @@ export interface Connection {
     properties?: Record<string, unknown>;  // FTM interval properties (startDate, endDate, role, etc.)
     ftmSchema?: string;  // FTM interval schema name (e.g., 'Associate', 'Ownership')
     filePath?: string;  // Path to the connection's note file
+    /** Relationship schema family (defaults to ftm when ftmSchema set / legacy). */
+    schemaFamily?: SchemaFamily;
 }
 
 export interface GraphData {
