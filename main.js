@@ -13779,7 +13779,8 @@ var VaultAIPlugin = class extends import_obsidian20.Plugin {
   onunload() {
   }
   async loadSettings() {
-    const raw = await this.loadData();
+    const loaded = await this.loadData();
+    const raw = loaded !== null && typeof loaded === "object" && !Array.isArray(loaded) ? { ...loaded } : {};
     const legacyKeys = [
       "reportApiKey",
       "graphApiUrl",

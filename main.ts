@@ -514,7 +514,12 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   async loadSettings() {
-    const raw = (await this.loadData()) as Record<string, unknown>;
+    const loaded = await this.loadData();
+    const raw = (
+      loaded !== null && typeof loaded === "object" && !Array.isArray(loaded)
+        ? { ...(loaded as Record<string, unknown>) }
+        : {}
+    ) as Record<string, unknown>;
     const legacyKeys = [
       "reportApiKey",
       "graphApiUrl",
