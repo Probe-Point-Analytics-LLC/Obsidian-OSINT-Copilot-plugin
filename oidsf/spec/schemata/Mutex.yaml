@@ -1,0 +1,13 @@
+Mutex:
+  label: Mutex
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `mutex` (OASIS CTI).
+
+    '
+  stix_type: mutex
+  matchable: false
+  properties:
+    name:
+      label: Mutex name
+      type: string

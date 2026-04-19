@@ -1,0 +1,42 @@
+ArkhamMediaAnalysis:
+  extends:
+    - ArkhamObject
+  label: Media analysis
+  description: Media forensics analysis record (hashes, EXIF, integrity).
+  properties:
+    document_id:
+      label: Document id
+      type: identifier
+    file_type:
+      label: File type
+      type: string
+    sha256:
+      label: SHA-256
+      type: identifier
+    md5:
+      label: MD5
+      type: identifier
+    phash:
+      label: Perceptual hash
+      type: string
+    exif_data:
+      label: EXIF (JSON)
+      type: text
+    gps_latitude:
+      label: GPS latitude
+      type: string
+    gps_longitude:
+      label: GPS longitude
+      type: string
+    integrity_status:
+      label: Integrity status
+      type: string
+    confidence_score:
+      label: Confidence score
+      type: string
+    warnings:
+      label: Warnings
+      type: string
+    anomalies:
+      label: Anomalies
+      type: string

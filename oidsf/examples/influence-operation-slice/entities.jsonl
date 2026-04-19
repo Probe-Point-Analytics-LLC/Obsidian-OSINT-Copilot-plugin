@@ -1,0 +1,4 @@
+{"oidsf_version": "1.0.0", "id": "ent_org_network_a", "schema": "Organization", "properties": {"name": ["Example Network"], "country": ["us"], "topics": ["influence", "example"], "summary": ["Illustrative organization node"]}}
+{"oidsf_version": "1.0.0", "id": "ent_acc_poster_01", "schema": "OnlineAccount", "properties": {"name": ["poster_01"], "username": ["poster_01"], "service": ["example_social"], "url": ["https://example.social/poster_01"], "topics": ["example"]}}
+{"oidsf_version": "1.0.0", "id": "ent_post_44012", "schema": "SocialPost", "properties": {"name": ["Post 44012"], "url": ["https://example.social/post/44012"], "platform": ["example_social"], "posted_at": ["2026-03-01T08:15:00Z"], "topics": ["example"], "disarmTechniqueIds": ["T0007.001"]}}
+{"oidsf_version": "1.0.0", "id": "lnk_auth_01", "schema": "Authorship", "properties": {"owner": ["ent_acc_poster_01"], "asset": ["ent_post_44012"], "role": ["author"]}}

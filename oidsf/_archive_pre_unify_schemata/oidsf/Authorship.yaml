@@ -1,0 +1,33 @@
+Authorship:
+  label: Authorship link
+  plural: Authorship links
+  extends:
+    - Interest
+  description: >
+    Links an author account or person to a work (post, document). Complements FtM Mentions/Articles.
+  matchable: false
+  featured:
+    - owner
+    - asset
+    - role
+  required:
+    - owner
+    - asset
+  properties:
+    owner:
+      label: Author endpoint
+      type: entity
+      range: Thing
+      reverse:
+        name: authoredWorks
+        label: Authored works
+    asset:
+      label: Work
+      type: entity
+      range: Thing
+      reverse:
+        name: authors
+        label: Authors
+    role:
+      label: Role
+      type: string

@@ -1,0 +1,18 @@
+ScenarioTree:
+  extends:
+  - AnalyticObject
+  label: Scenario tree
+  description: Cone of plausibility / scenario tree.
+  properties:
+    matrix_id:
+      label: Matrix id
+      type: identifier
+    title:
+      label: Title
+      type: string
+    situation_summary:
+      label: Situation summary
+      type: text
+    root_node_id:
+      label: Root node id
+      type: identifier

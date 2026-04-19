@@ -1,0 +1,28 @@
+IntrusionSet:
+  label: IntrusionSet
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `intrusion-set` (OASIS CTI).
+
+    '
+  stix_type: intrusion-set
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    aliases:
+      label: Aliases
+      type: string
+    goals:
+      label: Goals
+      type: text
+    resource_level:
+      label: Resource level
+      type: string
+    primary_motivation:
+      label: Primary motivation
+      type: string

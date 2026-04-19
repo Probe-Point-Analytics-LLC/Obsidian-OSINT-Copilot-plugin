@@ -1,0 +1,18 @@
+MirrorProject:
+  extends:
+  - AnalyticObject
+  label: Project
+  description: Investigation project container (Arkham projects shard).
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    owner_id:
+      label: Owner id
+      type: identifier
+    status:
+      label: Status
+      type: string

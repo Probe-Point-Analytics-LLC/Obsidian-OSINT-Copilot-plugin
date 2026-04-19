@@ -1,0 +1,18 @@
+LanguageContent:
+  label: "LanguageContent"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `language-content` (OASIS CTI).
+  stix_type: language-content
+  matchable: false
+  properties:
+    object_ref:
+      label: Object ref
+      type: identifier
+    object_modified:
+      label: Object modified
+      type: date
+    contents:
+      label: Contents (JSON)
+      type: text

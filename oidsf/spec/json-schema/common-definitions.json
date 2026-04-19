@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/common-definitions.json",
+  "title": "OIDSF common definitions",
+  "$defs": {
+    "SemVer": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "Id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "MultiStringProps": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "Distribution": {
+      "type": "string",
+      "enum": ["public", "partner", "internal", "restricted"]
+    },
+    "Sensitivity": {
+      "type": "string",
+      "enum": ["public", "internal", "restricted", "sensitive"]
+    },
+    "IntelPhase": {
+      "type": "string",
+      "enum": ["planning", "collection", "processing", "analysis", "dissemination"]
+    },
+    "EvidenceRelationship": {
+      "type": "string",
+      "enum": ["supports", "refutes", "related"]
+    },
+    "EvidenceStrength": {
+      "type": "string",
+      "enum": ["strong", "moderate", "weak"]
+    },
+    "ExtractionMethod": {
+      "type": "string",
+      "enum": ["manual", "ocr", "llm", "import", "api", "other"]
+    },
+    "CaptureMethod": {
+      "type": "string",
+      "enum": ["http_get", "archive_org", "manual_upload", "api", "warc", "other"]
+    }
+  }
+}

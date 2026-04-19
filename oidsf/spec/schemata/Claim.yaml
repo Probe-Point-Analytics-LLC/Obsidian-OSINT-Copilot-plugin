@@ -1,0 +1,57 @@
+Claim:
+  extends:
+  - AnalyticObject
+  label: Claim
+  description: Factual assertion / claim (Arkham claims shard).
+  properties:
+    text:
+      label: Claim text
+      type: text
+    claim_type:
+      label: Claim type
+      type: string
+    status:
+      label: Status
+      type: string
+    confidence:
+      label: Confidence
+      type: string
+    source_document_id:
+      label: Source document id
+      type: identifier
+    source_start_char:
+      label: Source start char
+      type: string
+    source_end_char:
+      label: Source end char
+      type: string
+    source_context:
+      label: Source context
+      type: text
+    extracted_by:
+      label: Extracted by
+      type: string
+    extraction_model:
+      label: Extraction model
+      type: string
+    entity_ids:
+      label: Linked entity ids
+      type: string
+    evidence_count:
+      label: Evidence count
+      type: string
+    supporting_count:
+      label: Supporting count
+      type: string
+    refuting_count:
+      label: Refuting count
+      type: string
+    created_at:
+      label: Created at
+      type: date
+    updated_at:
+      label: Updated at
+      type: date
+    verified_at:
+      label: Verified at
+      type: date

@@ -1,4 +1,4 @@
-import { Entity, ProcessTextResponse, AIOperation } from '../entities/types';
+import { Entity, ProcessTextResponse, AIOperation, type OsintSourceInput } from '../entities/types';
 
 export interface ClaudeCodeConfig {
     cliPath: string;
@@ -56,7 +56,8 @@ export class ClaudeCodeService {
 
     private getFallbackSkill(): string {
         return `You are an entity extraction engine. Extract entities and relationships from the provided text. Do NOT answer questions, do NOT propose plans — just extract entities and return JSON.
-Output ONLY valid JSON: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."}}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT"}]}]}
+Output ONLY valid JSON: {"operations":[{"action":"create","entities":[{"type":"Person","properties":{"full_name":"...","notes":"..."},"sources":[{"inferred":false,"source_url":"https://example.com/page","rationale":"Where this was stated"}]}],"connections":[{"from":0,"to":1,"relationship":"WORKS_AT","sources":[{"inferred":false,"source_url":"https://...","rationale":"..."}]}]}]}
+Each entity and each connection may include "sources": an array of { "source_url" (http(s) URL or vault path), "inferred" (boolean), "rationale" (short string), optional "claims": [ { "path": "properties.country", "value": "US" } ] }. Use inferred:true only when the source is not explicit in the text.
 Entity types: Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
 Rules: Relationships UPPERCASE. Notes comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline:true. Create Location for every place/city/country mentioned. If no entities: {"operations":[]}`;
     }
@@ -226,8 +227,32 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         if (!data?.operations || !Array.isArray(data.operations)) return [];
         return data.operations.map((op: any) => ({
             action: op.action || 'create',
-            entities: Array.isArray(op.entities) ? op.entities : undefined,
-            connections: Array.isArray(op.connections) ? op.connections : undefined,
+            entities: Array.isArray(op.entities)
+                ? op.entities.map((e: any) => ({
+                      type: String(e.type ?? ''),
+                      properties: (e.properties && typeof e.properties === 'object' ? e.properties : {}) as Record<
+                          string,
+                          unknown
+                      >,
+                      sources: Array.isArray(e.sources)
+                          ? (e.sources as OsintSourceInput[])
+                          : undefined,
+                  }))
+                : undefined,
+            connections: Array.isArray(op.connections)
+                ? op.connections.map((c: any) => ({
+                      from: Number(c.from),
+                      to: Number(c.to),
+                      relationship: String(c.relationship ?? ''),
+                      from_label: c.from_label,
+                      to_label: c.to_label,
+                      from_type: c.from_type,
+                      to_type: c.to_type,
+                      sources: Array.isArray(c.sources)
+                          ? (c.sources as OsintSourceInput[])
+                          : undefined,
+                  }))
+                : undefined,
             updates: Array.isArray(op.updates) ? op.updates : undefined,
         }));
     }

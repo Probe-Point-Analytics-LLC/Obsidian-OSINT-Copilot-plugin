@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/evidence-link.json",
+  "title": "OIDSF EvidenceLink",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "id", "from_ref", "to_ref", "relationship"],
+  "properties": {
+    "oidsf_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "from_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["artifact", "statement"] },
+        "id": { "$ref": "common-definitions.json#/$defs/Id" }
+      }
+    },
+    "to_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["entity"] },
+        "id": { "$ref": "common-definitions.json#/$defs/Id" }
+      }
+    },
+    "relationship": { "$ref": "common-definitions.json#/$defs/EvidenceRelationship" },
+    "strength": { "$ref": "common-definitions.json#/$defs/EvidenceStrength" },
+    "notes": { "type": "string" },
+    "extensions": { "type": "object", "additionalProperties": true }
+  }
+}

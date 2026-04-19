@@ -1,0 +1,21 @@
+GraphNode:
+  extends:
+  - AnalyticObject
+  label: Graph node
+  description: Investigation graph node (Arkham graph shard).
+  properties:
+    label:
+      label: Label
+      type: string
+    node_type:
+      label: Node type
+      type: string
+    entity_ref:
+      label: Entity ref
+      type: identifier
+    position_x:
+      label: Position X
+      type: string
+    position_y:
+      label: Position Y
+      type: string

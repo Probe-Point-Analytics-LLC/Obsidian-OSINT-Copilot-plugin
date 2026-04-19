@@ -1,0 +1,25 @@
+Tool:
+  label: Tool
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `tool` (OASIS CTI).
+
+    '
+  stix_type: tool
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    tool_types:
+      label: Tool types
+      type: string
+    aliases:
+      label: Aliases
+      type: string
+    kill_chain_phases:
+      label: Kill chain phases (JSON)
+      type: text

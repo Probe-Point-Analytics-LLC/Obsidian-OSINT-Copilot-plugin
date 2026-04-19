@@ -1,0 +1,27 @@
+Software:
+  label: "Software"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `software` (OASIS CTI).
+  stix_type: software
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    cpe:
+      label: CPE
+      type: string
+    swid:
+      label: SWID
+      type: string
+    languages:
+      label: Languages
+      type: string
+    vendor:
+      label: Vendor
+      type: string
+    version:
+      label: Version
+      type: string

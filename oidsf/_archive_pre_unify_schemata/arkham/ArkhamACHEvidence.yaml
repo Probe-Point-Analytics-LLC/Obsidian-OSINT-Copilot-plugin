@@ -1,0 +1,48 @@
+ArkhamACHEvidence:
+  extends:
+    - ArkhamObject
+  label: ACH evidence row
+  description: Evidence item in an ACH matrix (distinct from claim-level evidence).
+  properties:
+    matrix_id:
+      label: Matrix id
+      type: identifier
+    description:
+      label: Description
+      type: text
+    source:
+      label: Source
+      type: string
+    evidence_type:
+      label: Evidence type
+      type: string
+    credibility:
+      label: Credibility
+      type: string
+    relevance:
+      label: Relevance
+      type: string
+    row_index:
+      label: Row index
+      type: string
+    document_ids:
+      label: Document ids
+      type: string
+    source_document_id:
+      label: Source document id
+      type: identifier
+    source_chunk_id:
+      label: Source chunk id
+      type: identifier
+    source_page_number:
+      label: Source page number
+      type: string
+    source_quote:
+      label: Source quote
+      type: text
+    extraction_method:
+      label: Extraction method
+      type: string
+    similarity_score:
+      label: Similarity score
+      type: string

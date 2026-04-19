@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/source-assessment.json",
+  "title": "OIDSF SourceAssessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "id", "subject_ref", "assessed_at", "assessor"],
+  "properties": {
+    "oidsf_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "subject_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["artifact", "entity"] },
+        "id": { "$ref": "common-definitions.json#/$defs/Id" }
+      }
+    },
+    "assessed_at": { "type": "string", "format": "date-time" },
+    "assessor": { "type": "string", "minLength": 1 },
+    "overall_trust": {
+      "type": "string",
+      "enum": ["reliable", "neutral", "unreliable", "unknown"]
+    },
+    "pillars": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data_information_sources": { "$ref": "#/$defs/PillarBlock" },
+        "argumentation": { "$ref": "#/$defs/PillarBlock" },
+        "communication_style": { "$ref": "#/$defs/PillarBlock" },
+        "community": { "$ref": "#/$defs/PillarBlock" }
+      }
+    },
+    "extensions": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "ParameterScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "score": { "type": ["number", "null"] },
+        "rationale": { "type": "string" }
+      }
+    },
+    "PillarBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ParameterScore" }
+        }
+      }
+    }
+  }
+}

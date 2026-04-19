@@ -1,0 +1,3 @@
+jsonschema>=4.21.0
+referencing>=0.31.0
+PyYAML>=6.0.0

@@ -1,0 +1,24 @@
+StixReport:
+  label: "StixReport"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `report` (OASIS CTI).
+  stix_type: report
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    report_types:
+      label: Report types
+      type: string
+    published:
+      label: Published
+      type: date
+    object_refs:
+      label: Object refs
+      type: string

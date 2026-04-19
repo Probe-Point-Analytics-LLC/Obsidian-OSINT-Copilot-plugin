@@ -21,8 +21,21 @@ import {
 } from "obsidian";
 
 // Graph plugin imports
-import { EntityType, Entity, Connection, ENTITY_CONFIGS, AIOperation, ProcessTextResponse, validateEntityName, getEntityLabel, getEntityIcon, getEntityColor } from './src/entities/types';
+import {
+  EntityType,
+  Entity,
+  Connection,
+  ENTITY_CONFIGS,
+  AIOperation,
+  ProcessTextResponse,
+  validateEntityName,
+  getEntityLabel,
+  getEntityIcon,
+  getEntityColor,
+  type GraphWriteContext,
+} from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
+import { WaybackArchiveService } from './src/services/wayback-archive-service';
 import { GraphApiService } from './src/services/api-service';
 import { ClaudeCodeService } from './src/services/claude-code-service';
 import {
@@ -67,7 +80,13 @@ import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
 import { SchemaBootstrapService } from './src/services/schema-bootstrap-service';
 import { SchemaCatalogService, mergeEnabledFamilies } from './src/services/schema-catalog-service';
 import type { EnabledSchemaFamilies } from './src/services/schema-catalog-types';
-import { DEFAULT_ENABLED_SCHEMA_FAMILIES } from './src/services/schema-catalog-types';
+import {
+  DEFAULT_ENABLED_SCHEMA_FAMILIES,
+  DEFAULT_OIDSF_MODAL_LAYERS,
+  mergeOidsfModalLayers,
+  type OIDSFModalLayers,
+} from './src/services/schema-catalog-types';
+import { LEGACY_SCHEMA_NAME_ALIASES } from './src/services/schema-name-aliases';
 
 // ============================================================================
 // INTERFACES & TYPES
@@ -116,6 +135,8 @@ interface VaultAISettings {
   graphWorkspaces: { id: string; name: string }[];
   /** Which schema families appear in entity and connection type pickers. */
   enabledSchemaFamilies: EnabledSchemaFamilies;
+  /** OIDSF layer toggles for bundled FTM-shaped type pickers (world / links / cyber / analysis). */
+  oidsfModalLayers: OIDSFModalLayers;
 }
 
 export interface CustomCheckpoint {
@@ -183,6 +204,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   activeGraphId: 'default',
   graphWorkspaces: [{ id: 'default', name: 'Default' }],
   enabledSchemaFamilies: { ...DEFAULT_ENABLED_SCHEMA_FAMILIES },
+  oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS },
 };
 
 
@@ -210,6 +232,7 @@ export default class VaultAIPlugin extends Plugin {
   skillRegistry!: SkillRegistry;
   vaultLockService!: VaultLockService;
   schemaCatalogService!: SchemaCatalogService;
+  waybackArchiveService!: WaybackArchiveService;
 
   attachVaultSkillFromVault(): void {
     if (this.claudeCodeService && this.vaultPromptLoader) {
@@ -265,6 +288,8 @@ export default class VaultAIPlugin extends Plugin {
 
     // Initialize graph plugin components
     this.entityManager = new EntityManager(this.app, this.settings.entityBasePath, this.vaultLockService);
+    this.waybackArchiveService = new WaybackArchiveService(this.app);
+    this.entityManager.setWaybackArchiveService(this.waybackArchiveService);
     this.schemaCatalogService = new SchemaCatalogService(this.app, () => this.settings.entityBasePath);
     this.entityManager.setSchemaCatalogService(this.schemaCatalogService);
     try {
@@ -581,6 +606,14 @@ export default class VaultAIPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "oidsf-normalize-legacy-schema-names",
+      name: "Normalize legacy OIDSF schema names in entity notes",
+      callback: () => {
+        void this.normalizeLegacyOidsfSchemaNamesInVault();
+      },
+    });
+
+    this.addCommand({
       id: "reload-vault-prompts",
       name: "Reload vault prompts",
       callback: () => {
@@ -666,6 +699,9 @@ export default class VaultAIPlugin extends Plugin {
     }
     merged.enabledSchemaFamilies = mergeEnabledFamilies(
       raw.enabledSchemaFamilies as Partial<EnabledSchemaFamilies> | undefined,
+    );
+    merged.oidsfModalLayers = mergeOidsfModalLayers(
+      raw.oidsfModalLayers as Partial<OIDSFModalLayers> | undefined,
     );
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
@@ -898,6 +934,45 @@ export default class VaultAIPlugin extends Plugin {
 
     // Otherwise, get a new leaf in the main area
     return this.app.workspace.getLeaf('tab');
+  }
+
+  /**
+   * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
+   */
+  async normalizeLegacyOidsfSchemaNamesInVault(): Promise<void> {
+    const base = normalizePath(this.settings.entityBasePath);
+    const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + '/'));
+    let updated = 0;
+    for (const file of files) {
+      let text = await this.app.vault.read(file);
+      const m = /^(---\s*\n)([\s\S]*?)(\n---\s*\n)/.exec(text);
+      if (!m) continue;
+      let front = m[2];
+      let changed = false;
+      for (const [legacy, canon] of Object.entries(LEGACY_SCHEMA_NAME_ALIASES)) {
+        const reType = new RegExp(`^type:\\s*["']?${legacy}["']?\\s*$`, 'm');
+        const reFt = new RegExp(`^ftmSchema:\\s*["']?${legacy}["']?\\s*$`, 'm');
+        if (reType.test(front)) {
+          front = front.replace(reType, `type: ${canon}`);
+          changed = true;
+        }
+        if (reFt.test(front)) {
+          front = front.replace(reFt, `ftmSchema: ${canon}`);
+          changed = true;
+        }
+      }
+      if (changed) {
+        const rest = text.slice(m[0].length);
+        text = m[1] + front + m[3] + rest;
+        await this.app.vault.modify(file, text);
+        updated++;
+      }
+    }
+    await this.entityManager.loadEntitiesFromNotes();
+    if (this.schemaCatalogService) {
+      await this.schemaCatalogService.rebuild();
+    }
+    new Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
   }
 
   /**
@@ -4344,7 +4419,8 @@ Instructions for this skill (local Claude).`;
     this.chatHistory.push({
       role: "assistant",
       content: "📊 Synthesizing analysis from all tool results...",
-      progress: { message: "Generating graph and analysis...", percent: 10 }
+      progress: { message: "Generating graph and analysis...", percent: 10 },
+      savedQuery: originalQuery,
     });
     await this.renderMessages();
 
@@ -4544,6 +4620,17 @@ Instructions for this skill (local Claude).`;
     });
   }
 
+  private buildGraphWriteContextFromSavedQuery(savedQuery: string | undefined): GraphWriteContext {
+    const q = (savedQuery ?? "").trim() || "Graph modification apply";
+    const extracted_urls = q.match(/(https?:\/\/[^\s]+)/g) ?? undefined;
+    return {
+      query: q,
+      extracted_urls: extracted_urls ?? undefined,
+      captured_at: new Date().toISOString(),
+      conversation_id: this.currentConversation?.id,
+    };
+  }
+
   async applyProposedModifications(index: number, selectedIndices: number[]) {
     const item = this.chatHistory[index];
     if (!item.proposedModifications) return;
@@ -4551,7 +4638,8 @@ Instructions for this skill (local Claude).`;
     const cmdsToExecute = item.proposedModifications.filter((_, idx) => selectedIndices.includes(idx));
     if (cmdsToExecute.length === 0) return;
 
-    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute);
+    const graphWriteContext = this.buildGraphWriteContextFromSavedQuery(item.savedQuery);
+    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute, { graphWriteContext });
     item.proposedModifications = undefined; // Clear after applying
     await this.renderMessages();
     await this.saveCurrentConversation();
@@ -4885,7 +4973,8 @@ Instructions for this skill (local Claude).`;
             proposedCommands.push(`@@create_entity ${JSON.stringify({
               type: ent.type,
               properties: ent.properties,
-              label
+              label,
+              sources: ent.sources,
             })}`);
           }
         }
@@ -4908,7 +4997,8 @@ Instructions for this skill (local Claude).`;
               proposedCommands.push(`@@create_link ${JSON.stringify({
                 from: fromLabel,
                 to: toLabel,
-                relationship: conn.relationship
+                relationship: conn.relationship,
+                sources: conn.sources,
               })}`);
             }
           }
@@ -4935,6 +5025,7 @@ Instructions for this skill (local Claude).`;
         `Please review and apply the changes below:`;
 
       this.chatHistory[messageIndex].proposedModifications = proposedCommands;
+      this.chatHistory[messageIndex].savedQuery = inputText;
 
       await this.renderMessages();
       await this.saveCurrentConversation();
@@ -5943,6 +6034,27 @@ class VaultAISettingTab extends PluginSettingTab {
     addFamToggle("stix2", "STIX 2 (vault YAML)");
     addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
     addFamToggle("user", "User YAML (schemas/user)");
+
+    new Setting(containerEl)
+      .setName("OIDSF bundled schema layers (type pickers)")
+      .setDesc(
+        "Filter the bundled ontology (OIDSF) in FTM pickers: World (default entities), Links (relationship/interval types), Cyber (STIX-aligned), Analysis (claims/ACH/etc.). Graph still resolves any type already in the vault.",
+      );
+    const layers = this.plugin.settings.oidsfModalLayers;
+    const addLayerToggle = (key: keyof typeof layers, caption: string) => {
+      new Setting(containerEl)
+        .setName(caption)
+        .addToggle((toggle) =>
+          toggle.setValue(layers[key]).onChange(async (value) => {
+            layers[key] = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+    };
+    addLayerToggle("world", "World (people, orgs, documents, …)");
+    addLayerToggle("links", "Links (relationship / interval types)");
+    addLayerToggle("cyber", "Cyber (STIX / CTI-aligned entities)");
+    addLayerToggle("analysis", "Analysis (claims, ACH, evidence chains, …)");
 
     // Auto-refresh graph view
     new Setting(containerEl)

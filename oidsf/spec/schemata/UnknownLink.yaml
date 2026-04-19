@@ -1,0 +1,35 @@
+UnknownLink:
+  label: Other link
+  plural: Other links
+  extends:
+  - Interest
+  matchable: false
+  featured:
+  - subject
+  - object
+  - role
+  required:
+  - subject
+  - object
+  edge:
+    source: subject
+    label: linked to
+    target: object
+    directed: false
+    caption:
+    - role
+  properties:
+    subject:
+      label: Subject
+      reverse:
+        name: unknownLinkTo
+        label: Linked to
+      type: entity
+      range: Thing
+    object:
+      label: Object
+      reverse:
+        name: unknownLinkFrom
+        label: Linked from
+      type: entity
+      range: Thing

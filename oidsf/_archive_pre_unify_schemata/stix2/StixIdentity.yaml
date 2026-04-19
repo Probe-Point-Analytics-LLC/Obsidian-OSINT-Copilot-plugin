@@ -1,0 +1,24 @@
+StixIdentity:
+  label: "StixIdentity"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `identity` (OASIS CTI).
+  stix_type: identity
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    identity_class:
+      label: Identity class
+      type: string
+    sectors:
+      label: Sectors
+      type: string
+    contact_information:
+      label: Contact information
+      type: text

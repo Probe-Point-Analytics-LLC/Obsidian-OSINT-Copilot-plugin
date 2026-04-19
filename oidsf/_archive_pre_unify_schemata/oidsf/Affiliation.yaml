@@ -1,0 +1,33 @@
+Affiliation:
+  label: Affiliation
+  plural: Affiliations
+  extends:
+    - Interest
+  description: >
+    Generic dyadic link (owner/asset). Use FtM Membership when the situation is strictly
+    member+organization; use Affiliation for broader endpoint pairs (e.g. event to place).
+  matchable: false
+  featured:
+    - owner
+    - asset
+    - role
+  required:
+    - owner
+    - asset
+  edge:
+    source: owner
+    label: affiliated_with
+    target: asset
+    directed: true
+  properties:
+    owner:
+      label: Subject
+      type: entity
+      range: Thing
+    asset:
+      label: Object
+      type: entity
+      range: Thing
+    role:
+      label: Role
+      type: string

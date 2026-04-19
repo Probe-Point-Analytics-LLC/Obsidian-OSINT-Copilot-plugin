@@ -4,12 +4,20 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice } from 'obsidian';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { VaultLockService } from './vault-lock-service';
+import type { WaybackArchiveService } from './wayback-archive-service';
 import {
     Entity, EntityType, Connection, ENTITY_CONFIGS,
     getEntityLabel, generateId, sanitizeFilename, COMMON_PROPERTIES,
-    getFTMEntityConfig, isFTMSchema
+    getFTMEntityConfig, isFTMSchema,
+    type OsintConfidence, type OsintContradiction, type OsintSource, type OsintSourceInput,
 } from '../entities/types';
+import {
+    computeOsintConfidence,
+    finalizeOsintSources,
+    isOsintConfidence,
+} from './osint-confidence-engine';
 import { geocodingService, GeocodingError, GeocodingErrorType } from './geocoding-service';
 import { ftmSchemaService } from './ftm-schema-service';
 import type { SchemaCatalogService } from './schema-catalog-service';
@@ -28,6 +36,7 @@ export class EntityManager {
     private connections: Map<string, Connection> = new Map();
     private vaultLockService: VaultLockService | null = null;
     private schemaCatalog: SchemaCatalogService | null = null;
+    private waybackArchiveService: WaybackArchiveService | null = null;
 
     constructor(app: App, basePath: string = 'OSINTCopilot', vaultLockService?: VaultLockService | null) {
         this.app = app;
@@ -47,6 +56,18 @@ export class EntityManager {
 
     setVaultLockService(service: VaultLockService | null): void {
         this.vaultLockService = service;
+    }
+
+    setWaybackArchiveService(service: WaybackArchiveService | null): void {
+        this.waybackArchiveService = service;
+    }
+
+    private scheduleWaybackForNote(filePath: string): void {
+        try {
+            this.waybackArchiveService?.enqueueFromPath(filePath);
+        } catch (e) {
+            console.warn('[EntityManager] Wayback enqueue failed:', e);
+        }
     }
 
     /** Block vault writes when the path is locked (graph / settings). */
@@ -188,7 +209,10 @@ export class EntityManager {
             const schemaFamily: SchemaFamily | undefined = fmFamily ?? defaultFamily;
 
             const properties: Record<string, unknown> = {};
-            const internalKeys = ['id', 'type', 'label', 'filePath', 'aliases', 'color', 'created', 'schemaFamily', 'ftmSchema'];
+            const internalKeys = [
+                'id', 'type', 'label', 'filePath', 'aliases', 'color', 'created', 'schemaFamily', 'ftmSchema',
+                'osint_sources', 'osint_confidence', 'osint_contradictions',
+            ];
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!internalKeys.includes(key) && value !== undefined && value !== null) {
                     properties[key] = value;
@@ -226,6 +250,16 @@ export class EntityManager {
                 }
             }
 
+            const osint_sources = Array.isArray(frontmatter.osint_sources)
+                ? (frontmatter.osint_sources as OsintSource[])
+                : undefined;
+            const osint_confidence = isOsintConfidence(frontmatter.osint_confidence)
+                ? frontmatter.osint_confidence
+                : undefined;
+            const osint_contradictions = Array.isArray(frontmatter.osint_contradictions)
+                ? (frontmatter.osint_contradictions as OsintContradiction[])
+                : undefined;
+
             const entity: Entity = {
                 id: frontmatter.id as string,
                 type,
@@ -234,6 +268,9 @@ export class EntityManager {
                 filePath: file.path,
                 ftmSchema,
                 schemaFamily,
+                ...(osint_sources?.length ? { osint_sources } : {}),
+                ...(osint_confidence ? { osint_confidence } : {}),
+                ...(osint_contradictions?.length ? { osint_contradictions } : {}),
             };
             return entity;
         } catch (error) {
@@ -266,39 +303,91 @@ export class EntityManager {
     }
 
     /**
-     * Parse YAML frontmatter from note content.
+     * Parse YAML frontmatter from note content (nested arrays/objects supported).
      */
     private parseFrontmatter(content: string): Record<string, unknown> | null {
         const match = content.match(/^---\n([\s\S]*?)\n---/);
         if (!match) return null;
 
-        const yaml = match[1];
-        const result: Record<string, unknown> = {};
+        const yamlText = match[1];
+        try {
+            const doc = parseYaml(yamlText);
+            if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
+                return doc as Record<string, unknown>;
+            }
+        } catch (e) {
+            console.warn('[EntityManager] YAML parse failed, using line fallback:', e);
+        }
 
-        // Simple YAML parser for frontmatter
-        const lines = yaml.split('\n');
+        const result: Record<string, unknown> = {};
+        const lines = yamlText.split('\n');
         for (const line of lines) {
             const colonIndex = line.indexOf(':');
             if (colonIndex > 0) {
                 const key = line.substring(0, colonIndex).trim();
                 let value = line.substring(colonIndex + 1).trim();
 
-                // Handle quoted strings
                 if ((value.startsWith('"') && value.endsWith('"')) ||
                     (value.startsWith("'") && value.endsWith("'"))) {
                     value = value.slice(1, -1);
                 }
 
-                // Handle booleans
                 if (value === 'true') result[key] = true;
                 else if (value === 'false') result[key] = false;
-                // Handle numbers
                 else if (!isNaN(Number(value)) && value !== '') result[key] = Number(value);
                 else result[key] = value;
             }
         }
 
         return result;
+    }
+
+    /** Append osint_* keys as YAML (supports nested arrays). */
+    private appendOsintFrontmatter(lines: string[], target: Entity | Connection): void {
+        const chunk: Record<string, unknown> = {};
+        if (target.osint_confidence) chunk.osint_confidence = target.osint_confidence;
+        if (target.osint_sources?.length) chunk.osint_sources = target.osint_sources;
+        if (target.osint_contradictions?.length) chunk.osint_contradictions = target.osint_contradictions;
+        if (Object.keys(chunk).length === 0) return;
+        lines.push(stringifyYaml(chunk).trim());
+    }
+
+    private mergeOsintOntoEntity(
+        entity: Entity,
+        options?: {
+            osint_sources?: OsintSource[] | OsintSourceInput[];
+            osint_captured_at?: string;
+            conversation_id?: string;
+        },
+    ): void {
+        if (!options?.osint_sources?.length) return;
+        const sources = finalizeOsintSources(options.osint_sources as OsintSourceInput[], {
+            captured_at: options.osint_captured_at ?? new Date().toISOString(),
+            conversation_id: options.conversation_id,
+        });
+        entity.osint_sources = sources;
+        const o = computeOsintConfidence(entity, sources);
+        entity.osint_confidence = o.osint_confidence;
+        entity.osint_contradictions = o.osint_contradictions;
+    }
+
+    private mergeOsintOntoConnection(
+        connection: Connection,
+        options?: {
+            osint_sources?: OsintSource[] | OsintSourceInput[];
+            osint_captured_at?: string;
+            conversation_id?: string;
+        },
+    ): void {
+        if (!options?.osint_sources?.length) return;
+        const sources = finalizeOsintSources(options.osint_sources as OsintSourceInput[], {
+            captured_at: options.osint_captured_at ?? new Date().toISOString(),
+            conversation_id: options.conversation_id,
+        });
+        connection.osint_sources = sources;
+        const o = computeOsintConfidence(connection, sources);
+        connection.osint_confidence = o.osint_confidence;
+        connection.osint_contradictions = o.osint_contradictions;
     }
 
     /**
@@ -335,7 +424,8 @@ export class EntityManager {
             // Extract connection properties from frontmatter
             const properties: Record<string, unknown> = {};
             const excludedKeys = ['id', 'type', 'relationship', 'fromEntityId', 'toEntityId',
-                'fromEntity', 'toEntity', 'ftmSchema', 'label', 'schemaFamily'];
+                'fromEntity', 'toEntity', 'ftmSchema', 'label', 'schemaFamily',
+                'osint_sources', 'osint_confidence', 'osint_contradictions'];
 
             for (const [key, value] of Object.entries(frontmatter)) {
                 if (!excludedKeys.includes(key) && value !== undefined && value !== null) {
@@ -347,6 +437,16 @@ export class EntityManager {
             const schemaFamily = (frontmatter.schemaFamily as SchemaFamily | undefined)
                 ?? (ftmSchema ? 'ftm' : 'ftm');
 
+            const osint_sources = Array.isArray(frontmatter.osint_sources)
+                ? (frontmatter.osint_sources as OsintSource[])
+                : undefined;
+            const osint_confidence = isOsintConfidence(frontmatter.osint_confidence)
+                ? frontmatter.osint_confidence
+                : undefined;
+            const osint_contradictions = Array.isArray(frontmatter.osint_contradictions)
+                ? (frontmatter.osint_contradictions as OsintContradiction[])
+                : undefined;
+
             return {
                 id: frontmatter.id as string,
                 fromEntityId: frontmatter.fromEntityId as string,
@@ -356,7 +456,10 @@ export class EntityManager {
                 properties: Object.keys(properties).length > 0 ? properties : undefined,
                 ftmSchema,
                 schemaFamily,
-                filePath: file.path
+                filePath: file.path,
+                ...(osint_sources?.length ? { osint_sources } : {}),
+                ...(osint_confidence ? { osint_confidence } : {}),
+                ...(osint_contradictions?.length ? { osint_contradictions } : {}),
             };
         } catch (error) {
             console.error(`Error parsing connection from ${file.path}:`, error);
@@ -458,7 +561,13 @@ export class EntityManager {
     async createEntity(
         type: EntityType,
         properties: Record<string, unknown>,
-        options?: { skipAutoGeocode?: boolean, manualLabel?: string }
+        options?: {
+            skipAutoGeocode?: boolean;
+            manualLabel?: string;
+            osint_sources?: OsintSource[] | OsintSourceInput[];
+            osint_captured_at?: string;
+            conversation_id?: string;
+        },
     ): Promise<Entity> {
         const id = generateId();
 
@@ -474,8 +583,10 @@ export class EntityManager {
             id,
             type,
             label,
-            properties
+            properties,
         };
+
+        this.mergeOsintOntoEntity(entity, options);
 
         // Create the note
         const filePath = await this.saveEntityAsNote(entity);
@@ -496,7 +607,13 @@ export class EntityManager {
     async createFTMEntity(
         schemaName: string,
         properties: Record<string, unknown>,
-        options?: { skipAutoGeocode?: boolean, manualLabel?: string }
+        options?: {
+            skipAutoGeocode?: boolean;
+            manualLabel?: string;
+            osint_sources?: OsintSource[] | OsintSourceInput[];
+            osint_captured_at?: string;
+            conversation_id?: string;
+        },
     ): Promise<Entity> {
         const id = generateId();
         const config = getFTMEntityConfig(schemaName);
@@ -522,6 +639,8 @@ export class EntityManager {
             ftmSchema: schemaName,  // Store FTM schema name
             schemaFamily: 'ftm',
         };
+
+        this.mergeOsintOntoEntity(entity, options);
 
         // Create the note using FTM-aware save
         const filePath = await this.saveFTMEntityAsNote(entity, schemaName);
@@ -665,6 +784,7 @@ ${(entity.properties.notes as string) || ''}
             await this.app.vault.create(filePath, content);
         }
 
+        this.scheduleWaybackForNote(filePath);
         return filePath;
     }
 
@@ -705,6 +825,7 @@ ${(entity.properties.notes as string) || ''}
             await this.app.vault.create(filePath, content);
         }
 
+        this.scheduleWaybackForNote(filePath);
         return filePath;
     }
 
@@ -728,6 +849,7 @@ ${(entity.properties.notes as string) || ''}
             }
         }
 
+        this.appendOsintFrontmatter(lines, entity);
         return lines.join('\n');
     }
 
@@ -777,6 +899,7 @@ ${(entity.properties.notes as string) || ''}
             }
         }
 
+        this.appendOsintFrontmatter(lines, entity);
         return lines.join('\n');
     }
 
@@ -1023,6 +1146,7 @@ ${(entity.properties.notes as string) || ''}
             await this.app.vault.create(filePath, content);
         }
 
+        this.scheduleWaybackForNote(filePath);
         return filePath;
     }
 
@@ -1068,6 +1192,7 @@ ${(entity.properties.notes as string) || ''}
             }
         }
 
+        this.appendOsintFrontmatter(lines, entity);
         return lines.join('\n');
     }
 
@@ -1371,7 +1496,12 @@ ${(entity.properties.notes as string) || ''}
         toEntityId: string,
         relationship: string,
         properties?: Record<string, unknown>,
-        options?: { schemaFamily?: SchemaFamily }
+        options?: {
+            schemaFamily?: SchemaFamily;
+            osint_sources?: OsintSource[] | OsintSourceInput[];
+            osint_captured_at?: string;
+            conversation_id?: string;
+        },
     ): Promise<Connection | null> {
         const fromEntity = this.entities.get(fromEntityId);
         const toEntity = this.entities.get(toEntityId);
@@ -1399,6 +1529,8 @@ ${(entity.properties.notes as string) || ''}
             ftmSchema: isFtmFamily ? relationship : undefined,
             schemaFamily: family,
         };
+
+        this.mergeOsintOntoConnection(connection, options);
 
         // Create the connection note file
         const filePath = await this.saveConnectionAsNote(connection, fromEntity, toEntity);
@@ -1658,6 +1790,7 @@ ${this.buildConnectionPropertiesSection(connection)}
             await this.app.vault.create(filePath, content);
         }
 
+        this.scheduleWaybackForNote(filePath);
         return filePath;
     }
 
@@ -1704,6 +1837,7 @@ ${this.buildConnectionPropertiesSection(connection)}
             }
         }
 
+        this.appendOsintFrontmatter(lines, connection);
         return lines.join('\n');
     }
 

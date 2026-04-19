@@ -1,0 +1,61 @@
+Interval:
+  label: Interval
+  description: 'An object which is bounded in time.
+
+    '
+  matchable: false
+  abstract: true
+  temporalExtent:
+    start:
+    - startDate
+    - date
+    end:
+    - endDate
+  properties:
+    startDate:
+      label: Start date
+      type: date
+    endDate:
+      label: End date
+      type: date
+    date:
+      label: Date
+      type: date
+    summary:
+      label: Summary
+      type: text
+    description:
+      label: Description
+      type: text
+    recordId:
+      label: Record ID
+    sourceUrl:
+      label: Source link
+      type: url
+      matchable: false
+    publisher:
+      label: Publishing source
+    publisherUrl:
+      label: Publishing source URL
+      type: url
+      matchable: false
+    alephUrl:
+      label: Aleph URL
+      type: url
+      hidden: true
+      matchable: false
+    namesMentioned:
+      label: Detected names
+      hidden: true
+      type: name
+    indexText:
+      label: Index text
+      hidden: true
+      type: text
+    modifiedAt:
+      label: Modified on
+      type: date
+    retrievedAt:
+      label: Retrieved on
+      type: date
+      matchable: false

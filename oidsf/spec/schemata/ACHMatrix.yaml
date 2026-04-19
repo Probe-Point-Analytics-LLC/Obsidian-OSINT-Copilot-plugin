@@ -1,0 +1,33 @@
+ACHMatrix:
+  extends:
+  - AnalyticObject
+  label: ACH matrix
+  description: Analysis of Competing Hypotheses matrix container.
+  properties:
+    title:
+      label: Title
+      type: string
+    description:
+      label: Description
+      type: text
+    status:
+      label: Status
+      type: string
+    project_id:
+      label: Project id
+      type: identifier
+    created_by:
+      label: Created by
+      type: string
+    tags:
+      label: Tags
+      type: string
+    linked_document_ids:
+      label: Linked document ids
+      type: string
+    created_at:
+      label: Created at
+      type: date
+    updated_at:
+      label: Updated at
+      type: date

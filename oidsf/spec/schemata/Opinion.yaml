@@ -1,0 +1,22 @@
+Opinion:
+  label: Opinion
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `opinion` (OASIS CTI).
+
+    '
+  stix_type: opinion
+  matchable: false
+  properties:
+    explanation:
+      label: Explanation
+      type: text
+    authors:
+      label: Authors
+      type: string
+    object_refs:
+      label: Object refs
+      type: string
+    opinion:
+      label: Opinion
+      type: string

@@ -4,7 +4,15 @@
  */
 
 import { App, ItemView, WorkspaceLeaf, Notice, TFile, normalizePath } from 'obsidian';
-import { Entity, Connection, ENTITY_CONFIGS, EntityType, getEntityIcon } from '../entities/types';
+import {
+    Entity,
+    Connection,
+    ENTITY_CONFIGS,
+    EntityType,
+    getEntityIcon,
+    OSINT_CONFIDENCE_LEVELS,
+    type OsintConfidence,
+} from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { ConfirmModal } from '../modals/confirm-modal';
@@ -140,6 +148,9 @@ export class GraphView extends ItemView {
     private graphHost: OSINTCopilotGraphHost;
     private graphSelectEl: HTMLSelectElement | null = null;
 
+    /** Which provenance confidence levels are visible (multi-select). */
+    private confidenceFilter: Set<OsintConfidence> = new Set(OSINT_CONFIDENCE_LEVELS);
+
     // Geocoding service for location entities
     private geocodingService: GeocodingService;
 
@@ -169,6 +180,21 @@ export class GraphView extends ItemView {
 
     private getNodeVisual(entity: Entity): { color: string; icon: string } {
         return this.graphHost.getGraphEntityVisual(entity);
+    }
+
+    private entityOsintConfidenceValue(entity: Entity): OsintConfidence {
+        return (entity.osint_confidence ?? 'unverified') as OsintConfidence;
+    }
+
+    private entityOsintNodeClasses(entity: Entity, hasCoordinates: boolean): string {
+        const parts: string[] = [`osint-${this.entityOsintConfidenceValue(entity)}`];
+        if (hasCoordinates) parts.push('has-coordinates');
+        return parts.join(' ');
+    }
+
+    private entityPassesConfidenceFilter(entity: Entity): boolean {
+        if (this.confidenceFilter.size === 0) return false;
+        return this.confidenceFilter.has(this.entityOsintConfidenceValue(entity));
     }
 
     /**
@@ -506,6 +532,7 @@ export class GraphView extends ItemView {
 
     private addEntityToGraphAtPosition(entity: Entity, position: { x: number; y: number }): void {
         if (!this.cy) return;
+        if (!this.entityPassesConfidenceFilter(entity)) return;
 
         const existingNode = this.cy.getElementById(entity.id);
         if (existingNode.length > 0) return;
@@ -514,6 +541,10 @@ export class GraphView extends ItemView {
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
         const thumbUrl = this.resolveThumbUrl(entity);
+        const hasCoordinates =
+            entity.type === EntityType.Location &&
+            !!entity.properties.latitude &&
+            !!entity.properties.longitude;
 
         this.cy.add({
             data: {
@@ -523,9 +554,11 @@ export class GraphView extends ItemView {
                 type: entity.type,
                 color: visual.color,
                 icon: visual.icon,
-                thumbUrl: thumbUrl || undefined
+                thumbUrl: thumbUrl || undefined,
+                osintConfidence: this.entityOsintConfidenceValue(entity),
             },
-            position: position
+            classes: this.entityOsintNodeClasses(entity, hasCoordinates),
+            position: position,
         });
 
         this.nodePositionsCache.set(entity.id, position);
@@ -682,6 +715,33 @@ export class GraphView extends ItemView {
                 true,
             ).open();
         };
+
+        const confRow = toolbar.createDiv({ cls: 'graph_copilot-confidence-filter' });
+        confRow.setCssProps({
+            display: 'flex',
+            gap: '6px',
+            'align-items': 'center',
+            'flex-wrap': 'wrap',
+            'max-width': '420px',
+        });
+        confRow.createSpan({ text: 'Confidence:', cls: 'graph_copilot-graph-label' });
+        for (const level of OSINT_CONFIDENCE_LEVELS) {
+            const wrap = confRow.createDiv();
+            wrap.setCssProps({ display: 'flex', 'align-items': 'center', gap: '3px' });
+            const id = `graph-osint-conf-${level}`;
+            const cb = wrap.createEl('input', { type: 'checkbox', attr: { id } });
+            (cb as HTMLInputElement).checked = true;
+            (cb as HTMLInputElement).onchange = () => {
+                if ((cb as HTMLInputElement).checked) {
+                    this.confidenceFilter.add(level);
+                } else {
+                    this.confidenceFilter.delete(level);
+                }
+                void this.refresh();
+            };
+            const lab = wrap.createEl('label', { text: level, attr: { for: id } });
+            lab.setCssProps({ 'font-size': '10px', cursor: 'pointer' });
+        }
 
         // Separator
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
@@ -2310,6 +2370,16 @@ export class GraphView extends ItemView {
             const type = ele.data('type');
             titleDiv.innerText = label;
             typeDiv.innerText = type;
+            const oc = ele.data('osintConfidence');
+            if (oc) {
+                const confDiv = tooltip.createDiv();
+                confDiv.setCssProps({
+                    'font-size': '10px',
+                    'margin-top': '4px',
+                    color: 'var(--text-accent)',
+                });
+                confDiv.innerText = `Confidence: ${oc}`;
+            }
         } else {
             // Edge
             const label = ele.data('label');
@@ -2498,6 +2568,38 @@ export class GraphView extends ItemView {
                 }
             },
             {
+                selector: 'node.osint-conflicted',
+                style: {
+                    'border-width': 5,
+                    'border-color': '#ff44dd',
+                    'border-style': 'double'
+                }
+            },
+            {
+                selector: 'node.osint-high',
+                style: {
+                    'border-color': '#5dff7a'
+                }
+            },
+            {
+                selector: 'node.osint-medium',
+                style: {
+                    'border-color': '#ffd45c'
+                }
+            },
+            {
+                selector: 'node.osint-low',
+                style: {
+                    'border-color': '#9ecbff'
+                }
+            },
+            {
+                selector: 'node.osint-unverified',
+                style: {
+                    'border-color': '#aaaaaa'
+                }
+            },
+            {
                 selector: 'edge',
                 style: {
                     'width': 2,
@@ -2560,7 +2662,9 @@ export class GraphView extends ItemView {
         }
 
         const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
-        const entities = this.getEntitiesForActiveWorkspace(allEntities);
+        const entities = this.getEntitiesForActiveWorkspace(allEntities).filter((e) =>
+            this.entityPassesConfidenceFilter(e),
+        );
         const isDefaultWorkspace = this.graphHost.getActiveGraphId() === 'default';
 
         // Clear existing elements
@@ -2575,6 +2679,7 @@ export class GraphView extends ItemView {
             const entityLabel = entity.label != null ? String(entity.label) : '';
             const thumbUrl = this.resolveThumbUrl(entity);
             const visual = this.getNodeVisual(entity);
+            const oc = this.entityOsintConfidenceValue(entity);
 
             return {
                 data: {
@@ -2585,10 +2690,11 @@ export class GraphView extends ItemView {
                     color: visual.color,
                     icon: visual.icon,
                     hasCoordinates: hasCoordinates,
-                    thumbUrl: thumbUrl || undefined
+                    thumbUrl: thumbUrl || undefined,
+                    osintConfidence: oc,
                 },
                 position: this.getNodePosition(index, Math.max(entities.length, 1)),
-                classes: hasCoordinates ? 'has-coordinates' : ''
+                classes: this.entityOsintNodeClasses(entity, !!hasCoordinates),
             };
         });
 
@@ -2671,7 +2777,9 @@ export class GraphView extends ItemView {
         }
 
         const { entities: allEntities, connections: allConnections } = this.entityManager.getGraphData();
-        const entities = this.getEntitiesForActiveWorkspace(allEntities);
+        const entities = this.getEntitiesForActiveWorkspace(allEntities).filter((e) =>
+            this.entityPassesConfidenceFilter(e),
+        );
         const isDefaultWorkspace = this.graphHost.getActiveGraphId() === 'default';
         console.debug(`[GraphView] Found ${entities.length} workspace entities (${allEntities.length} in vault) and ${allConnections.length} connections`);
 
@@ -2691,6 +2799,7 @@ export class GraphView extends ItemView {
             const entityLabel = entity.label != null ? String(entity.label) : '';
             const thumbUrl = this.resolveThumbUrl(entity);
             const visual = this.getNodeVisual(entity);
+            const oc = this.entityOsintConfidenceValue(entity);
 
             const savedPos = this.nodePositionsCache.get(entity.id);
             let position: { x: number; y: number };
@@ -2712,10 +2821,11 @@ export class GraphView extends ItemView {
                     color: visual.color,
                     icon: visual.icon,
                     hasCoordinates: hasCoordinates,
-                    thumbUrl: thumbUrl || undefined
+                    thumbUrl: thumbUrl || undefined,
+                    osintConfidence: oc,
                 },
                 position: position,
-                classes: hasCoordinates ? 'has-coordinates' : ''
+                classes: this.entityOsintNodeClasses(entity, !!hasCoordinates),
             };
         });
 
@@ -3063,6 +3173,7 @@ export class GraphView extends ItemView {
      */
     addEntity(entity: Entity): void {
         if (!this.cy) return;
+        if (!this.entityPassesConfidenceFilter(entity)) return;
 
         const existingNode = this.cy.getElementById(entity.id);
         if (existingNode.length > 0) return;
@@ -3070,6 +3181,10 @@ export class GraphView extends ItemView {
         // Ensure label is a string
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const visual = this.getNodeVisual(entity);
+        const hasCoordinates =
+            entity.type === EntityType.Location &&
+            !!entity.properties.latitude &&
+            !!entity.properties.longitude;
 
         const pos = { x: 400, y: 300 };
         this.cy.add({
@@ -3079,9 +3194,11 @@ export class GraphView extends ItemView {
                 fullLabel: entityLabel,
                 type: entity.type,
                 color: visual.color,
-                icon: visual.icon
+                icon: visual.icon,
+                osintConfidence: this.entityOsintConfidenceValue(entity),
             },
-            position: pos
+            classes: this.entityOsintNodeClasses(entity, hasCoordinates),
+            position: pos,
         });
 
         this.nodePositionsCache.set(entity.id, pos);
@@ -3440,6 +3557,7 @@ export class GraphView extends ItemView {
      */
     private addEntityToGraphPreserveLayout(entity: Entity): void {
         if (!this.cy) return;
+        if (!this.entityPassesConfidenceFilter(entity)) return;
 
         const existingNode = this.cy.getElementById(entity.id);
         if (existingNode.length > 0) return;
@@ -3448,6 +3566,10 @@ export class GraphView extends ItemView {
         const entityLabel = entity.label != null ? String(entity.label) : '';
         const label = this.truncateLabel(entityLabel, 15);
         const thumbUrl = this.resolveThumbUrl(entity);
+        const hasCoordinates =
+            entity.type === EntityType.Location &&
+            !!entity.properties.latitude &&
+            !!entity.properties.longitude;
 
         const cachedPos = this.nodePositionsCache.get(entity.id);
         const position = cachedPos || {
@@ -3463,9 +3585,11 @@ export class GraphView extends ItemView {
                 type: entity.type,
                 color: visual.color,
                 icon: visual.icon,
-                thumbUrl: thumbUrl || undefined
+                thumbUrl: thumbUrl || undefined,
+                osintConfidence: this.entityOsintConfidenceValue(entity),
             },
-            position: position
+            classes: this.entityOsintNodeClasses(entity, hasCoordinates),
+            position: position,
         });
 
         this.nodePositionsCache.set(entity.id, position);
@@ -3490,6 +3614,15 @@ export class GraphView extends ItemView {
         node.data('type', entity.type);
         node.data('color', visual.color);
         node.data('icon', visual.icon);
+        node.data('osintConfidence', this.entityOsintConfidenceValue(entity));
+
+        const hasCoordinates =
+            entity.type === EntityType.Location &&
+            !!entity.properties.latitude &&
+            !!entity.properties.longitude;
+        node.removeClass('osint-unverified osint-low osint-medium osint-high osint-conflicted');
+        node.removeClass('has-coordinates');
+        node.addClass(this.entityOsintNodeClasses(entity, hasCoordinates));
     }
 
     /**

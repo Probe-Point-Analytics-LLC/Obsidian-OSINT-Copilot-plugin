@@ -1,0 +1,18 @@
+ArkhamAnomaly:
+  extends:
+    - ArkhamObject
+  label: Anomaly
+  description: Detected anomaly flag (Arkham anomalies shard).
+  properties:
+    anomaly_type:
+      label: Anomaly type
+      type: string
+    severity:
+      label: Severity
+      type: string
+    subject_ref:
+      label: Subject ref
+      type: identifier
+    details:
+      label: Details (JSON)
+      type: text

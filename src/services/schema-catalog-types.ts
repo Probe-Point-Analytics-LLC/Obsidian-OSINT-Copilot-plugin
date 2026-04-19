@@ -42,3 +42,27 @@ export const DEFAULT_ENABLED_SCHEMA_FAMILIES: EnabledSchemaFamilies = {
 	mitre: true,
 	user: true,
 };
+
+/**
+ * Layer toggles for OIDSF-derived bundled schemata in entity/connection type pickers.
+ * Full graph resolution still uses every schema; this only filters modal lists.
+ */
+export interface OIDSFModalLayers {
+	world: boolean;
+	links: boolean;
+	cyber: boolean;
+	analysis: boolean;
+}
+
+export const DEFAULT_OIDSF_MODAL_LAYERS: OIDSFModalLayers = {
+	world: true,
+	links: true,
+	cyber: false,
+	analysis: false,
+};
+
+export function mergeOidsfModalLayers(
+	partial?: Partial<OIDSFModalLayers>,
+): OIDSFModalLayers {
+	return { ...DEFAULT_OIDSF_MODAL_LAYERS, ...partial };
+}

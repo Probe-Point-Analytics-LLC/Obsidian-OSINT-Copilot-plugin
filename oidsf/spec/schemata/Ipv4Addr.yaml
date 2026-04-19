@@ -1,0 +1,19 @@
+Ipv4Addr:
+  label: Ipv4Addr
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `ipv4-addr` (OASIS CTI).
+
+    '
+  stix_type: ipv4-addr
+  matchable: false
+  properties:
+    value:
+      label: IPv4
+      type: string
+    resolves_to_refs:
+      label: Resolves to refs
+      type: string
+    belongs_to_refs:
+      label: Belongs to refs
+      type: string

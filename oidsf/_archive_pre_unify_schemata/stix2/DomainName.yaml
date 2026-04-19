@@ -1,0 +1,15 @@
+DomainName:
+  label: "DomainName"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `domain-name` (OASIS CTI).
+  stix_type: domain-name
+  matchable: false
+  properties:
+    value:
+      label: Domain value
+      type: string
+    resolves_to_refs:
+      label: Resolves to refs
+      type: string

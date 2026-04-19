@@ -1,0 +1,12 @@
+MacAddr:
+  label: "MacAddr"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `mac-addr` (OASIS CTI).
+  stix_type: mac-addr
+  matchable: false
+  properties:
+    value:
+      label: MAC
+      type: string

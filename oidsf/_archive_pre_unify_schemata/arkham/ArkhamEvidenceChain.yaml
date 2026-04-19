@@ -1,0 +1,48 @@
+ArkhamEvidenceChain:
+  extends:
+    - ArkhamObject
+  label: Evidence chain
+  description: Provenance chain for artifacts (Arkham provenance shard).
+  properties:
+    title:
+      label: Title
+      type: string
+    description:
+      label: Description
+      type: text
+    status:
+      label: Status
+      type: string
+    project_id:
+      label: Project id
+      type: identifier
+    created_by:
+      label: Created by
+      type: string
+    link_count:
+      label: Link count
+      type: string
+    artifact_count:
+      label: Artifact count
+      type: string
+    tags:
+      label: Tags
+      type: string
+    verified:
+      label: Verified
+      type: string
+    verified_by:
+      label: Verified by
+      type: string
+    verified_at:
+      label: Verified at
+      type: date
+    verification_notes:
+      label: Verification notes
+      type: text
+    created_at:
+      label: Created at
+      type: date
+    updated_at:
+      label: Updated at
+      type: date

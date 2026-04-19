@@ -1,0 +1,21 @@
+WindowsRegistryKey:
+  label: "WindowsRegistryKey"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `windows-registry-key` (OASIS CTI).
+  stix_type: windows-registry-key
+  matchable: false
+  properties:
+    key:
+      label: Key
+      type: string
+    values:
+      label: Values (JSON)
+      type: text
+    modified_time:
+      label: Modified time
+      type: date
+    number_of_subkeys:
+      label: Number of subkeys
+      type: string

@@ -1,0 +1,52 @@
+StixObject:
+  label: STIX 2 object (abstract)
+  plural: STIX 2 objects
+  description: >
+    Abstract root for STIX 2.1 objects represented in OIDSF Entity streams.
+    Interchange uses string properties; embed full STIX JSON in extensions or parallel STIX bundle.
+  abstract: true
+  matchable: false
+  stix_family: cti
+  properties:
+    id:
+      label: STIX id
+      type: identifier
+    type:
+      label: STIX type
+      type: string
+    spec_version:
+      label: STIX spec version
+      type: string
+    created:
+      label: Created
+      type: date
+    modified:
+      label: Modified
+      type: date
+    created_by_ref:
+      label: Created by (STIX id)
+      type: identifier
+    revoked:
+      label: Revoked
+      type: string
+    labels:
+      label: Labels
+      type: string
+    confidence:
+      label: Confidence
+      type: string
+    lang:
+      label: Language
+      type: string
+    external_references:
+      label: External references (JSON)
+      type: text
+    object_marking_refs:
+      label: Object marking refs
+      type: string
+    granular_markings:
+      label: Granular markings (JSON)
+      type: text
+    extensions:
+      label: Extensions (JSON)
+      type: text

@@ -1,0 +1,21 @@
+ArkhamGraphEdge:
+  extends:
+    - ArkhamObject
+  label: Graph edge
+  description: Investigation graph edge.
+  properties:
+    source_id:
+      label: Source node id
+      type: identifier
+    target_id:
+      label: Target node id
+      type: identifier
+    edge_type:
+      label: Edge type
+      type: string
+    label:
+      label: Label
+      type: string
+    weight:
+      label: Weight
+      type: string

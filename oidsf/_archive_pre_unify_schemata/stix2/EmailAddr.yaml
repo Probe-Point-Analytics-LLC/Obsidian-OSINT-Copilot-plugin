@@ -1,0 +1,18 @@
+EmailAddr:
+  label: "EmailAddr"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `email-addr` (OASIS CTI).
+  stix_type: email-addr
+  matchable: false
+  properties:
+    value:
+      label: Email
+      type: email
+    display_name:
+      label: Display name
+      type: string
+    belongs_to_ref:
+      label: Belongs to ref
+      type: identifier

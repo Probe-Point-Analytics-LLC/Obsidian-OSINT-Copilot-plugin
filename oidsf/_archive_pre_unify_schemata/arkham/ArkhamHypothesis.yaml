@@ -1,0 +1,33 @@
+ArkhamHypothesis:
+  extends:
+    - ArkhamObject
+  label: ACH hypothesis
+  description: Hypothesis column in an ACH matrix.
+  properties:
+    matrix_id:
+      label: Matrix id
+      type: identifier
+    title:
+      label: Title
+      type: string
+    description:
+      label: Description
+      type: text
+    column_index:
+      label: Column index
+      type: string
+    author:
+      label: Author
+      type: string
+    is_lead:
+      label: Is lead
+      type: string
+    notes:
+      label: Notes
+      type: text
+    created_at:
+      label: Created at
+      type: date
+    updated_at:
+      label: Updated at
+      type: date

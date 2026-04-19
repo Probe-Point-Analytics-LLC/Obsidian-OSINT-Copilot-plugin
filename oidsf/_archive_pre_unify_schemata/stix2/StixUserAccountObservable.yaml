@@ -1,0 +1,48 @@
+StixUserAccountObservable:
+  label: "StixUserAccountObservable"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `user-account` (OASIS CTI).
+  stix_type: user-account
+  matchable: false
+  properties:
+    user_id:
+      label: User id
+      type: string
+    credential:
+      label: Credential
+      type: string
+    account_login:
+      label: Account login
+      type: string
+    account_type:
+      label: Account type
+      type: string
+    display_name:
+      label: Display name
+      type: string
+    is_service_account:
+      label: Is service account
+      type: string
+    is_privileged:
+      label: Is privileged
+      type: string
+    can_escalate_privs:
+      label: Can escalate privs
+      type: string
+    is_disabled:
+      label: Is disabled
+      type: string
+    created:
+      label: Created
+      type: date
+    expires:
+      label: Expires
+      type: date
+    account_first_login:
+      label: Account first login
+      type: date
+    account_last_login:
+      label: Account last login
+      type: date

@@ -1,0 +1,26 @@
+AnalysisNote:
+  label: STIX 2 Note
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO `note` (OASIS CTI). Renamed from `Note` to avoid collision
+    with FtM `Note`.
+
+    '
+  stix_type: note
+  matchable: false
+  properties:
+    summary:
+      label: Summary
+      type: text
+    description:
+      label: Description
+      type: text
+    content:
+      label: Content
+      type: text
+    authors:
+      label: Authors
+      type: string
+    object_refs:
+      label: Object refs
+      type: string

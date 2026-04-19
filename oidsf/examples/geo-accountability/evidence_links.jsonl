@@ -1,0 +1,2 @@
+{"oidsf_version": "1.0.0", "id": "ev_pdf_to_event", "from_ref": {"kind": "artifact", "id": "art_pdf_permit"}, "to_ref": {"kind": "entity", "id": "ent_evt_rally"}, "relationship": "supports", "strength": "moderate", "notes": "Permit text references date/time window for the gathering."}
+{"oidsf_version": "1.0.0", "id": "ev_photo_to_loc", "from_ref": {"kind": "artifact", "id": "art_photo_original"}, "to_ref": {"kind": "entity", "id": "ent_loc_plaza"}, "relationship": "related", "strength": "weak", "notes": "Visual context only; illustrative linkage."}

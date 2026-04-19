@@ -1,0 +1,30 @@
+ArkhamTimelineEvent:
+  extends:
+    - ArkhamObject
+  label: Timeline event
+  description: Normalized timeline event (Arkham timeline shard).
+  properties:
+    title:
+      label: Title
+      type: string
+    description:
+      label: Description
+      type: text
+    event_type:
+      label: Event type
+      type: string
+    start:
+      label: Start
+      type: date
+    end:
+      label: End
+      type: date
+    confidence:
+      label: Confidence
+      type: string
+    source_refs:
+      label: Source refs
+      type: string
+    entity_ids:
+      label: Entity ids
+      type: string

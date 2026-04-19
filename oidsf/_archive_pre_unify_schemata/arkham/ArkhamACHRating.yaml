@@ -1,0 +1,33 @@
+ArkhamACHRating:
+  extends:
+    - ArkhamObject
+  label: ACH rating cell
+  description: Evidence vs hypothesis consistency rating.
+  properties:
+    matrix_id:
+      label: Matrix id
+      type: identifier
+    evidence_id:
+      label: Evidence id
+      type: identifier
+    hypothesis_id:
+      label: Hypothesis id
+      type: identifier
+    rating:
+      label: Rating (++ / + / N / - / -- / N/A)
+      type: string
+    reasoning:
+      label: Reasoning
+      type: text
+    confidence:
+      label: Confidence
+      type: string
+    author:
+      label: Author
+      type: string
+    created_at:
+      label: Created at
+      type: date
+    updated_at:
+      label: Updated at
+      type: date

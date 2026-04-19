@@ -1,7 +1,16 @@
 import VaultAIPlugin from "../../main";
 import { App, Notice, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
-import { AIOperation, EntityType, getEntityLabel, ProcessTextResponse } from '../entities/types';
+import {
+    AIOperation,
+    EntityType,
+    getEntityLabel,
+    isFTMSchema,
+    ProcessTextResponse,
+    type GraphWriteContext,
+    type OsintSourceInput,
+} from '../entities/types';
+import { buildInferredOsintSources } from './osint-confidence-engine';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
 import {
@@ -52,6 +61,12 @@ export interface ProcessRequestOptions {
     abortSignal?: AbortSignal;
     /** Called when multiple tools run; return per-tool signals for cooperative cancel. */
     onToolsStarting?: (tools: string[]) => Record<string, AbortSignal> | void;
+}
+
+/** Options for applying @@ graph commands (provenance context when sources are omitted). */
+export interface ExecuteGraphCommandsOptions {
+    showErrorNotices: boolean;
+    graphWriteContext?: GraphWriteContext;
 }
 
 export class OrchestrationService {
@@ -487,6 +502,7 @@ Respond with this exact JSON structure:
                             type: entity.type,
                             label: getEntityLabel(entity.type as EntityType, entity.properties || {}),
                             properties: entity.properties,
+                            sources: entity.sources,
                         })}`
                     );
                 });
@@ -511,6 +527,7 @@ Respond with this exact JSON structure:
                                 from: fromLabel,
                                 to: toLabel,
                                 relationship: conn.relationship,
+                                sources: conn.sources,
                             })}`
                         );
                     }
@@ -618,8 +635,15 @@ Respond with this exact JSON structure:
                 extractFailures += batchFiles.length;
             }
 
+            const ingestCtx: GraphWriteContext = {
+                query: `Vault graph ingest (${batchLabel})`,
+                captured_at: refTime,
+            };
             for (const cmd of batchCmds) {
-                const lines = await this.executeGraphCommandsImmediate([cmd], { showErrorNotices: false });
+                const lines = await this.executeGraphCommandsImmediate([cmd], {
+                    showErrorNotices: false,
+                    graphWriteContext: ingestCtx,
+                });
                 graphCommands.push(cmd);
                 for (const line of lines) {
                     onFileProgress(
@@ -881,9 +905,10 @@ Respond with this exact JSON structure:
      */
     public async executeGraphCommandsImmediate(
         commands: string[],
-        options: { showErrorNotices: boolean }
+        options: ExecuteGraphCommandsOptions,
     ): Promise<string[]> {
         const lines: string[] = [];
+        const ctx = options.graphWriteContext;
 
         for (const command of commands) {
             try {
@@ -891,7 +916,20 @@ Respond with this exact JSON structure:
                     const jsonStr = command.replace("@@create_entity", "").trim();
                     const data = JSON.parse(jsonStr);
                     if (data.type && data.properties) {
-                        await this.plugin.entityManager.createEntity(data.type, data.properties);
+                        let rawSources = data.sources as OsintSourceInput[] | undefined;
+                        if (!Array.isArray(rawSources) || rawSources.length === 0) {
+                            rawSources = buildInferredOsintSources(ctx);
+                        }
+                        const osintOpts = {
+                            osint_sources: rawSources,
+                            osint_captured_at: ctx?.captured_at ?? new Date().toISOString(),
+                            conversation_id: ctx?.conversation_id,
+                        };
+                        if (isFTMSchema(String(data.type))) {
+                            await this.plugin.entityManager.createFTMEntity(data.type, data.properties, osintOpts);
+                        } else {
+                            await this.plugin.entityManager.createEntity(data.type, data.properties, osintOpts);
+                        }
                         const name = data.label || getEntityLabel(data.type as EntityType, data.properties || {});
                         lines.push(`✓ Created ${data.type}: **${name}**`);
                     }
@@ -925,7 +963,22 @@ Respond with this exact JSON structure:
                             if (toEnt) toId = toEnt.id;
                         }
 
-                        await this.plugin.entityManager.createConnection(fromId, toId, data.relationship);
+                        let rawSources = data.sources as OsintSourceInput[] | undefined;
+                        if (!Array.isArray(rawSources) || rawSources.length === 0) {
+                            rawSources = buildInferredOsintSources(ctx);
+                        }
+                        const osintOpts = {
+                            osint_sources: rawSources,
+                            osint_captured_at: ctx?.captured_at ?? new Date().toISOString(),
+                            conversation_id: ctx?.conversation_id,
+                        };
+                        await this.plugin.entityManager.createConnection(
+                            fromId,
+                            toId,
+                            data.relationship,
+                            data.properties as Record<string, unknown> | undefined,
+                            osintOpts,
+                        );
                         const fromEnt = this.plugin.entityManager.getEntity(fromId);
                         const toEnt = this.plugin.entityManager.getEntity(toId);
                         const fromName = fromEnt ? fromEnt.label : String(data.from);
@@ -964,7 +1017,10 @@ Respond with this exact JSON structure:
         return lines;
     }
 
-    public async executeGraphModifications(commands: string[]): Promise<void> {
+    public async executeGraphModifications(
+        commands: string[],
+        execOptions?: { graphWriteContext?: GraphWriteContext },
+    ): Promise<void> {
         if (!commands || commands.length === 0) return;
 
         const checkboxItems: { label: string, value: string, checked: boolean }[] = [];
@@ -1021,7 +1077,10 @@ Respond with this exact JSON structure:
             return;
         }
 
-        const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, { showErrorNotices: true });
+        const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, {
+            showErrorNotices: true,
+            graphWriteContext: execOptions?.graphWriteContext,
+        });
         const successCount = lines.filter((l) => l.startsWith("✓")).length;
 
         if (successCount > 0) {

@@ -1,0 +1,38 @@
+Page:
+  label: Page
+  plural: Pages
+  matchable: false
+  generated: true
+  hidden: true
+  properties:
+    index:
+      label: Index
+      type: number
+    bodyText:
+      label: Text
+      hidden: true
+      type: text
+    document:
+      label: Document
+      type: entity
+      range: Pages
+      reverse:
+        name: pages
+        label: Pages
+        hidden: true
+      rdf: http://purl.org/dc/terms/isPartOf
+    detectedLanguage:
+      label: Detected language
+      type: language
+      hidden: true
+    translatedText:
+      label: Translated version of the body text
+      hidden: true
+      type: text
+    translatedTextLanguage:
+      label: The language of the translated text
+      hidden: true
+    indexText:
+      label: Index text
+      hidden: true
+      type: text

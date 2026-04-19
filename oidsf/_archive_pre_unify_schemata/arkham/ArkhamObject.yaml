@@ -1,0 +1,14 @@
+ArkhamObject:
+  label: Arkham Mirror object (abstract)
+  plural: Arkham Mirror objects
+  description: Abstract root for Arkham Mirror-derived entity types in OIDSF.
+  abstract: true
+  matchable: false
+  arkham_family: true
+  properties:
+    arkham_shard:
+      label: Originating shard name
+      type: string
+    notes:
+      label: Notes
+      type: text

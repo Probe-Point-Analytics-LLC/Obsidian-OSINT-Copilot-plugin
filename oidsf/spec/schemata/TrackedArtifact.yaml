@@ -1,0 +1,27 @@
+TrackedArtifact:
+  extends:
+  - AnalyticObject
+  label: Tracked artifact
+  description: Artifact tracked in provenance system.
+  properties:
+    artifact_id:
+      label: External artifact id
+      type: identifier
+    artifact_type:
+      label: Artifact type
+      type: string
+    shard_name:
+      label: Shard name
+      type: string
+    project_id:
+      label: Project id
+      type: identifier
+    upstream_count:
+      label: Upstream count
+      type: string
+    downstream_count:
+      label: Downstream count
+      type: string
+    created_at:
+      label: Created at
+      type: date

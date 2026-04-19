@@ -1,0 +1,27 @@
+Relationship:
+  label: "Relationship"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `relationship` (OASIS CTI).
+  stix_type: relationship
+  matchable: false
+  properties:
+    relationship_type:
+      label: Relationship type
+      type: string
+    description:
+      label: Description
+      type: text
+    source_ref:
+      label: Source ref
+      type: identifier
+    target_ref:
+      label: Target ref
+      type: identifier
+    start_time:
+      label: Start time
+      type: date
+    stop_time:
+      label: Stop time
+      type: date

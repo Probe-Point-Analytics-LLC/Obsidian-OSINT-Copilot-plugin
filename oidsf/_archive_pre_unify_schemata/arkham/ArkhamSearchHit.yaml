@@ -1,0 +1,18 @@
+ArkhamSearchHit:
+  extends:
+    - ArkhamObject
+  label: Search hit
+  description: Search result row (Arkham search shard).
+  properties:
+    query:
+      label: Query
+      type: string
+    document_id:
+      label: Document id
+      type: identifier
+    snippet:
+      label: Snippet
+      type: text
+    score:
+      label: Score
+      type: string

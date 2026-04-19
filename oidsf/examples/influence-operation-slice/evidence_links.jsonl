@@ -1,0 +1,2 @@
+{"oidsf_version": "1.0.0", "id": "ev_art_to_post", "from_ref": {"kind": "artifact", "id": "art_snapshot_post"}, "to_ref": {"kind": "entity", "id": "ent_post_44012"}, "relationship": "supports", "strength": "strong", "notes": "Archived copy supports existence and content of the post entity."}
+{"oidsf_version": "1.0.0", "id": "ev_stmt_to_post", "from_ref": {"kind": "statement", "id": "stmt_post_platform"}, "to_ref": {"kind": "entity", "id": "ent_post_44012"}, "relationship": "supports", "strength": "moderate", "notes": "Statement documents extracted platform field."}

@@ -1,0 +1,32 @@
+{
+  "oidsf_version": "1.0.0",
+  "kind": "oidsf.investigation_package",
+  "id": "urn:oidsf:examples:geo-accountability",
+  "title": "Example: public event, location, and document trail (illustrative)",
+  "summary": "Synthetic OIDSF package with Event, Location, Document, MediaAsset and cross-linked statements.",
+  "created": "2026-04-18T12:30:00Z",
+  "modified": "2026-04-18T12:30:00Z",
+  "topics": ["accountability", "geolocation", "example"],
+  "profiles": ["graph-provenance"],
+  "time_range": {
+    "start": "2026-02-10T00:00:00Z",
+    "end": "2026-02-11T23:59:59Z"
+  },
+  "jurisdiction": "ZZ-EXAMPLE",
+  "data_policy": {
+    "license": "CC-BY-4.0",
+    "attribution": "OIDSF reference example",
+    "intended_use": "education_and_testing",
+    "distribution": "public"
+  },
+  "contributors": [
+    { "id": "contrib_field_1", "name": "Example Field Researcher", "role": "collector" }
+  ],
+  "streams": {
+    "entities": "entities.jsonl",
+    "artifacts": "artifacts.jsonl",
+    "statements": "statements.jsonl",
+    "evidence_links": "evidence_links.jsonl",
+    "source_assessments": "source_assessments.jsonl"
+  }
+}

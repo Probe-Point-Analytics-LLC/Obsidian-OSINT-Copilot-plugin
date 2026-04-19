@@ -1,0 +1,16 @@
+Domain:
+  label: DNS domain
+  plural: DNS domains
+  extends:
+  - Thing
+  description: 'Registrable domain or hostname for OSINT (FtM has no standalone Domain
+    schema).
+
+    '
+  matchable: true
+  required:
+  - name
+  properties:
+    name:
+      label: Hostname
+      type: string

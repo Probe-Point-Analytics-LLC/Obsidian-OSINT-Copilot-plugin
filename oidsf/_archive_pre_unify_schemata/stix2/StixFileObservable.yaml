@@ -1,0 +1,45 @@
+StixFileObservable:
+  label: "StixFileObservable"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `file` (OASIS CTI).
+  stix_type: file
+  matchable: false
+  properties:
+    hashes:
+      label: Hashes (JSON)
+      type: text
+    size:
+      label: Size
+      type: string
+    name:
+      label: Name
+      type: string
+    name_enc:
+      label: Name encoding
+      type: string
+    magic_number_hex:
+      label: Magic number hex
+      type: string
+    mime_type:
+      label: MIME type
+      type: string
+    parent_directory_ref:
+      label: Parent directory ref
+      type: identifier
+    ctime:
+      label: ctime
+      type: date
+    mtime:
+      label: mtime
+      type: date
+    atime:
+      label: atime
+      type: date
+    content_ref:
+      label: Content ref
+      type: identifier
+    contains_refs:
+      label: Contains refs
+      type: string

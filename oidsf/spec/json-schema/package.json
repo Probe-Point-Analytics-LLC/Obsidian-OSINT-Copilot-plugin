@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/investigation-package.json",
+  "title": "OIDSF InvestigationPackage manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "kind", "id", "title", "streams"],
+  "properties": {
+    "oidsf_version": {
+      "$ref": "common-definitions.json#/$defs/SemVer",
+      "description": "OIDSF specification version this package conforms to."
+    },
+    "kind": {
+      "type": "string",
+      "const": "oidsf.investigation_package"
+    },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string" },
+    "created": { "type": "string", "format": "date-time" },
+    "modified": { "type": "string", "format": "date-time" },
+    "topics": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "time_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      }
+    },
+    "jurisdiction": { "type": "string" },
+    "profiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "e.g. graph-provenance, cyber"
+    },
+    "compat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+        "max_version": { "type": "string" }
+      }
+    },
+    "contributors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "$ref": "common-definitions.json#/$defs/Id" },
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "organization_id": { "$ref": "common-definitions.json#/$defs/Id" }
+        }
+      }
+    },
+    "data_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "license": { "type": "string" },
+        "attribution": { "type": "string" },
+        "intended_use": { "type": "string" },
+        "distribution": { "$ref": "common-definitions.json#/$defs/Distribution" }
+      }
+    },
+    "streams": {
+      "type": "object",
+      "description": "Logical stream name to relative JSONL path.",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "pattern": "\\.jsonl$" }
+    },
+    "attachments": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "stix_bundle": {
+          "type": "object",
+          "description": "STIX 2 bundle JSON (type bundle + objects). Additional STIX properties allowed.",
+          "required": ["type", "id"],
+          "properties": {
+            "type": { "const": "bundle" },
+            "id": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,29 @@
+SocialPost:
+  label: Social post
+  plural: Social posts
+  extends:
+    - Thing
+  description: >
+    Public social-media post, thread, or story. OIDSF uses this instead of FtM `Post`,
+    which models an employment position. Merge: use SocialPost for OSINT social content.
+  matchable: false
+  featured:
+    - name
+    - url
+    - platform
+    - posted_at
+  required:
+    - url
+  properties:
+    url:
+      label: Post URL
+      type: url
+    platform:
+      label: Platform
+      type: string
+    posted_at:
+      label: Posted at
+      type: date
+    disarmTechniqueIds:
+      label: DISARM technique IDs
+      type: identifier

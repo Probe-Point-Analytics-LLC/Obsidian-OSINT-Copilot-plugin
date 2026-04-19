@@ -1,0 +1,30 @@
+StixLocation:
+  label: "StixLocation"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `location` (OASIS CTI).
+  stix_type: location
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    latitude:
+      label: Latitude
+      type: string
+    longitude:
+      label: Longitude
+      type: string
+    precision:
+      label: Precision
+      type: string
+    region:
+      label: Region
+      type: string
+    country:
+      label: Country
+      type: country

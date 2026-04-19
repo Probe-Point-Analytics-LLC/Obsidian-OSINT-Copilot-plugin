@@ -1,0 +1,100 @@
+Person:
+  extends:
+  - LegalEntity
+  label: Person
+  plural: People
+  description: 'A natural person, as opposed to a corporation of some type.
+
+    '
+  matchable: true
+  rdf: http://xmlns.com/foaf/0.1/Person
+  featured:
+  - name
+  - nationality
+  - birthDate
+  required:
+  - name
+  caption:
+  - name
+  - lastName
+  - email
+  - phone
+  temporalExtent:
+    start:
+    - birthDate
+    end:
+    - deathDate
+  properties:
+    title:
+      label: Title
+      rdf: http://xmlns.com/foaf/0.1/title
+    firstName:
+      label: First name
+      rdf: http://xmlns.com/foaf/0.1/givenName
+    secondName:
+      label: Second name
+    middleName:
+      label: Middle name
+    fatherName:
+      label: Patronymic
+    motherName:
+      label: Matronymic
+    lastName:
+      label: Last name
+      rdf: http://xmlns.com/foaf/0.1/lastName
+    nameSuffix:
+      label: Name suffix
+    birthDate:
+      label: Birth date
+      type: date
+      rdf: http://xmlns.com/foaf/0.1/birthday
+    birthPlace:
+      label: Place of birth
+    birthCountry:
+      label: Country of birth
+      type: country
+    deathDate:
+      label: Death date
+      type: date
+    position:
+      label: Position
+      matchable: false
+    nationality:
+      label: Nationality
+      type: country
+    citizenship:
+      label: Citizenship
+      type: country
+    passportNumber:
+      label: Passport number
+      type: identifier
+    socialSecurityNumber:
+      label: Social security number
+      type: identifier
+      format: ssn
+    gender:
+      label: Gender
+      type: gender
+    ethnicity:
+      label: Ethnicity
+    height:
+      label: Height
+      type: number
+    weight:
+      label: Weight
+      type: number
+    eyeColor:
+      label: Eye color
+    hairColor:
+      label: Hair color
+    appearance:
+      label: Physical appearance
+    religion:
+      label: Religion
+    political:
+      label: Political association
+    education:
+      label: Education
+    spokenLanguage:
+      label: Spoken language
+      type: language

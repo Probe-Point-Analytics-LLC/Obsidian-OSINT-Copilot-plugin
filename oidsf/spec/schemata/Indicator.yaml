@@ -1,0 +1,31 @@
+Indicator:
+  label: Indicator
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `indicator` (OASIS CTI).
+
+    '
+  stix_type: indicator
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    pattern:
+      label: Pattern
+      type: text
+    pattern_type:
+      label: Pattern type
+      type: string
+    valid_from:
+      label: Valid from
+      type: date
+    valid_until:
+      label: Valid until
+      type: date
+    kill_chain_phases:
+      label: Kill chain phases (JSON)
+      type: text

@@ -1,0 +1,21 @@
+StixArtifactObservable:
+  label: "StixArtifactObservable"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `artifact` (OASIS CTI).
+  stix_type: artifact
+  matchable: false
+  properties:
+    mime_type:
+      label: MIME type
+      type: string
+    payload_bin:
+      label: Payload (base64)
+      type: text
+    url:
+      label: URL
+      type: url
+    hashes:
+      label: Hashes (JSON)
+      type: text

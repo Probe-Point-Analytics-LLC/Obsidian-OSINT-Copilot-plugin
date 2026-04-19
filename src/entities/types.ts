@@ -4,7 +4,8 @@
  */
 
 import { ftmSchemaService, ResolvedFTMSchema, FTMPropertyDefinition } from '../services/ftm-schema-service';
-import type { SchemaFamily } from '../services/schema-catalog-types';
+import type { OIDSFModalLayers, SchemaFamily } from '../services/schema-catalog-types';
+import { DEFAULT_OIDSF_MODAL_LAYERS } from '../services/schema-catalog-types';
 
 // Legacy EntityType enum - kept for backward compatibility
 export enum EntityType {
@@ -33,7 +34,7 @@ export type FTMEntityType =
     | 'Vehicle'
     | 'BankAccount'
     | 'CryptoWallet'
-    | 'UserAccount'
+    | 'OnlineAccount'
     | 'Document'
     | 'RealEstate'
     | 'Sanction'
@@ -58,7 +59,7 @@ export const FTM_ENTITY_TYPES: FTMEntityType[] = [
     'Vehicle',
     'BankAccount',
     'CryptoWallet',
-    'UserAccount',
+    'OnlineAccount',
     'Document',
     'RealEstate',
     'Sanction',
@@ -122,18 +123,22 @@ export function getFTMEntityConfig(schemaName: string): FTMEntityConfig | null {
 }
 
 /**
- * Get all available FTM entity types for entity creation.
+ * Core OIDSF entity types for entity creation (excludes interval/relationship shapes), filtered by modal layer toggles.
  * LegalEntity is prioritized to appear first in the list.
  */
-export function getAvailableFTMEntityTypes(): Array<{ name: string; label: string; description: string; color: string }> {
-    const types = ftmSchemaService.getEntitySchemas().map(schema => ({
-        name: schema.name,
-        label: schema.label,
-        description: schema.description,
-        color: schema.color || '#607D8B',
-    }));
+export function getAvailableFTMEntityTypes(
+    modalLayers: OIDSFModalLayers = DEFAULT_OIDSF_MODAL_LAYERS,
+): Array<{ name: string; label: string; description: string; color: string }> {
+    const types = ftmSchemaService
+        .getCoreEntitySchemas()
+        .filter((schema) => ftmSchemaService.schemaPassesModalLayer(schema.name, modalLayers))
+        .map((schema) => ({
+            name: schema.name,
+            label: schema.label,
+            description: schema.description,
+            color: schema.color || '#607D8B',
+        }));
 
-    // Sort with LegalEntity first, then alphabetically
     return types.sort((a, b) => {
         if (a.name === 'LegalEntity') return -1;
         if (b.name === 'LegalEntity') return 1;
@@ -142,20 +147,22 @@ export function getAvailableFTMEntityTypes(): Array<{ name: string; label: strin
 }
 
 /**
- * Get all available FTM interval/relationship types for connection creation.
- * UnknownLink is prioritized to appear first in the list.
+ * OIDSF interval/relationship types for connection creation (respects `links` layer).
  */
-export function getAvailableFTMIntervalTypes(): Array<{ name: string; label: string; description: string; color: string }> {
-    const types = ftmSchemaService.getIntervalSchemas()
-        .filter(schema => !['Associate', 'UnknownLink', 'Membership'].includes(schema.name))
-        .map(schema => ({
+export function getAvailableFTMIntervalTypes(
+    modalLayers: OIDSFModalLayers = DEFAULT_OIDSF_MODAL_LAYERS,
+): Array<{ name: string; label: string; description: string; color: string }> {
+    const types = ftmSchemaService
+        .getIntervalSchemas()
+        .filter((schema) => !['Associate', 'UnknownLink', 'Membership'].includes(schema.name))
+        .filter((schema) => ftmSchemaService.schemaPassesModalLayer(schema.name, modalLayers))
+        .map((schema) => ({
             name: schema.name,
             label: schema.label,
             description: schema.description,
             color: schema.color || '#607D8B',
         }));
 
-    // Sort with UnknownLink first, then alphabetically
     return types.sort((a, b) => {
         if (a.name === 'UnknownLink') return -1;
         if (b.name === 'UnknownLink') return 1;
@@ -261,6 +268,7 @@ export const ENTITY_ICONS: Record<string, string> = {
     'BankAccount': "🏦",
     'CryptoWallet': "₿",
     'UserAccount': "👥",
+    'OnlineAccount': "👥",
     'Document': "📄",
     'RealEstate': "🏠",
     'Sanction': "⛔",
@@ -307,6 +315,46 @@ export const ENTITY_ICONS: Record<string, string> = {
 // Common properties for all entities
 export const COMMON_PROPERTIES = ["notes", "source", "image"];
 
+/** Persisted confidence for investigator-facing filtering (graph, lists). */
+export const OSINT_CONFIDENCE_LEVELS = ['unverified', 'low', 'medium', 'high', 'conflicted'] as const;
+export type OsintConfidence = (typeof OSINT_CONFIDENCE_LEVELS)[number];
+
+export type OsintArchiveStatus = 'pending' | 'resolved' | 'failed' | 'skipped';
+
+/** One independent source supporting an entity or connection (dedupe by normalized source_url). */
+export interface OsintSource {
+    id: string;
+    /** Canonical URL or vault path (`vault://...` or relative path). */
+    source_url: string;
+    archive_url?: string;
+    archive_status?: OsintArchiveStatus;
+    inferred: boolean;
+    rationale: string;
+    captured_at: string;
+    conversation_id?: string;
+    /** Optional structured claims this source supports (for contradiction detection). */
+    claims?: Array<{ path: string; value: string }>;
+}
+
+/** Model / extraction payload before ids and timestamps are finalized. */
+export type OsintSourceInput = Omit<Partial<OsintSource>, 'id' | 'captured_at'> &
+    Partial<Pick<OsintSource, 'id' | 'captured_at'>>;
+
+/** Two or more sources disagree on a material field. */
+export interface OsintContradiction {
+    field_path: string;
+    entries: Array<{ source_id: string; value: string }>;
+}
+
+/** Context for graph writes when the model omits explicit `sources` (inferred provenance). */
+export interface GraphWriteContext {
+    query: string;
+    extracted_urls?: string[];
+    attachment_paths?: string[];
+    conversation_id?: string;
+    captured_at: string;
+}
+
 export interface Entity {
     id: string;
     type: EntityType | string;  // Support both legacy EntityType and FTM schema names
@@ -317,6 +365,10 @@ export interface Entity {
     ftmSchema?: string;
     /** Source schema family (defaults to ftm when missing — legacy notes). */
     schemaFamily?: SchemaFamily;
+    /** Multi-source provenance (frontmatter `osint_sources`). */
+    osint_sources?: OsintSource[];
+    osint_confidence?: OsintConfidence;
+    osint_contradictions?: OsintContradiction[];
 }
 
 /**
@@ -341,6 +393,9 @@ export interface Connection {
     filePath?: string;  // Path to the connection's note file
     /** Relationship schema family (defaults to ftm when ftmSchema set / legacy). */
     schemaFamily?: SchemaFamily;
+    osint_sources?: OsintSource[];
+    osint_confidence?: OsintConfidence;
+    osint_contradictions?: OsintContradiction[];
 }
 
 export interface GraphData {
@@ -354,6 +409,7 @@ export interface AIOperation {
     entities?: Array<{
         type: string;
         properties: Record<string, unknown>;
+        sources?: OsintSourceInput[];
     }>;
     connections?: Array<{
         from: number;
@@ -363,6 +419,7 @@ export interface AIOperation {
         to_label?: string;
         from_type?: string;
         to_type?: string;
+        sources?: OsintSourceInput[];
     }>;
     updates?: Array<{
         type: string;
@@ -478,7 +535,7 @@ const GENERIC_ENTITY_NAMES = new Set([
 
     // FTM entity types
     'LegalEntity', 'Organization', /* 'Address', */ 'BankAccount', 'CryptoWallet',
-    'UserAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
+    'UserAccount', 'OnlineAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
     'Ownership', 'Employment', 'Directorship', 'IP', 'Malware', 'Group', 'Domain',
 
     // Additional common generic names

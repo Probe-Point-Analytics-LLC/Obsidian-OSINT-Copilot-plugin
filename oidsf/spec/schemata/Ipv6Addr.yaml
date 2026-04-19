@@ -1,0 +1,19 @@
+Ipv6Addr:
+  label: Ipv6Addr
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `ipv6-addr` (OASIS CTI).
+
+    '
+  stix_type: ipv6-addr
+  matchable: false
+  properties:
+    value:
+      label: IPv6
+      type: string
+    resolves_to_refs:
+      label: Resolves to refs
+      type: string
+    belongs_to_refs:
+      label: Belongs to refs
+      type: string

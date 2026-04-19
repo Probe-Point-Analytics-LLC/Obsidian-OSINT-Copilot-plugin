@@ -1,0 +1,21 @@
+ArkhamPremortemAnalysis:
+  extends:
+    - ArkhamObject
+  label: Premortem analysis
+  description: Premortem failure-mode analysis for a hypothesis.
+  properties:
+    matrix_id:
+      label: Matrix id
+      type: identifier
+    hypothesis_id:
+      label: Hypothesis id
+      type: identifier
+    scenario_description:
+      label: Scenario description
+      type: text
+    overall_vulnerability:
+      label: Overall vulnerability
+      type: string
+    model_used:
+      label: Model used
+      type: string

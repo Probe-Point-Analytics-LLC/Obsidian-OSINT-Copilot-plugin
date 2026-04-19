@@ -1,0 +1,33 @@
+ArkhamClaimEvidence:
+  extends:
+    - ArkhamObject
+  label: Claim evidence
+  description: Evidence row linked to a claim (Arkham claims shard).
+  properties:
+    claim_id:
+      label: Claim id
+      type: identifier
+    evidence_type:
+      label: Evidence type
+      type: string
+    reference_id:
+      label: Reference id
+      type: identifier
+    reference_title:
+      label: Reference title
+      type: string
+    relationship:
+      label: Relationship
+      type: string
+    strength:
+      label: Strength
+      type: string
+    excerpt:
+      label: Excerpt
+      type: text
+    added_by:
+      label: Added by
+      type: string
+    added_at:
+      label: Added at
+      type: date

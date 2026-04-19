@@ -1,0 +1,12 @@
+Url:
+  label: "Url"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SCO `url` (OASIS CTI).
+  stix_type: url
+  matchable: false
+  properties:
+    value:
+      label: URL
+      type: url

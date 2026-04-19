@@ -1,0 +1,21 @@
+CorpusDocument:
+  extends:
+  - AnalyticObject
+  label: Document record
+  description: Corpus document metadata (Arkham documents shard).
+  properties:
+    title:
+      label: Title
+      type: string
+    mime_type:
+      label: MIME type
+      type: string
+    source_uri:
+      label: Source URI
+      type: url
+    ingest_status:
+      label: Ingest status
+      type: string
+    page_count:
+      label: Page count
+      type: string

@@ -1,0 +1,15 @@
+CourseOfAction:
+  label: "CourseOfAction"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `course-of-action` (OASIS CTI).
+  stix_type: course-of-action
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text

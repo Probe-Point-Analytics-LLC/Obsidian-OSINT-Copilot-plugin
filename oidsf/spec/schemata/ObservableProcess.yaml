@@ -1,0 +1,43 @@
+ObservableProcess:
+  label: StixProcessObservable
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `process` (OASIS CTI).
+
+    '
+  stix_type: process
+  matchable: false
+  properties:
+    is_hidden:
+      label: Is hidden
+      type: string
+    pid:
+      label: PID
+      type: string
+    created_time:
+      label: Created time
+      type: date
+    cwd:
+      label: CWD
+      type: string
+    command_line:
+      label: Command line
+      type: text
+    environment_variables:
+      label: Environment variables (JSON)
+      type: text
+    opened_connection_refs:
+      label: Opened connection refs
+      type: string
+    creator_user_ref:
+      label: Creator user ref
+      type: identifier
+    image_ref:
+      label: Image ref
+      type: identifier
+    parent_ref:
+      label: Parent ref
+      type: identifier
+    child_refs:
+      label: Child refs
+      type: string

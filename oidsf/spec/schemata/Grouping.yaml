@@ -1,0 +1,22 @@
+Grouping:
+  label: Grouping
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `grouping` (OASIS CTI).
+
+    '
+  stix_type: grouping
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    context:
+      label: Context
+      type: string
+    object_refs:
+      label: Object refs
+      type: string

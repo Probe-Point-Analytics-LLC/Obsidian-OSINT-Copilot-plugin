@@ -1,0 +1,13 @@
+Url:
+  label: Url
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `url` (OASIS CTI).
+
+    '
+  stix_type: url
+  matchable: false
+  properties:
+    value:
+      label: URL
+      type: url

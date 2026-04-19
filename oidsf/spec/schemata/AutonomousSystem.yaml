@@ -1,0 +1,19 @@
+AutonomousSystem:
+  label: AutonomousSystem
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `autonomous-system` (OASIS CTI).
+
+    '
+  stix_type: autonomous-system
+  matchable: false
+  properties:
+    number:
+      label: AS number
+      type: string
+    name:
+      label: Name
+      type: name
+    rir:
+      label: RIR
+      type: string

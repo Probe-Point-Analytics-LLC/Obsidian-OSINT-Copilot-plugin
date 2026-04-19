@@ -1,0 +1,15 @@
+ClaimContradiction:
+  extends:
+  - AnalyticObject
+  label: Contradiction
+  description: Detected contradiction between claims or sources.
+  properties:
+    claim_ids:
+      label: Claim ids
+      type: string
+    severity:
+      label: Severity
+      type: string
+    description:
+      label: Description
+      type: text

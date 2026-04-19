@@ -1,0 +1,18 @@
+ExtractedEntityRecord:
+  extends:
+  - AnalyticObject
+  label: Entity record
+  description: Extracted entity record (Arkham entities shard).
+  properties:
+    canonical_name:
+      label: Canonical name
+      type: name
+    entity_type:
+      label: Entity type
+      type: string
+    aliases:
+      label: Aliases
+      type: string
+    source_document_ids:
+      label: Source document ids
+      type: string

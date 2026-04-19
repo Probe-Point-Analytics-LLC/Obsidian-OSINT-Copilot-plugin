@@ -1,0 +1,11 @@
+Interest:
+  label: Interest
+  extends:
+  - Interval
+  matchable: false
+  abstract: true
+  properties:
+    role:
+      label: Role
+    status:
+      label: Status

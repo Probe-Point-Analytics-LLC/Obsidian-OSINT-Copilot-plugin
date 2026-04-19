@@ -1,0 +1,34 @@
+Sighting:
+  label: Sighting
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `sighting` (OASIS CTI).
+
+    '
+  stix_type: sighting
+  matchable: false
+  properties:
+    description:
+      label: Description
+      type: text
+    first_seen:
+      label: First seen
+      type: date
+    last_seen:
+      label: Last seen
+      type: date
+    count:
+      label: Count
+      type: string
+    sighting_of_ref:
+      label: Sighting of ref
+      type: identifier
+    observed_data_refs:
+      label: Observed data refs
+      type: string
+    where_sighted_refs:
+      label: Where sighted refs
+      type: string
+    summary:
+      label: Summary
+      type: string

@@ -1,0 +1,16 @@
+MarkingDefinition:
+  label: MarkingDefinition
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `marking-definition` (OASIS CTI).
+
+    '
+  stix_type: marking-definition
+  matchable: false
+  properties:
+    definition_type:
+      label: Definition type
+      type: string
+    definition:
+      label: Definition (JSON)
+      type: text

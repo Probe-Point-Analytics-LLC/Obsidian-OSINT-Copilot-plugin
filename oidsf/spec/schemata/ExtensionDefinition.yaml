@@ -1,0 +1,28 @@
+ExtensionDefinition:
+  label: ExtensionDefinition
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `extension-definition` (OASIS CTI).
+
+    '
+  stix_type: extension-definition
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    schema:
+      label: Schema
+      type: text
+    version:
+      label: Version
+      type: string
+    extension_types:
+      label: Extension types
+      type: string
+    external_references:
+      label: External references (JSON)
+      type: text

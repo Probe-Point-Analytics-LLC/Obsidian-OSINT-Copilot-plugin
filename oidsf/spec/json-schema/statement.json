@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/statement.json",
+  "title": "OIDSF Statement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "id", "subject", "value"],
+  "properties": {
+    "oidsf_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "subject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "entity_id", "property"],
+          "properties": {
+            "type": { "const": "entity_property" },
+            "entity_id": { "$ref": "common-definitions.json#/$defs/Id" },
+            "property": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "link_entity_id"],
+          "properties": {
+            "type": { "const": "entity_edge" },
+            "link_entity_id": { "$ref": "common-definitions.json#/$defs/Id" }
+          }
+        }
+      ]
+    },
+    "value": { "type": "string" },
+    "artifact_ids": {
+      "type": "array",
+      "items": { "$ref": "common-definitions.json#/$defs/Id" }
+    },
+    "asserted_by": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "extracted_at": { "type": "string", "format": "date-time" },
+    "extraction_method": { "$ref": "common-definitions.json#/$defs/ExtractionMethod" },
+    "extensions": { "type": "object", "additionalProperties": true }
+  }
+}

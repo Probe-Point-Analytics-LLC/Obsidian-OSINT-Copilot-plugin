@@ -1,0 +1,28 @@
+Directory:
+  label: Directory
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `directory` (OASIS CTI).
+
+    '
+  stix_type: directory
+  matchable: false
+  properties:
+    path:
+      label: Path
+      type: string
+    path_enc:
+      label: Path encoding
+      type: string
+    ctime:
+      label: ctime
+      type: date
+    mtime:
+      label: mtime
+      type: date
+    atime:
+      label: atime
+      type: date
+    contains_refs:
+      label: Contains refs
+      type: string

@@ -1,0 +1,46 @@
+EmailMessage:
+  label: EmailMessage
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `email-message` (OASIS CTI).
+
+    '
+  stix_type: email-message
+  matchable: false
+  properties:
+    is_multipart:
+      label: Is multipart
+      type: string
+    date:
+      label: Date
+      type: date
+    content_type:
+      label: Content type
+      type: string
+    from_ref:
+      label: From ref
+      type: identifier
+    sender_ref:
+      label: Sender ref
+      type: identifier
+    to_refs:
+      label: To refs
+      type: string
+    cc_refs:
+      label: CC refs
+      type: string
+    bcc_refs:
+      label: BCC refs
+      type: string
+    subject:
+      label: Subject
+      type: string
+    body_multipart:
+      label: Body multipart (JSON)
+      type: text
+    additional_header_fields:
+      label: Additional header fields (JSON)
+      type: text
+    raw_email_ref:
+      label: Raw email ref
+      type: identifier

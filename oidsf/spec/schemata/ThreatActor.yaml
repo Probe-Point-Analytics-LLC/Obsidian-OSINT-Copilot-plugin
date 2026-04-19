@@ -1,0 +1,40 @@
+ThreatActor:
+  label: ThreatActor
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `threat-actor` (OASIS CTI).
+
+    '
+  stix_type: threat-actor
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    threat_actor_types:
+      label: Threat actor types
+      type: string
+    aliases:
+      label: Aliases
+      type: string
+    first_seen:
+      label: First seen
+      type: date
+    last_seen:
+      label: Last seen
+      type: date
+    goals:
+      label: Goals
+      type: text
+    sophistication:
+      label: Sophistication
+      type: string
+    resource_level:
+      label: Resource level
+      type: string
+    primary_motivation:
+      label: Primary motivation
+      type: string

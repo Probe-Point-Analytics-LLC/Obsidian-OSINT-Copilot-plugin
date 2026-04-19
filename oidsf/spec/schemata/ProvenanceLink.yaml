@@ -1,0 +1,36 @@
+ProvenanceLink:
+  extends:
+  - AnalyticObject
+  label: Provenance link
+  description: Link between two artifacts in a chain.
+  properties:
+    chain_id:
+      label: Chain id
+      type: identifier
+    source_artifact_id:
+      label: Source artifact id
+      type: identifier
+    target_artifact_id:
+      label: Target artifact id
+      type: identifier
+    link_type:
+      label: Link type
+      type: string
+    confidence:
+      label: Confidence
+      type: string
+    verified:
+      label: Verified
+      type: string
+    transformation_process:
+      label: Transformation process
+      type: string
+    transformation_params:
+      label: Transformation params (JSON)
+      type: text
+    notes:
+      label: Notes
+      type: text
+    created_at:
+      label: Created at
+      type: date

@@ -1,0 +1,46 @@
+X509Certificate:
+  label: X509Certificate
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `x509-certificate` (OASIS CTI).
+
+    '
+  stix_type: x509-certificate
+  matchable: false
+  properties:
+    is_self_signed:
+      label: Is self signed
+      type: string
+    hashes:
+      label: Hashes (JSON)
+      type: text
+    version:
+      label: Version
+      type: string
+    serial_number:
+      label: Serial number
+      type: string
+    signature_algorithm:
+      label: Signature algorithm
+      type: string
+    issuer:
+      label: Issuer
+      type: string
+    validity_not_before:
+      label: Validity not before
+      type: date
+    validity_not_after:
+      label: Validity not after
+      type: date
+    subject:
+      label: Subject
+      type: string
+    subject_public_key_algorithm:
+      label: Subject public key algorithm
+      type: string
+    subject_public_key_modulus:
+      label: Modulus
+      type: text
+    subject_public_key_exponent:
+      label: Exponent
+      type: string

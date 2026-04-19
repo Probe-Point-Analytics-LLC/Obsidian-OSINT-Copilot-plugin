@@ -1,0 +1,21 @@
+ArkhamCredibilityAssessment:
+  extends:
+    - ArkhamObject
+  label: Credibility assessment
+  description: Source or claim credibility scoring (Arkham credibility shard).
+  properties:
+    subject_id:
+      label: Subject id
+      type: identifier
+    subject_type:
+      label: Subject type
+      type: string
+    score:
+      label: Score
+      type: string
+    rationale:
+      label: Rationale
+      type: text
+    dimensions:
+      label: Dimensions (JSON)
+      type: text

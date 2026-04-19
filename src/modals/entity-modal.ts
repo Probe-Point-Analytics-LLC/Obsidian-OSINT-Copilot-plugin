@@ -946,8 +946,8 @@ export class ConnectionQuickModal extends Modal {
         placeholderOption.disabled = true;
         placeholderOption.selected = true;
 
-        // Get FTM interval types and populate dropdown (pre-sorted with UnknownLink first)
-        const intervalTypes = getAvailableFTMIntervalTypes();
+        const intPlugin = getOsintCopilotPlugin(this.app);
+        const intervalTypes = getAvailableFTMIntervalTypes(intPlugin?.settings.oidsfModalLayers);
 
         for (const intervalType of intervalTypes) {
             const option = select.createEl('option', {
@@ -2142,7 +2142,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
     // Priority list for sorting entity types
     private readonly PRIORITY_ORDER = [
         'Person', 'Company', 'Event', 'Group', 'BankAccount', 'Credentials',
-        'UserAccount', 'Location', 'Address', 'Evidence', 'Document',
+        'OnlineAccount', 'Location', 'Address', 'Evidence', 'Document',
         'Video', 'Image', 'Photo', 'Malware', 'CryptoWallet',
         'Domain', 'Website', 'IP'
     ];
@@ -2217,7 +2217,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
             this.syncTypesFromPlugin();
         } else {
             this.useCatalogUi = false;
-            this.entityTypes = getAvailableFTMEntityTypes();
+            this.entityTypes = getAvailableFTMEntityTypes(plugin?.settings.oidsfModalLayers);
         }
 
         // Search input for filtering entity types
@@ -2270,7 +2270,10 @@ export class FTMEntityTypeSelectorModal extends Modal {
     private syncTypesFromPlugin(): void {
         const plugin = getOsintCopilotPlugin(this.app);
         if (!plugin?.schemaCatalogService) return;
-        this.catalogEntityTypes = plugin.schemaCatalogService.listEntityTypes(plugin.getEnabledSchemaFamilies());
+        this.catalogEntityTypes = plugin.schemaCatalogService.listEntityTypes(
+            plugin.getEnabledSchemaFamilies(),
+            plugin.settings.oidsfModalLayers,
+        );
     }
 
     private filterEntityTypes(): void {
@@ -2530,7 +2533,7 @@ export class FTMEntityTypeSelectorModal extends Modal {
                     if (confirm(`Delete custom type "${typeInfo.label}"?`)) {
                         await plugin.customTypesService.deleteCustomType(typeInfo.name);
                         // Reload and refresh
-                        this.entityTypes = getAvailableFTMEntityTypes();
+                        this.entityTypes = getAvailableFTMEntityTypes(plugin?.settings.oidsfModalLayers);
                         this.filterEntityTypes();
                     }
                 };
@@ -3521,8 +3524,9 @@ export class FTMIntervalTypeSelectorModal extends Modal {
             addIntToggle('user', 'User');
             this.syncIntervalTypesFromPlugin();
         } else {
+            const intPlugin = getOsintCopilotPlugin(this.app);
             this.useCatalogUi = false;
-            this.intervalTypes = getAvailableFTMIntervalTypes();
+            this.intervalTypes = getAvailableFTMIntervalTypes(intPlugin?.settings.oidsfModalLayers);
         }
 
         // Search input for filtering interval types
@@ -3575,7 +3579,10 @@ export class FTMIntervalTypeSelectorModal extends Modal {
     private syncIntervalTypesFromPlugin(): void {
         const plugin = getOsintCopilotPlugin(this.app);
         if (!plugin?.schemaCatalogService) return;
-        this.catalogIntervalTypes = plugin.schemaCatalogService.listRelationshipTypes(plugin.getEnabledSchemaFamilies());
+        this.catalogIntervalTypes = plugin.schemaCatalogService.listRelationshipTypes(
+            plugin.getEnabledSchemaFamilies(),
+            plugin.settings.oidsfModalLayers,
+        );
     }
 
     private filterIntervalTypes(): void {
@@ -3803,7 +3810,7 @@ color: var(--text - muted);
                     if (confirm(`Delete custom relationship type "${typeInfo.label}"?`)) {
                         await plugin.customTypesService.deleteCustomType(typeInfo.name);
                         // Reload and refresh
-                        this.intervalTypes = getAvailableFTMIntervalTypes();
+                        this.intervalTypes = getAvailableFTMIntervalTypes(plugin?.settings.oidsfModalLayers);
                         this.filterIntervalTypes();
                     }
                 };

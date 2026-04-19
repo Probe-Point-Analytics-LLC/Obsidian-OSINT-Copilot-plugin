@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/artifact.json",
+  "title": "OIDSF Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "id"],
+  "properties": {
+    "oidsf_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "title": { "type": "string" },
+    "url": { "type": "string", "format": "uri" },
+    "retrieved_at": { "type": "string", "format": "date-time" },
+    "mime_type": { "type": "string" },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "capture_method": { "$ref": "common-definitions.json#/$defs/CaptureMethod" },
+    "storage_hint": { "type": "string" },
+    "sensitivity": { "$ref": "common-definitions.json#/$defs/Sensitivity" },
+    "distribution": { "$ref": "common-definitions.json#/$defs/Distribution" },
+    "extensions": { "type": "object", "additionalProperties": true }
+  }
+}

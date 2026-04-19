@@ -1,0 +1,21 @@
+Campaign:
+  label: "Campaign"
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 SDO/SRO `campaign` (OASIS CTI).
+  stix_type: campaign
+  matchable: false
+  properties:
+    name:
+      label: Name
+      type: name
+    description:
+      label: Description
+      type: text
+    aliases:
+      label: Aliases
+      type: string
+    objective:
+      label: Objective
+      type: text

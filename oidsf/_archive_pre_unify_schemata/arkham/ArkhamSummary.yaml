@@ -1,0 +1,21 @@
+ArkhamSummary:
+  extends:
+    - ArkhamObject
+  label: Document summary
+  description: Generated summary (Arkham summary shard).
+  properties:
+    document_id:
+      label: Document id
+      type: identifier
+    summary_type:
+      label: Summary type
+      type: string
+    content:
+      label: Content
+      type: text
+    status:
+      label: Status
+      type: string
+    model:
+      label: Model
+      type: string

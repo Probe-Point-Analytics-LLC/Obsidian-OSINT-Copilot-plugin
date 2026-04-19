@@ -211,7 +211,7 @@ OSINT Copilot supports the **FollowTheMoney (FTM)** schema, which includes:
 - **Vehicle** - Cars, ships, aircraft
 - **BankAccount** - Financial accounts
 - **CryptoWallet** - Cryptocurrency wallets
-- **UserAccount** - Online accounts
+- **OnlineAccount** - Online accounts (OIDSF; legacy notes may still say `UserAccount`)
 - **Document** - Files, reports, evidence
 - **RealEstate** - Properties and land
 - **Passport** - Travel documents
@@ -387,7 +387,10 @@ Visualize entities and their relationships as an interactive network graph.
 - **Relationship labels** - See how entities are connected
 - **Click to open** - Click any entity to open its note
 - **Filter by type** - Show/hide specific entity types
+- **Provenance confidence** - Toolbar checkboxes filter nodes by `osint_confidence` (`unverified`, `low`, `medium`, `high`, `conflicted`). Conflicted nodes use a distinct border style.
 - **Search** - Find specific entities in the graph
+
+Entity and relationship notes can store **`osint_sources`** (with optional **`archive_url`** filled in the background via the Internet Archive when the source URL is public HTTP(S)), **`osint_confidence`**, and **`osint_contradictions`** in YAML frontmatter. AI-driven graph writes always record at least one source (inferred from context when the model omits `sources`).
 
 **Example:** The Lukoil investigation graph shows:
 - Lukoil (Company) at the center

@@ -1,0 +1,25 @@
+Citation:
+  label: Citation link
+  plural: Citation links
+  extends:
+  - Interest
+  description: One source cites or quotes another (FtM has no dedicated Citation schema).
+  matchable: false
+  required:
+  - owner
+  - asset
+  properties:
+    owner:
+      label: Citing source
+      type: entity
+      range: Thing
+    asset:
+      label: Cited source
+      type: entity
+      range: Thing
+    quoted:
+      label: Quoted excerpt
+      type: text
+    accessed_at:
+      label: Accessed at
+      type: date

@@ -1,0 +1,55 @@
+NetworkTraffic:
+  label: NetworkTraffic
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SCO `network-traffic` (OASIS CTI).
+
+    '
+  stix_type: network-traffic
+  matchable: false
+  properties:
+    start:
+      label: Start
+      type: date
+    end:
+      label: End
+      type: date
+    is_active:
+      label: Is active
+      type: string
+    src_ref:
+      label: Source ref
+      type: identifier
+    dst_ref:
+      label: Destination ref
+      type: identifier
+    src_port:
+      label: Source port
+      type: string
+    dst_port:
+      label: Destination port
+      type: string
+    protocols:
+      label: Protocols
+      type: string
+    src_byte_count:
+      label: Source byte count
+      type: string
+    dst_byte_count:
+      label: Destination byte count
+      type: string
+    src_packets:
+      label: Source packets
+      type: string
+    dst_packets:
+      label: Destination packets
+      type: string
+    ipfix:
+      label: IPFIX (JSON)
+      type: text
+    encapsulates_refs:
+      label: Encapsulates refs
+      type: string
+    encapsulated_by_ref:
+      label: Encapsulated by ref
+      type: identifier

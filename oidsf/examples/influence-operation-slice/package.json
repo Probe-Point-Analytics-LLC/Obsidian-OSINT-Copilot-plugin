@@ -1,0 +1,35 @@
+{
+  "oidsf_version": "1.0.0",
+  "kind": "oidsf.investigation_package",
+  "id": "urn:oidsf:examples:influence-operation-slice",
+  "title": "Example: social post and coordinated inauthentic behavior (illustrative)",
+  "summary": "Synthetic OIDSF package demonstrating Account, Post, Affiliation, DISARM technique refs, optional STIX bundle, and source assessment.",
+  "created": "2026-04-18T12:00:00Z",
+  "modified": "2026-04-18T12:00:00Z",
+  "topics": ["influence", "social-media", "example"],
+  "profiles": ["graph-provenance", "influence", "cyber"],
+  "data_policy": {
+    "license": "CC-BY-4.0",
+    "attribution": "OIDSF reference example",
+    "intended_use": "education_and_testing",
+    "distribution": "public"
+  },
+  "contributors": [
+    { "id": "contrib_analyst_1", "name": "Example Analyst", "role": "author" }
+  ],
+  "streams": {
+    "entities": "entities.jsonl",
+    "artifacts": "artifacts.jsonl",
+    "statements": "statements.jsonl",
+    "evidence_links": "evidence_links.jsonl",
+    "source_assessments": "source_assessments.jsonl"
+  },
+  "attachments": {
+    "stix_bundle": {
+      "type": "bundle",
+      "id": "bundle--8f5e2c4b-1c3a-4e2d-9f0a-123456789abc",
+      "objects": []
+    },
+    "notes": "STIX bundle placeholder for cyber-native objects; empty objects array is valid for structure testing."
+  }
+}

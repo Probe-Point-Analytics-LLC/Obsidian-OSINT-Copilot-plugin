@@ -10,7 +10,10 @@ import {
   DEFAULT_TASK_AGENTS_FOLDER,
   DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
 } from '../src/constants/vault-layout';
-import { DEFAULT_ENABLED_SCHEMA_FAMILIES } from '../src/services/schema-catalog-types';
+import {
+  DEFAULT_ENABLED_SCHEMA_FAMILIES,
+  DEFAULT_OIDSF_MODAL_LAYERS,
+} from '../src/services/schema-catalog-types';
 
 function applyModeToView(view: ChatView, mode: 'general' | 'graph' | 'local') {
   view.chatMode = mode;
@@ -62,6 +65,7 @@ describe('ChatView send routing', () => {
       activeGraphId: 'default',
       graphWorkspaces: [{ id: 'default', name: 'Default' }],
       enabledSchemaFamilies: { ...DEFAULT_ENABLED_SCHEMA_FAMILIES },
+      oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS },
     };
 
     plugin.conversationService = {

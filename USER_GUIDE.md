@@ -207,6 +207,13 @@ What TTPs are associated with Lazarus Group?
 
 **Graph workspaces**: Use the **Graph** dropdown in the graph toolbar to switch between saved layouts (each workspace stores its own node positions in `OSINTCopilot/graph-positions.json`). **+ new** creates another workspace; **✕** removes the current one (not **Default**).
 
+**Provenance (confidence)**:
+- Entity notes include optional YAML: **`osint_sources`**, **`osint_confidence`**, **`osint_contradictions`** (see graph extraction and orchestration flows).
+- **`osint_confidence`** is one of: `unverified`, `low`, `medium`, `high`, `conflicted`.
+- The graph toolbar has **Confidence** checkboxes to show or hide nodes by level. **Conflicted** nodes are styled with a stronger, distinct border.
+- When the assistant creates graph entities without explicit citations, the plugin still writes **inferred** source rows so nothing is “sourceless.”
+- For HTTP(S) URLs in `osint_sources`, the plugin may resolve an **Internet Archive** snapshot URL in the background and store it as **`archive_url`** on that source.
+
 **Locking notes from the graph**:
 - Enter **box select**, select entities and/or relationship edges, then click **🔒 lock area**. Those notes become **read-only** in Obsidian (preview only; edit actions hidden) until you **unlock** via the lock button in the note header or **Unlock all** under plugin settings (**Graph note lock**).
 - **Orchestration** and **task agents** will not overwrite locked paths. Deleting or editing entities through the plugin is blocked until unlock.
@@ -241,7 +248,7 @@ What TTPs are associated with Lazarus Group?
 **Extracted Information**:
 - Entity type and properties
 - Relationships between entities (e.g., "director_of", "controls_wallet")
-- Confidence scores for connections
+- Optional **`sources`** per entity and per connection in the extraction JSON (URL or vault path, rationale, optional structured **claims**). The plugin derives persisted **`osint_confidence`** from sources and detected disagreements (`conflicted` when material fields disagree).
 
 **Relationship Types**:
 ```

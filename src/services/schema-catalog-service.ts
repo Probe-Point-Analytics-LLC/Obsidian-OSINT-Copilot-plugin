@@ -4,11 +4,8 @@
 
 import { App, normalizePath, TFile, TFolder } from 'obsidian';
 import { ftmSchemaService, type FTMPropertyDefinition } from './ftm-schema-service';
-import {
-	getAvailableFTMEntityTypes,
-	getAvailableFTMIntervalTypes,
-	getEntityColor,
-} from '../entities/types';
+import { canonicalSchemaName } from './schema-name-aliases';
+import { getEntityColor } from '../entities/types';
 import {
 	parseEntityYaml,
 	parseRelationshipYaml,
@@ -20,6 +17,7 @@ import type {
 	CatalogEntityType,
 	CatalogRelationshipType,
 	EnabledSchemaFamilies,
+	OIDSFModalLayers,
 	SchemaFamily,
 } from './schema-catalog-types';
 import { DEFAULT_ENABLED_SCHEMA_FAMILIES } from './schema-catalog-types';
@@ -58,9 +56,7 @@ export class SchemaCatalogService {
 
 	private registerFtmEntities(): void {
 		ftmSchemaService.initialize();
-		for (const t of getAvailableFTMEntityTypes()) {
-			const sch = ftmSchemaService.getSchema(t.name);
-			if (!sch) continue;
+		for (const sch of ftmSchemaService.getEntitySchemas()) {
 			const key = `ftm:${sch.name}`;
 			this.entities.set(key, {
 				family: 'ftm',
@@ -68,7 +64,7 @@ export class SchemaCatalogService {
 				label: sch.label,
 				plural: sch.plural,
 				description: sch.description,
-				color: sch.color || t.color,
+				color: sch.color || '#607D8B',
 				labelField: ftmSchemaService.getLabelField(sch.name),
 				required: [...sch.required],
 				featured: [...sch.featured],
@@ -79,16 +75,16 @@ export class SchemaCatalogService {
 
 	private registerFtmRelationships(): void {
 		ftmSchemaService.initialize();
-		for (const t of getAvailableFTMIntervalTypes()) {
-			const sch = ftmSchemaService.getSchema(t.name);
-			if (!sch) continue;
+		const skip = new Set(['Associate', 'UnknownLink', 'Membership']);
+		for (const sch of ftmSchemaService.getIntervalSchemas()) {
+			if (skip.has(sch.name)) continue;
 			const key = `ftm:${sch.name}`;
 			this.relationships.set(key, {
 				family: 'ftm',
 				name: sch.name,
 				label: sch.label,
 				description: sch.description,
-				color: sch.color || t.color,
+				color: sch.color || '#607D8B',
 				featured: [...sch.featured],
 				required: [...sch.required],
 				properties: ftmPropsToCatalog(sch.allProperties),
@@ -200,10 +196,14 @@ export class SchemaCatalogService {
 		}
 	}
 
-	listEntityTypes(enabled: EnabledSchemaFamilies): CatalogEntityType[] {
+	listEntityTypes(enabled: EnabledSchemaFamilies, modalLayers?: OIDSFModalLayers): CatalogEntityType[] {
 		const list: CatalogEntityType[] = [];
 		for (const [, v] of this.entities) {
 			if (!this.isFamilyEnabled(v.family, enabled)) continue;
+			if (v.family === 'ftm' && modalLayers) {
+				if (ftmSchemaService.isIntervalSchemaName(v.name)) continue;
+				if (!ftmSchemaService.schemaPassesModalLayer(v.name, modalLayers)) continue;
+			}
 			list.push(v);
 		}
 		return list.sort((a, b) => {
@@ -213,10 +213,11 @@ export class SchemaCatalogService {
 		});
 	}
 
-	listRelationshipTypes(enabled: EnabledSchemaFamilies): CatalogRelationshipType[] {
+	listRelationshipTypes(enabled: EnabledSchemaFamilies, modalLayers?: OIDSFModalLayers): CatalogRelationshipType[] {
 		const list: CatalogRelationshipType[] = [];
 		for (const [, v] of this.relationships) {
 			if (!this.isFamilyEnabled(v.family, enabled)) continue;
+			if (v.family === 'ftm' && modalLayers && !modalLayers.links) continue;
 			list.push(v);
 		}
 		return list.sort((a, b) => {
@@ -242,11 +243,13 @@ export class SchemaCatalogService {
 	}
 
 	getEntityType(family: SchemaFamily, name: string): CatalogEntityType | undefined {
-		return this.entities.get(`${family}:${name}`);
+		const n = family === 'ftm' ? canonicalSchemaName(name) : name;
+		return this.entities.get(`${family}:${n}`);
 	}
 
 	getRelationshipType(family: SchemaFamily, name: string): CatalogRelationshipType | undefined {
-		return this.relationships.get(`${family}:${name}`);
+		const n = family === 'ftm' ? canonicalSchemaName(name) : name;
+		return this.relationships.get(`${family}:${n}`);
 	}
 
 	/** Resolve from persisted entity (schemaFamily + type name). */

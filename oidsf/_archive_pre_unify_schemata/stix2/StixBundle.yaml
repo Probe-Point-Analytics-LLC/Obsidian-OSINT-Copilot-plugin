@@ -1,0 +1,12 @@
+StixBundle:
+  label: STIX 2 Bundle
+  extends:
+    - StixObject
+  description: >
+    STIX 2.1 bundle wrapper (`type: bundle`). Transport container; full objects often in JSON.
+  stix_type: bundle
+  matchable: false
+  properties:
+    objects:
+      label: Objects (JSON)
+      type: text

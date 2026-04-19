@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oidsf.dev/schema/entity.json",
+  "title": "OIDSF Entity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["oidsf_version", "id", "schema", "properties"],
+  "properties": {
+    "oidsf_version": { "$ref": "common-definitions.json#/$defs/SemVer" },
+    "id": { "$ref": "common-definitions.json#/$defs/Id" },
+    "schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Registry schema name, e.g. Person, Organization, Affiliation."
+    },
+    "properties": { "$ref": "common-definitions.json#/$defs/MultiStringProps" }
+  }
+}

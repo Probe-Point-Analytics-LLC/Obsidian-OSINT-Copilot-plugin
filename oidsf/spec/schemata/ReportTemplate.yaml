@@ -1,0 +1,15 @@
+ReportTemplate:
+  extends:
+  - AnalyticObject
+  label: Report template
+  description: Export/report template (Arkham templates shard).
+  properties:
+    name:
+      label: Name
+      type: name
+    template_type:
+      label: Template type
+      type: string
+    body:
+      label: Body
+      type: text

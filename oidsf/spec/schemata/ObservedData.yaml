@@ -1,0 +1,22 @@
+ObservedData:
+  label: ObservedData
+  extends:
+  - IntelObject
+  description: 'STIX 2.1 SDO/SRO `observed-data` (OASIS CTI).
+
+    '
+  stix_type: observed-data
+  matchable: false
+  properties:
+    first_observed:
+      label: First observed
+      type: date
+    last_observed:
+      label: Last observed
+      type: date
+    number_observed:
+      label: Number observed
+      type: string
+    objects:
+      label: Objects (JSON)
+      type: text
