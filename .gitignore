@@ -23,3 +23,6 @@ __pycache__/
 # User data (should not be committed)
 data.json
 docs/
+
+# Local LLM wiki / knowledge base (not shipped with plugin)
+llm-wiki-vault/
