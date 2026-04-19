@@ -14248,6 +14248,24 @@ _GeocodingService.INITIAL_RETRY_DELAY = 1e3;
 var GeocodingService = _GeocodingService;
 var geocodingService = new GeocodingService();
 
+// src/constants/vault-layout.ts
+var OSINT_COPILOT_VAULT_ROOT = "OSINTCopilot";
+var OSINT_COPILOT_CUSTOM_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/custom`;
+var DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversations`;
+var DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
+var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
+var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
+var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
+Research/`;
+var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
+var GRAPH_YAML_FOLDER_NAME = "graph-yaml";
+var SCHEMAS_VAULT_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/schemas`;
+var SCHEMAS_STIX2_DIR = `${SCHEMAS_VAULT_ROOT}/stix2`;
+var SCHEMAS_MITRE_DIR = `${SCHEMAS_VAULT_ROOT}/mitre`;
+var SCHEMAS_USER_DIR = `${SCHEMAS_VAULT_ROOT}/user`;
+var CUSTOM_TYPES_CONFIG_DIR = OSINT_COPILOT_CUSTOM_ROOT;
+var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
+
 // src/services/entity-manager.ts
 var SCHEMA_FAMILY_FOLDERS = ["ftm", "stix2", "mitre", "user"];
 function isSchemaFamilyFolderName(name) {
@@ -14348,6 +14366,8 @@ var EntityManager = class {
           continue;
         if (child.name === "schemas")
           continue;
+        if (child.name === GRAPH_YAML_FOLDER_NAME)
+          continue;
         if (isSchemaFamilyFolderName(child.name)) {
           await this.loadFamilyEntityTree(child, child.name);
         } else {
@@ -14357,6 +14377,7 @@ var EntityManager = class {
     }
     await this.loadConnectionsFromNotes();
     await this.parseConnectionsFromNotes();
+    await this.syncAllGraphYamlFromMemory();
   }
   /** e.g. OSINTCopilot/ftm/Person/*.md */
   async loadFamilyEntityTree(folder, family) {
@@ -14873,6 +14894,11 @@ ${entity.properties.notes || ""}
       await this.app.vault.create(filePath, content);
     }
     this.scheduleWaybackForNote(filePath);
+    try {
+      await this.writeEntityYamlFile(entity);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml entity write failed:", e);
+    }
     return filePath;
   }
   async saveCatalogEntityNote(entity, cat) {
@@ -14910,6 +14936,11 @@ ${entity.properties.notes || ""}
       await this.app.vault.create(filePath, content);
     }
     this.scheduleWaybackForNote(filePath);
+    try {
+      await this.writeEntityYamlFile(entity);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml entity write failed:", e);
+    }
     return filePath;
   }
   buildCatalogFrontmatter(entity, cat) {
@@ -15177,6 +15208,11 @@ ${entity.properties.notes || ""}
       await this.app.vault.create(filePath, content);
     }
     this.scheduleWaybackForNote(filePath);
+    try {
+      await this.writeEntityYamlFile(entity);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml entity write failed:", e);
+    }
     return filePath;
   }
   /**
@@ -15282,6 +15318,20 @@ ${entity.properties.notes || ""}
       return false;
     if (!this.assertPathWritable(entity.filePath, "delete entity"))
       return false;
+    const connIdsToDrop = [];
+    for (const [connId, conn] of this.connections) {
+      if (conn.fromEntityId === entityId || conn.toEntityId === entityId) {
+        connIdsToDrop.push(connId);
+      }
+    }
+    try {
+      await this.deleteYamlFileIfExists(this.entityYamlFilePath(entity));
+      for (const cid of connIdsToDrop) {
+        await this.deleteYamlFileIfExists(this.connectionYamlFilePath(cid));
+      }
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml delete failed:", e);
+    }
     if (entity.filePath) {
       const file = this.app.vault.getAbstractFileByPath(entity.filePath);
       if (file instanceof import_obsidian2.TFile) {
@@ -15289,10 +15339,8 @@ ${entity.properties.notes || ""}
       }
     }
     this.entities.delete(entityId);
-    for (const [connId, conn] of this.connections) {
-      if (conn.fromEntityId === entityId || conn.toEntityId === entityId) {
-        this.connections.delete(connId);
-      }
+    for (const connId of connIdsToDrop) {
+      this.connections.delete(connId);
     }
     return true;
   }
@@ -15334,6 +15382,11 @@ ${entity.properties.notes || ""}
       }
       const restoredEntity = { ...entity, filePath };
       this.entities.set(entity.id, restoredEntity);
+      try {
+        await this.writeEntityYamlFile(restoredEntity);
+      } catch (e) {
+        console.warn("[EntityManager] graph-yaml entity write failed:", e);
+      }
       return true;
     } catch (error) {
       console.error(`[EntityManager] Failed to restore entity:`, error);
@@ -15354,6 +15407,11 @@ ${entity.properties.notes || ""}
           const content = this.generateNoteContent(entity);
           await this.app.vault.modify(file, content);
         }
+      }
+      try {
+        await this.writeEntityYamlFile(entity);
+      } catch (e) {
+        console.warn("[EntityManager] graph-yaml entity write failed:", e);
       }
       return true;
     } catch (error) {
@@ -15420,6 +15478,11 @@ ${entity.properties.notes || ""}
           failed.push(entityId);
           continue;
         }
+        try {
+          await this.deleteYamlFileIfExists(this.entityYamlFilePath(entity));
+        } catch (e) {
+          console.warn("[EntityManager] graph-yaml entity delete failed:", e);
+        }
         if (entity.filePath) {
           const file = this.app.vault.getAbstractFileByPath(entity.filePath);
           if (file instanceof import_obsidian2.TFile) {
@@ -15439,6 +15502,11 @@ ${entity.properties.notes || ""}
       }
     }
     for (const connId of connectionIdsToDelete) {
+      try {
+        await this.deleteYamlFileIfExists(this.connectionYamlFilePath(connId));
+      } catch (e) {
+        console.warn("[EntityManager] graph-yaml connection delete failed:", e);
+      }
       this.connections.delete(connId);
     }
     return { deleted, failed };
@@ -15502,6 +15570,11 @@ ${entity.properties.notes || ""}
       const filePath = await this.saveConnectionAsNote(connection, fromEntity, toEntity);
       connection.filePath = filePath;
     }
+    try {
+      await this.writeConnectionYamlFile(connection);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml connection write failed:", e);
+    }
     return connection;
   }
   /**
@@ -15524,6 +15597,11 @@ ${entity.properties.notes || ""}
           const content = this.generateConnectionNoteContent(connection, fromEntity, toEntity);
           await this.app.vault.modify(file, content);
         }
+      }
+      try {
+        await this.writeConnectionYamlFile(connection);
+      } catch (e) {
+        console.warn("[EntityManager] graph-yaml connection write failed:", e);
       }
       return true;
     } catch (error) {
@@ -15663,6 +15741,11 @@ ${this.buildConnectionPropertiesSection(connection)}
       await this.app.vault.create(filePath, content);
     }
     this.scheduleWaybackForNote(filePath);
+    try {
+      await this.writeConnectionYamlFile(connection);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml connection write failed:", e);
+    }
     return filePath;
   }
   /**
@@ -15737,6 +15820,11 @@ ${this.buildConnectionPropertiesSection(connection)}
     if (connection.filePath && !this.assertPathWritable(connection.filePath, "delete connection")) {
       return false;
     }
+    try {
+      await this.deleteYamlFileIfExists(this.connectionYamlFilePath(connectionId));
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml connection delete failed:", e);
+    }
     if (!fromEntity) {
       return this.connections.delete(connectionId);
     }
@@ -15789,6 +15877,11 @@ ${this.buildConnectionPropertiesSection(connection)}
     this.connections.set(connection.id, connection);
     if (fromEntity && toEntity) {
       await this.addRelationshipToNote(fromEntity, toEntity, connection.relationship);
+    }
+    try {
+      await this.writeConnectionYamlFile(connection);
+    } catch (e) {
+      console.warn("[EntityManager] graph-yaml connection write failed:", e);
     }
     return true;
   }
@@ -15850,6 +15943,155 @@ ${this.buildConnectionPropertiesSection(connection)}
     const file = this.app.vault.getAbstractFileByPath(entity.filePath);
     if (file instanceof import_obsidian2.TFile) {
       await this.app.workspace.getLeaf().openFile(file);
+    }
+  }
+  // --- FollowTheMoney-style YAML export (`<base>/graph-yaml/`) — synced from Markdown notes ---
+  graphYamlRoot() {
+    return (0, import_obsidian2.normalizePath)(`${this.basePath}/${GRAPH_YAML_FOLDER_NAME}`);
+  }
+  sanitizeGraphYamlTypeSegment(type) {
+    const t = String(type).replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
+    return t.slice(0, 120) || "unknown";
+  }
+  entityYamlFilePath(entity) {
+    const family = entity.schemaFamily ?? "ftm";
+    const typeSeg = this.sanitizeGraphYamlTypeSegment(String(entity.type));
+    return (0, import_obsidian2.normalizePath)(
+      `${this.graphYamlRoot()}/entities/${family}/${typeSeg}/${entity.id}.yaml`
+    );
+  }
+  connectionYamlFilePath(connectionId) {
+    return (0, import_obsidian2.normalizePath)(`${this.graphYamlRoot()}/connections/${connectionId}.yaml`);
+  }
+  entityToYamlDocument(entity) {
+    return {
+      kind: "entity",
+      id: entity.id,
+      type: entity.type,
+      label: entity.label,
+      properties: entity.properties ?? {},
+      ftmSchema: entity.ftmSchema,
+      schemaFamily: entity.schemaFamily ?? "ftm",
+      notePath: entity.filePath,
+      osint_sources: entity.osint_sources,
+      osint_confidence: entity.osint_confidence,
+      osint_contradictions: entity.osint_contradictions
+    };
+  }
+  connectionToYamlDocument(connection) {
+    const fromE = this.entities.get(connection.fromEntityId);
+    const toE = this.entities.get(connection.toEntityId);
+    return {
+      kind: "connection",
+      id: connection.id,
+      fromEntityId: connection.fromEntityId,
+      toEntityId: connection.toEntityId,
+      fromLabel: fromE?.label ?? "",
+      toLabel: toE?.label ?? "",
+      relationship: connection.relationship,
+      label: connection.label,
+      properties: connection.properties ?? {},
+      ftmSchema: connection.ftmSchema,
+      schemaFamily: connection.schemaFamily ?? "ftm",
+      notePath: connection.filePath,
+      osint_sources: connection.osint_sources,
+      osint_confidence: connection.osint_confidence,
+      osint_contradictions: connection.osint_contradictions
+    };
+  }
+  async ensureParentFolderForVaultFile(filePath) {
+    const normalized = (0, import_obsidian2.normalizePath)(filePath);
+    const lastSlash = normalized.lastIndexOf("/");
+    if (lastSlash > 0) {
+      await this.ensureFolderExists(normalized.substring(0, lastSlash));
+    }
+  }
+  async writeEntityYamlFile(entity) {
+    const path = this.entityYamlFilePath(entity);
+    await this.ensureParentFolderForVaultFile(path);
+    const header = "# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.\n";
+    const body = stringify3(this.entityToYamlDocument(entity), { lineWidth: 120 });
+    const content = `${header}${body}
+`;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian2.TFile) {
+      await this.app.vault.modify(existing, content);
+    } else {
+      await this.app.vault.create(path, content);
+    }
+  }
+  async writeConnectionYamlFile(connection) {
+    const path = this.connectionYamlFilePath(connection.id);
+    await this.ensureFolderExists((0, import_obsidian2.normalizePath)(`${this.graphYamlRoot()}/connections`));
+    const header = "# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.\n";
+    const body = stringify3(this.connectionToYamlDocument(connection), { lineWidth: 120 });
+    const content = `${header}${body}
+`;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian2.TFile) {
+      await this.app.vault.modify(existing, content);
+    } else {
+      await this.app.vault.create(path, content);
+    }
+  }
+  async deleteYamlFileIfExists(path) {
+    const f = this.app.vault.getAbstractFileByPath(path);
+    if (f instanceof import_obsidian2.TFile) {
+      await this.app.fileManager.trashFile(f);
+    }
+  }
+  async collectYamlPathsRecursive(folder, out) {
+    for (const child of folder.children) {
+      if (child instanceof import_obsidian2.TFolder) {
+        await this.collectYamlPathsRecursive(child, out);
+      } else if (child instanceof import_obsidian2.TFile && child.extension === "yaml") {
+        out.push(child.path);
+      }
+    }
+  }
+  /**
+   * Remove `.yaml` files under graph-yaml that no longer match in-memory graph (e.g. after type/family moves).
+   */
+  async pruneGraphYamlOrphans() {
+    const root = this.graphYamlRoot();
+    const entitiesRoot = this.app.vault.getAbstractFileByPath(
+      (0, import_obsidian2.normalizePath)(`${root}/entities`)
+    );
+    if (entitiesRoot instanceof import_obsidian2.TFolder) {
+      const paths = [];
+      await this.collectYamlPathsRecursive(entitiesRoot, paths);
+      for (const p of paths) {
+        const base = p.split("/").pop() ?? "";
+        const id = base.replace(/\.yaml$/i, "");
+        if (!this.entities.has(id)) {
+          await this.deleteYamlFileIfExists(p);
+        }
+      }
+    }
+    const connRoot = this.app.vault.getAbstractFileByPath((0, import_obsidian2.normalizePath)(`${root}/connections`));
+    if (connRoot instanceof import_obsidian2.TFolder) {
+      for (const child of connRoot.children) {
+        if (child instanceof import_obsidian2.TFile && child.extension === "yaml") {
+          const id = child.name.replace(/\.yaml$/i, "");
+          if (!this.connections.has(id)) {
+            await this.deleteYamlFileIfExists(child.path);
+          }
+        }
+      }
+    }
+  }
+  async syncAllGraphYamlFromMemory() {
+    try {
+      await this.ensureFolderExists(this.graphYamlRoot());
+      for (const e of this.entities.values()) {
+        await this.writeEntityYamlFile(e);
+      }
+      for (const c of this.connections.values()) {
+        await this.writeConnectionYamlFile(c);
+      }
+      await this.pruneGraphYamlOrphans();
+    } catch (err) {
+      console.warn("[EntityManager] graph-yaml full sync failed:", err);
     }
   }
   /**
@@ -20891,23 +21133,6 @@ var GraphHistoryManager = class {
     return this.redoStack[this.redoStack.length - 1].description;
   }
 };
-
-// src/constants/vault-layout.ts
-var OSINT_COPILOT_VAULT_ROOT = "OSINTCopilot";
-var OSINT_COPILOT_CUSTOM_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/custom`;
-var DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversations`;
-var DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
-var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
-var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
-var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
-Research/`;
-var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
-var SCHEMAS_VAULT_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/schemas`;
-var SCHEMAS_STIX2_DIR = `${SCHEMAS_VAULT_ROOT}/stix2`;
-var SCHEMAS_MITRE_DIR = `${SCHEMAS_VAULT_ROOT}/mitre`;
-var SCHEMAS_USER_DIR = `${SCHEMAS_VAULT_ROOT}/user`;
-var CUSTOM_TYPES_CONFIG_DIR = OSINT_COPILOT_CUSTOM_ROOT;
-var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
 
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";

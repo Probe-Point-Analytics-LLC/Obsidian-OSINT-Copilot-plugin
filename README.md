@@ -45,6 +45,7 @@ On first enable, the plugin creates default Markdown under **`OSINTCopilot/custo
 - **Location Map View** — Geographic visualization of addresses
 - **Entity management** — Create and organize entities (Person, Company, Location, etc.)
 - **Relationship mapping** — Typed edges (FollowTheMoney-style)
+- **FTM-style YAML mirror** — Under your entity base path (default `OSINTCopilot/`), `graph-yaml/entities/<schemaFamily>/<type>/<id>.yaml` and `graph-yaml/connections/<id>.yaml` stay in sync with Markdown notes for tooling and review (notes remain the primary editing surface)
 - **Geocoding** — Addresses → coordinates via OpenStreetMap Nominatim
 
 ### Local AI (Claude Code CLI required)

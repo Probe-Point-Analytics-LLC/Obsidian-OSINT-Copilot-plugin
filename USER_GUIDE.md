@@ -224,6 +224,8 @@ What TTPs are associated with Lazarus Group?
 2. Manually create via Command Palette: "Create Entity"
 3. Entities are saved as markdown notes with YAML frontmatter
 
+**YAML export (FollowTheMoney-style mirror)** — The plugin also maintains **`<entity base path>/graph-yaml/`** (e.g. `OSINTCopilot/graph-yaml/`): one **`.yaml` file per entity** under `entities/<schemaFamily>/<type>/<id>.yaml`, and one **per connection** under `connections/<id>.yaml`. These files are **auto-synced** when you create, edit, or delete graph data (and refreshed after load). Edit the **Markdown notes** for day-to-day work; use the YAML folder for diffs, scripts, or external FTM-style tooling.
+
 **Multi-schema types (FTM, STIX 2, MITRE, user YAML)**:
 - **FTM (FollowTheMoney)** types ship inside the plugin. **STIX 2**- and **MITRE ATT&CK**-style starter types load from vault YAML under `OSINTCopilot/schemas/` (default files are created on first run if missing).
 - Add or override definitions in `OSINTCopilot/schemas/user/` using `.yaml` with `family: user` (see `schemas/README.md` in the vault).

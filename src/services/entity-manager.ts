@@ -22,6 +22,7 @@ import { geocodingService, GeocodingError, GeocodingErrorType } from './geocodin
 import { ftmSchemaService } from './ftm-schema-service';
 import type { SchemaCatalogService } from './schema-catalog-service';
 import type { CatalogEntityType, SchemaFamily } from './schema-catalog-types';
+import { GRAPH_YAML_FOLDER_NAME } from '../constants/vault-layout';
 
 const SCHEMA_FAMILY_FOLDERS: SchemaFamily[] = ['ftm', 'stix2', 'mitre', 'user'];
 
@@ -145,6 +146,7 @@ export class EntityManager {
                 if (!(child instanceof TFolder)) continue;
                 if (child.name === 'Connections') continue;
                 if (child.name === 'schemas') continue;
+                if (child.name === GRAPH_YAML_FOLDER_NAME) continue;
 
                 if (isSchemaFamilyFolderName(child.name)) {
                     await this.loadFamilyEntityTree(child, child.name);
@@ -159,6 +161,8 @@ export class EntityManager {
 
         // Also parse connections from entity notes (for backward compatibility)
         await this.parseConnectionsFromNotes();
+
+        await this.syncAllGraphYamlFromMemory();
     }
 
     /** e.g. OSINTCopilot/ftm/Person/*.md */
@@ -785,6 +789,11 @@ ${(entity.properties.notes as string) || ''}
         }
 
         this.scheduleWaybackForNote(filePath);
+        try {
+            await this.writeEntityYamlFile(entity);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml entity write failed:', e);
+        }
         return filePath;
     }
 
@@ -826,6 +835,11 @@ ${(entity.properties.notes as string) || ''}
         }
 
         this.scheduleWaybackForNote(filePath);
+        try {
+            await this.writeEntityYamlFile(entity);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml entity write failed:', e);
+        }
         return filePath;
     }
 
@@ -1147,6 +1161,11 @@ ${(entity.properties.notes as string) || ''}
         }
 
         this.scheduleWaybackForNote(filePath);
+        try {
+            await this.writeEntityYamlFile(entity);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml entity write failed:', e);
+        }
         return filePath;
     }
 
@@ -1269,6 +1288,22 @@ ${(entity.properties.notes as string) || ''}
 
         if (!this.assertPathWritable(entity.filePath, 'delete entity')) return false;
 
+        const connIdsToDrop: string[] = [];
+        for (const [connId, conn] of this.connections) {
+            if (conn.fromEntityId === entityId || conn.toEntityId === entityId) {
+                connIdsToDrop.push(connId);
+            }
+        }
+
+        try {
+            await this.deleteYamlFileIfExists(this.entityYamlFilePath(entity));
+            for (const cid of connIdsToDrop) {
+                await this.deleteYamlFileIfExists(this.connectionYamlFilePath(cid));
+            }
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml delete failed:', e);
+        }
+
         // Delete the note file
         if (entity.filePath) {
             const file = this.app.vault.getAbstractFileByPath(entity.filePath);
@@ -1281,10 +1316,8 @@ ${(entity.properties.notes as string) || ''}
         this.entities.delete(entityId);
 
         // Remove related connections
-        for (const [connId, conn] of this.connections) {
-            if (conn.fromEntityId === entityId || conn.toEntityId === entityId) {
-                this.connections.delete(connId);
-            }
+        for (const connId of connIdsToDrop) {
+            this.connections.delete(connId);
         }
 
         return true;
@@ -1344,6 +1377,12 @@ ${(entity.properties.notes as string) || ''}
             const restoredEntity = { ...entity, filePath };
             this.entities.set(entity.id, restoredEntity);
 
+            try {
+                await this.writeEntityYamlFile(restoredEntity);
+            } catch (e) {
+                console.warn('[EntityManager] graph-yaml entity write failed:', e);
+            }
+
             return true;
         } catch (error) {
             console.error(`[EntityManager] Failed to restore entity:`, error);
@@ -1368,6 +1407,12 @@ ${(entity.properties.notes as string) || ''}
                     const content = this.generateNoteContent(entity);
                     await this.app.vault.modify(file, content);
                 }
+            }
+
+            try {
+                await this.writeEntityYamlFile(entity);
+            } catch (e) {
+                console.warn('[EntityManager] graph-yaml entity write failed:', e);
             }
 
             return true;
@@ -1454,6 +1499,12 @@ ${(entity.properties.notes as string) || ''}
                     continue;
                 }
 
+                try {
+                    await this.deleteYamlFileIfExists(this.entityYamlFilePath(entity));
+                } catch (e) {
+                    console.warn('[EntityManager] graph-yaml entity delete failed:', e);
+                }
+
                 // Delete the note file
                 if (entity.filePath) {
                     const file = this.app.vault.getAbstractFileByPath(entity.filePath);
@@ -1481,6 +1532,11 @@ ${(entity.properties.notes as string) || ''}
 
         // Delete all collected connections
         for (const connId of connectionIdsToDelete) {
+            try {
+                await this.deleteYamlFileIfExists(this.connectionYamlFilePath(connId));
+            } catch (e) {
+                console.warn('[EntityManager] graph-yaml connection delete failed:', e);
+            }
             this.connections.delete(connId);
         }
 
@@ -1576,6 +1632,12 @@ ${(entity.properties.notes as string) || ''}
             connection.filePath = filePath;
         }
 
+        try {
+            await this.writeConnectionYamlFile(connection);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml connection write failed:', e);
+        }
+
         return connection;
     }
 
@@ -1605,6 +1667,12 @@ ${(entity.properties.notes as string) || ''}
                     const content = this.generateConnectionNoteContent(connection, fromEntity, toEntity);
                     await this.app.vault.modify(file, content);
                 }
+            }
+
+            try {
+                await this.writeConnectionYamlFile(connection);
+            } catch (e) {
+                console.warn('[EntityManager] graph-yaml connection write failed:', e);
             }
 
             return true;
@@ -1791,6 +1859,11 @@ ${this.buildConnectionPropertiesSection(connection)}
         }
 
         this.scheduleWaybackForNote(filePath);
+        try {
+            await this.writeConnectionYamlFile(connection);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml connection write failed:', e);
+        }
         return filePath;
     }
 
@@ -1884,6 +1957,12 @@ ${this.buildConnectionPropertiesSection(connection)}
             return false;
         }
 
+        try {
+            await this.deleteYamlFileIfExists(this.connectionYamlFilePath(connectionId));
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml connection delete failed:', e);
+        }
+
         // Get the source entity to update its note
         if (!fromEntity) {
             return this.connections.delete(connectionId);
@@ -1949,6 +2028,12 @@ ${this.buildConnectionPropertiesSection(connection)}
         // Update the source entity's note
         if (fromEntity && toEntity) {
             await this.addRelationshipToNote(fromEntity, toEntity, connection.relationship);
+        }
+
+        try {
+            await this.writeConnectionYamlFile(connection);
+        } catch (e) {
+            console.warn('[EntityManager] graph-yaml connection write failed:', e);
         }
 
         return true;
@@ -2018,6 +2103,169 @@ ${this.buildConnectionPropertiesSection(connection)}
         const file = this.app.vault.getAbstractFileByPath(entity.filePath);
         if (file instanceof TFile) {
             await this.app.workspace.getLeaf().openFile(file);
+        }
+    }
+
+    // --- FollowTheMoney-style YAML export (`<base>/graph-yaml/`) — synced from Markdown notes ---
+
+    private graphYamlRoot(): string {
+        return normalizePath(`${this.basePath}/${GRAPH_YAML_FOLDER_NAME}`);
+    }
+
+    private sanitizeGraphYamlTypeSegment(type: string): string {
+        const t = String(type).replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+        return t.slice(0, 120) || 'unknown';
+    }
+
+    private entityYamlFilePath(entity: Entity): string {
+        const family = entity.schemaFamily ?? 'ftm';
+        const typeSeg = this.sanitizeGraphYamlTypeSegment(String(entity.type));
+        return normalizePath(
+            `${this.graphYamlRoot()}/entities/${family}/${typeSeg}/${entity.id}.yaml`,
+        );
+    }
+
+    private connectionYamlFilePath(connectionId: string): string {
+        return normalizePath(`${this.graphYamlRoot()}/connections/${connectionId}.yaml`);
+    }
+
+    private entityToYamlDocument(entity: Entity): Record<string, unknown> {
+        return {
+            kind: 'entity',
+            id: entity.id,
+            type: entity.type,
+            label: entity.label,
+            properties: entity.properties ?? {},
+            ftmSchema: entity.ftmSchema,
+            schemaFamily: entity.schemaFamily ?? 'ftm',
+            notePath: entity.filePath,
+            osint_sources: entity.osint_sources,
+            osint_confidence: entity.osint_confidence,
+            osint_contradictions: entity.osint_contradictions,
+        };
+    }
+
+    private connectionToYamlDocument(connection: Connection): Record<string, unknown> {
+        const fromE = this.entities.get(connection.fromEntityId);
+        const toE = this.entities.get(connection.toEntityId);
+        return {
+            kind: 'connection',
+            id: connection.id,
+            fromEntityId: connection.fromEntityId,
+            toEntityId: connection.toEntityId,
+            fromLabel: fromE?.label ?? '',
+            toLabel: toE?.label ?? '',
+            relationship: connection.relationship,
+            label: connection.label,
+            properties: connection.properties ?? {},
+            ftmSchema: connection.ftmSchema,
+            schemaFamily: connection.schemaFamily ?? 'ftm',
+            notePath: connection.filePath,
+            osint_sources: connection.osint_sources,
+            osint_confidence: connection.osint_confidence,
+            osint_contradictions: connection.osint_contradictions,
+        };
+    }
+
+    private async ensureParentFolderForVaultFile(filePath: string): Promise<void> {
+        const normalized = normalizePath(filePath);
+        const lastSlash = normalized.lastIndexOf('/');
+        if (lastSlash > 0) {
+            await this.ensureFolderExists(normalized.substring(0, lastSlash));
+        }
+    }
+
+    private async writeEntityYamlFile(entity: Entity): Promise<void> {
+        const path = this.entityYamlFilePath(entity);
+        await this.ensureParentFolderForVaultFile(path);
+        const header =
+            '# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.\n';
+        const body = stringifyYaml(this.entityToYamlDocument(entity), { lineWidth: 120 });
+        const content = `${header}${body}\n`;
+        const existing = this.app.vault.getAbstractFileByPath(path);
+        if (existing instanceof TFile) {
+            await this.app.vault.modify(existing, content);
+        } else {
+            await this.app.vault.create(path, content);
+        }
+    }
+
+    private async writeConnectionYamlFile(connection: Connection): Promise<void> {
+        const path = this.connectionYamlFilePath(connection.id);
+        await this.ensureFolderExists(normalizePath(`${this.graphYamlRoot()}/connections`));
+        const header =
+            '# OSINT Copilot graph export (FTM-style YAML mirror). The Markdown note is the primary source; this file is auto-synced.\n';
+        const body = stringifyYaml(this.connectionToYamlDocument(connection), { lineWidth: 120 });
+        const content = `${header}${body}\n`;
+        const existing = this.app.vault.getAbstractFileByPath(path);
+        if (existing instanceof TFile) {
+            await this.app.vault.modify(existing, content);
+        } else {
+            await this.app.vault.create(path, content);
+        }
+    }
+
+    private async deleteYamlFileIfExists(path: string): Promise<void> {
+        const f = this.app.vault.getAbstractFileByPath(path);
+        if (f instanceof TFile) {
+            await this.app.fileManager.trashFile(f);
+        }
+    }
+
+    private async collectYamlPathsRecursive(folder: TFolder, out: string[]): Promise<void> {
+        for (const child of folder.children) {
+            if (child instanceof TFolder) {
+                await this.collectYamlPathsRecursive(child, out);
+            } else if (child instanceof TFile && child.extension === 'yaml') {
+                out.push(child.path);
+            }
+        }
+    }
+
+    /**
+     * Remove `.yaml` files under graph-yaml that no longer match in-memory graph (e.g. after type/family moves).
+     */
+    private async pruneGraphYamlOrphans(): Promise<void> {
+        const root = this.graphYamlRoot();
+        const entitiesRoot = this.app.vault.getAbstractFileByPath(
+            normalizePath(`${root}/entities`),
+        );
+        if (entitiesRoot instanceof TFolder) {
+            const paths: string[] = [];
+            await this.collectYamlPathsRecursive(entitiesRoot, paths);
+            for (const p of paths) {
+                const base = p.split('/').pop() ?? '';
+                const id = base.replace(/\.yaml$/i, '');
+                if (!this.entities.has(id)) {
+                    await this.deleteYamlFileIfExists(p);
+                }
+            }
+        }
+        const connRoot = this.app.vault.getAbstractFileByPath(normalizePath(`${root}/connections`));
+        if (connRoot instanceof TFolder) {
+            for (const child of connRoot.children) {
+                if (child instanceof TFile && child.extension === 'yaml') {
+                    const id = child.name.replace(/\.yaml$/i, '');
+                    if (!this.connections.has(id)) {
+                        await this.deleteYamlFileIfExists(child.path);
+                    }
+                }
+            }
+        }
+    }
+
+    private async syncAllGraphYamlFromMemory(): Promise<void> {
+        try {
+            await this.ensureFolderExists(this.graphYamlRoot());
+            for (const e of this.entities.values()) {
+                await this.writeEntityYamlFile(e);
+            }
+            for (const c of this.connections.values()) {
+                await this.writeConnectionYamlFile(c);
+            }
+            await this.pruneGraphYamlOrphans();
+        } catch (err) {
+            console.warn('[EntityManager] graph-yaml full sync failed:', err);
         }
     }
 

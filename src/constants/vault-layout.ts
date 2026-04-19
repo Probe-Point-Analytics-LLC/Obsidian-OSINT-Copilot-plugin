@@ -18,6 +18,12 @@ export const DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}
 
 export const GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
 
+/**
+ * FollowTheMoney-style parallel export: one `.yaml` per entity/connection, synced from notes.
+ * Lives under the configured entity base path, e.g. `OSINTCopilot/graph-yaml/`.
+ */
+export const GRAPH_YAML_FOLDER_NAME = 'graph-yaml';
+
 /** Vault-visible schema definitions (YAML): STIX2, MITRE, user extensions. */
 export const SCHEMAS_VAULT_ROOT = `${OSINT_COPILOT_VAULT_ROOT}/schemas`;
 export const SCHEMAS_STIX2_DIR = `${SCHEMAS_VAULT_ROOT}/stix2`;
