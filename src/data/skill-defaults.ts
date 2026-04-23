@@ -17,7 +17,7 @@ description: Short line for the planner tool list
 Body: instructions used when this skill runs (local Claude).
 \`\`\`
 
-Toggle skills in the chat header **Skills** menu. Built-in **Local search** and **Graph generation** are managed there too.
+With **legacy** orchestration (unified mode off), built-in **Local search** and **Graph generation** follow **Settings** / saved **skill toggles**. Unified chat uses the **Claude** or **Hermes** runtime from the chat header instead.
 
 `,
 	},

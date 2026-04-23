@@ -114,6 +114,8 @@ export class OrchestrationService {
         };
 
         try {
+            // Product default: unified path. Legacy planner remains for power users via
+            // Settings → Legacy orchestration (chat no longer exposes per-turn skill toggles).
             if (this.plugin.settings.unifiedAgentOrchestration !== false) {
                 return await this.processRequestUnified(
                     query,
@@ -404,8 +406,8 @@ export class OrchestrationService {
         if (!first) {
             return {
                 toolsToCall: [],
-                planSummary: `### No tools available\nEnable at least one skill in the chat **Skills** menu.`,
-                directResponse: `No skills are enabled. Open **Skills** in the chat header and turn on at least one skill.`,
+                planSummary: `### No tools available\nEnable at least one planner tool in **Settings → OSINT Copilot** (legacy orchestration skill toggles / defaults).`,
+                directResponse: `No skills are enabled for the legacy planner. Open plugin Settings and turn on the built-in tools you need (e.g. Local search), or switch back to unified chat.`,
             };
         }
         const label = first === "LOCAL_VAULT" ? "Local vault" : first === "EXTRACT_TO_GRAPH" ? "Graph extraction" : first;
@@ -456,9 +458,9 @@ export class OrchestrationService {
                 graphCommands: [],
                 isProposal: true,
                 planSummary:
-                    "### No tools available\nEnable at least one skill using the **Skills** button in the chat header (e.g. Local search).",
+                    "### No tools available\nEnable at least one planner tool in **Settings → OSINT Copilot** (legacy skill toggles; the chat header no longer has a Skills menu).",
                 directResponse:
-                    "No skills are enabled. Open **Skills** in the chat header and enable at least one skill, then send your message again.",
+                    "No skills are enabled for the legacy planner. Open plugin Settings, adjust skill toggles under legacy orchestration, then send your message again.",
             };
         }
 

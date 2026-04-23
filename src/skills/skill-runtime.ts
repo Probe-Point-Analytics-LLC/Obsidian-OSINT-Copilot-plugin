@@ -147,7 +147,7 @@ export function filterToolsToCall(
 	});
 }
 
-/** Built-in + vault skills for the Skills menu (toggle state from settings). */
+/** Built-in + vault skills for legacy orchestration (toggle state from `skillToggles` in settings). */
 export async function listSkillsForMenu(
 	registry: SkillRegistry,
 	skillToggles: Record<string, boolean>,

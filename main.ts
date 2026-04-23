@@ -13,7 +13,6 @@ import {
   ItemView,
   WorkspaceLeaf,
   MarkdownRenderer,
-  Menu,
   CachedMetadata,
   Component,
   normalizePath,
@@ -67,8 +66,12 @@ import { TaskAgentBootstrapService } from './src/task-agents/task-agent-bootstra
 import { isTaskAgentRunnable } from './src/task-agents/task-agent-settings';
 import { SkillRegistry } from './src/skills/skill-registry';
 import { SkillBootstrapService } from './src/skills/skill-bootstrap';
-import { listSkillsForMenu } from './src/skills/skill-runtime';
 import { createAgentProvider } from './src/services/agent-runtime/create-agent-provider';
+import {
+  getChatRuntimeAvailability,
+  invalidateChatRuntimeAvailabilityCache,
+  type ChatRuntimeAvailability,
+} from './src/services/agent-runtime/chat-runtime-availability';
 import {
   DEFAULT_CONVERSATION_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
@@ -747,6 +750,7 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   async saveSettings() {
+    invalidateChatRuntimeAvailabilityCache();
     await this.saveData(this.settings);
     if (this.graphApiService) {
       this.graphApiService.setSettings({
@@ -1876,9 +1880,6 @@ export class ChatView extends ItemView {
   activeCheckpointId: string | undefined;
   orchestrationMode: boolean = true;
   vaultGraphIngestMode: boolean = false;
-  /** Bound to `settings.activeAgentId` (vault prompts). */
-  agentDropdown!: HTMLSelectElement;
-  agentSelectContainer!: HTMLElement;
   /** Legacy: persisted on conversations; task agents are configured in settings only. */
   selectedTaskAgentId: string = "";
   graphGenerationMode: boolean = false;
@@ -1889,6 +1890,8 @@ export class ChatView extends ItemView {
   sidebarVisible: boolean = true;
   uploadButtonEl!: HTMLElement;
   urlButtonEl!: HTMLElement; // URL extraction button
+  /** Send button (used to disable when no agent CLI is available). */
+  sendButtonEl!: HTMLButtonElement;
   dragOverlay!: HTMLElement;
   // Attached files display
   attachmentsContainer!: HTMLElement;
@@ -1930,102 +1933,65 @@ export class ChatView extends ItemView {
     this.applyChatMode("general");
   }
 
-  private async openSkillsMenu(anchor: HTMLElement) {
-    const menu = new Menu();
-    try {
-      const rows = await listSkillsForMenu(
-        this.plugin.skillRegistry,
-        this.plugin.settings.skillToggles ?? {},
-      );
-      for (const { entry, enabled } of rows) {
-        menu.addItem((item) => {
-          item.setTitle(
-            entry.description
-              ? `${entry.name} — ${entry.description.slice(0, 120)}`
-              : entry.name,
-          );
-          item.setChecked(enabled);
-          item.onClick(async () => {
-            this.plugin.settings.skillToggles[entry.id] = !enabled;
-            await this.plugin.saveSettings();
-          });
-        });
+  /** If only one CLI works, force `agentRuntimeProvider` (avoids sending to a dead binary). */
+  private async syncRuntimeSelectionToAvailability(av: ChatRuntimeAvailability): Promise<void> {
+    const cur = this.plugin.settings.agentRuntimeProvider;
+    if (av.claude && !av.hermes) {
+      if (cur !== "claude-code") {
+        this.plugin.settings.agentRuntimeProvider = "claude-code";
+        await this.plugin.saveSettings();
+        new Notice("Using Claude Code (Hermes CLI not available).");
       }
-    } catch (e) {
-      console.error("[ChatView] Skills menu:", e);
-      new Notice("Could not load skills.", 4000);
+      return;
     }
-    menu.addSeparator();
-    menu.addItem((item) => {
-      item.setTitle(`Add new skill… (${this.plugin.settings.skillsFolder})`);
-      item.onClick(() => void this.createNewSkillFile());
+    if (!av.claude && av.hermes) {
+      if (cur !== "hermes-agent") {
+        this.plugin.settings.agentRuntimeProvider = "hermes-agent";
+        await this.plugin.saveSettings();
+        new Notice("Using Hermes Agent (Claude CLI not available).");
+      }
+    }
+  }
+
+  private buildRuntimeHeaderRow(buttonGroup: HTMLElement, av: ChatRuntimeAvailability): void {
+    const wrap = buttonGroup.createDiv({ cls: "vault-ai-runtime-header" });
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "8px";
+    wrap.style.flexWrap = "wrap";
+
+    if (!av.claude && !av.hermes) {
+      wrap.createEl("span", {
+        text: "No agent CLI detected. Configure Claude Code or Hermes Agent under Settings → OSINT Copilot.",
+        cls: "setting-item-description",
+      });
+      return;
+    }
+
+    if (av.claude && av.hermes) {
+      wrap.createEl("span", { text: "Runtime:", cls: "vault-ai-mode-select-label" });
+      const mkBtn = (id: "claude-code" | "hermes-agent", label: string) => {
+        const b = wrap.createEl("button", { text: label, cls: "clickable-icon" });
+        const active = this.plugin.settings.agentRuntimeProvider === id;
+        b.style.opacity = active ? "1" : "0.65";
+        b.style.fontWeight = active ? "700" : "400";
+        b.title = id === "claude-code" ? "Use Claude Code for chat" : "Use Hermes Agent for chat";
+        b.addEventListener("click", async () => {
+          if (this.plugin.settings.agentRuntimeProvider === id) return;
+          this.plugin.settings.agentRuntimeProvider = id;
+          await this.plugin.saveSettings();
+        });
+      };
+      mkBtn("claude-code", "Claude");
+      mkBtn("hermes-agent", "Hermes");
+      return;
+    }
+
+    const only = av.claude ? "Claude Code" : "Hermes Agent";
+    wrap.createEl("span", {
+      text: `Runtime: ${only} (only CLI available)`,
+      cls: "setting-item-description",
     });
-    const r = anchor.getBoundingClientRect();
-    menu.showAtPosition({ x: r.left, y: r.bottom });
-  }
-
-  private async createNewSkillFile() {
-    const root = normalizePath(this.plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
-    const id = `new_skill_${Date.now()}`;
-    const fileName = `new-skill-${Date.now()}.md`;
-    const path = normalizePath(`${root}/${fileName}`);
-    const body = `---
-skill_kind: vault
-id: ${id}
-name: New skill
-description: Short description for the planner tool list.
----
-
-Instructions for this skill (local Claude).`;
-    try {
-      const parts = root.split("/").filter(Boolean);
-      let acc = "";
-      for (const p of parts) {
-        acc = acc ? `${acc}/${p}` : p;
-        if (!this.app.vault.getAbstractFileByPath(acc)) {
-          await this.app.vault.createFolder(acc);
-        }
-      }
-      await this.app.vault.create(path, body);
-      const f = this.app.vault.getAbstractFileByPath(path);
-      if (f instanceof TFile) {
-        await this.app.workspace.getLeaf(false).openFile(f);
-      }
-      this.plugin.skillRegistry.invalidate();
-      new Notice(`Created ${path}`);
-    } catch (e) {
-      new Notice(`Failed to create skill: ${e instanceof Error ? e.message : String(e)}`, 5000);
-    }
-  }
-
-  private async populateAgentDropdown() {
-    if (!this.agentDropdown) return;
-    this.agentDropdown.empty();
-    try {
-      const agents = await this.plugin.vaultPromptLoader.listAgents();
-      const list = agents.length > 0 ? agents : [{ id: "default", name: "Default" }];
-      const active = this.plugin.settings.activeAgentId || "default";
-      let matched = false;
-      for (const a of list) {
-        const opt = this.agentDropdown.createEl("option", {
-          text: a.name || a.id,
-          value: a.id,
-        });
-        if (a.id === active) {
-          opt.selected = true;
-          matched = true;
-        }
-      }
-      if (!matched) {
-        const opt = this.agentDropdown.createEl("option", {
-          text: active,
-          value: active,
-        });
-        opt.selected = true;
-      }
-    } catch {
-      this.agentDropdown.createEl("option", { text: "Default", value: "default" }).selected = true;
-    }
   }
 
   async onOpen() {
@@ -2146,37 +2112,9 @@ Instructions for this skill (local Claude).`;
       void this.startNewConversation();
     });
 
-    const skillsBtn = buttonGroup.createEl("button", {
-      text: "Skills",
-      cls: "vault-ai-skills-btn",
-    });
-    skillsBtn.title =
-      this.plugin.settings.unifiedAgentOrchestration !== false
-        ? "Optional vault skills (legacy flow only). Unified mode uses your selected agent runtime's skills."
-        : "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
-    skillsBtn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      void this.openSkillsMenu(skillsBtn);
-    });
-
-    this.agentSelectContainer = buttonGroup.createDiv("vault-ai-agent-select-container");
-    const agentLabel = this.agentSelectContainer.createEl("label", {
-      text: "Agent:",
-      cls: "vault-ai-mode-select-label",
-    });
-    agentLabel.htmlFor = "vault-ai-agent-dropdown";
-    this.agentDropdown = this.agentSelectContainer.createEl("select", {
-      cls: "vault-ai-agent-dropdown",
-    });
-    this.agentDropdown.id = "vault-ai-agent-dropdown";
-    void this.populateAgentDropdown();
-    this.agentDropdown.addEventListener("change", () => {
-      this.plugin.settings.activeAgentId = this.agentDropdown.value || "default";
-      void this.plugin.saveSettings();
-      this.plugin.vaultPromptLoader?.invalidateAll();
-      this.plugin.attachVaultSkillFromVault();
-      new Notice(`Active agent: ${this.plugin.settings.activeAgentId}`);
-    });
+    const runtimeAvailability = await getChatRuntimeAvailability(this.plugin);
+    await this.syncRuntimeSelectionToAvailability(runtimeAvailability);
+    this.buildRuntimeHeaderRow(buttonGroup, runtimeAvailability);
 
     // Settings shortcut button
     const settingsBtn = buttonGroup.createEl("button", {
@@ -2191,7 +2129,7 @@ Instructions for this skill (local Claude).`;
       this.app.setting.openTabById(this.plugin.manifest.id);
     });
 
-    // Legacy graph toggle hidden (orchestration + Skills drive tools)
+    // Legacy graph toggle hidden (unified agent handles extraction intent from the prompt)
     this.entityGenContainer = buttonGroup.createDiv("vault-ai-entity-gen-toggle");
     this.entityGenContainer.addClass("vault-ai-toggle-container");
     this.entityGenContainer.style.display = "none";
@@ -2292,6 +2230,14 @@ Instructions for this skill (local Claude).`;
       text: "Send",
       cls: "vault-ai-send-btn"
     });
+    this.sendButtonEl = sendBtn;
+    if (!runtimeAvailability.claude && !runtimeAvailability.hermes) {
+      sendBtn.disabled = true;
+      sendBtn.title = "Install and configure Claude Code or Hermes Agent in Settings → OSINT Copilot.";
+    } else {
+      sendBtn.disabled = false;
+      sendBtn.title = "";
+    }
     sendBtn.addEventListener("click", () => void this.handleSend());
 
     // Drag and Drop Overlay
@@ -2434,13 +2380,13 @@ Instructions for this skill (local Claude).`;
       return {
         icon: "🤖",
         title: "Unified agent:",
-        text: `One local **${p}** turn per message (vault search + graph proposals via that agent's skills). Disable in Settings → **Legacy orchestration** to restore planner + built-in tools.`,
+        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments (header: Claude vs Hermes when both CLIs are available). Turn off unified mode in Settings → Legacy orchestration only if you need the classic planner.`,
       };
     }
     return {
       icon: "🤖",
       title: "Orchestration:",
-      text: "The planner proposes tools enabled under **Skills** (local search, graph extraction, custom vault skills).",
+      text: "Classic planner + built-in tools. Enable or disable specific tools via Plugin Settings (skill toggles); chat no longer exposes a Skills menu.",
     };
   }
 
@@ -2816,7 +2762,7 @@ Instructions for this skill (local Claude).`;
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    return "Ask for an investigation; enable tools under Skills. Attach files or URLs for graph extraction when needed...";
+    return "Ask for an investigation (search vs graph follows from your wording and attachments). Pick Claude or Hermes in the header when both runtimes are available…";
   }
 
   // Update the input placeholder text
@@ -2904,7 +2850,6 @@ Instructions for this skill (local Claude).`;
   }
 
   updateAllModeLabels() {
-    void this.populateAgentDropdown();
     this.updateGraphGenerationLabel();
   }
 
@@ -4028,6 +3973,16 @@ Instructions for this skill (local Claude).`;
       }
       // If not handled (returned false), continue normal flow
     }
+
+    const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
+    if (!sendRuntimeAvailability.claude && !sendRuntimeAvailability.hermes) {
+      new Notice(
+        "No agent runtime is available. Install Claude Code or Hermes Agent and confirm paths under Settings → OSINT Copilot.",
+        8000,
+      );
+      return;
+    }
+    await this.syncRuntimeSelectionToAvailability(sendRuntimeAvailability);
 
     this.inputEl.value = "";
 
@@ -5919,7 +5874,7 @@ class VaultAISettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Skills folder")
       .setDesc(
-        "Markdown skills the planner may invoke (SKILL_*). Toggle built-in Local search and Graph generation in the chat **Skills** menu.",
+        "Markdown skills the legacy planner may invoke (SKILL_*). With unified chat, the chosen runtime handles tools; legacy flow still uses skill toggles from settings defaults.",
       )
       .addText((text) =>
         text

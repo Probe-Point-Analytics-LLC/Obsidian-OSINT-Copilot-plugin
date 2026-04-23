@@ -183,9 +183,9 @@ Once installed, you'll see the OSINT Copilot tools in the left sidebar:
 Chat **send** uses a **unified local agent** by default (Settings → **Unified chat agent**):
 
 - **Claude Code** or **Hermes Agent** (user-selectable) runs **one JSON turn** per message: Markdown answer + optional `graph_operations` (same shape as graph extraction) + `retrieval_hits`. The external agent is instructed to use **its own installed skills/tools** for vault search and entity work. Proposed graph changes still go through the plugin’s **confirm / apply** flow.
-- Turn off **Unified agent orchestration** in Settings to restore the **legacy** flow: planner + built-in **LOCAL_VAULT** / **EXTRACT_TO_GRAPH** tools and chat **Skills** toggles.
+- Turn off **Unified agent orchestration** in Settings to restore the **legacy** flow: planner + built-in **LOCAL_VAULT** / **EXTRACT_TO_GRAPH** tools, with tool enablement from **saved skill toggles** / defaults (not from a chat Skills menu).
 
-The chat header may still show **mode** labels for UX; routing always calls orchestration unless **Vault graph ingest** mode is selected.
+The chat header shows **Claude** vs **Hermes** when both CLIs pass a health probe; routing always calls orchestration unless **Vault graph ingest** mode is selected.
 
 Optional **custom chat checkpoints** (OpenAI-compatible URLs) in **Settings** are legacy; they are not used by the unified agent path.
 
@@ -788,7 +788,7 @@ For issues, feature requests, or questions:
 
 ### Documentation (current)
 
-- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), **unified agent runtime** (Claude Code or Hermes + JSON turn, legacy planner toggle), and **Skills-based orchestration** (legacy path) with no remote investigation API.
+- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), **unified agent runtime** (Claude vs Hermes in the chat header when both CLIs are healthy, legacy planner toggle), and **legacy planner tools** (skill toggles in settings-backed data) with no remote investigation API.
 
 ### Recent Improvements
 

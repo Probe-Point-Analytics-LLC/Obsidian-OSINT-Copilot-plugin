@@ -1,4 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('../src/services/agent-runtime/chat-runtime-availability', () => ({
+  getChatRuntimeAvailability: vi.fn().mockResolvedValue({ claude: true, hermes: false }),
+  invalidateChatRuntimeAvailabilityCache: vi.fn(),
+}));
+
 import VaultAIPlugin from '../main';
 import { ChatView } from '../main';
 import { App } from 'obsidian';

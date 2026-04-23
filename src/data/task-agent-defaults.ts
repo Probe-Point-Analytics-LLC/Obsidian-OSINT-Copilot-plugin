@@ -54,7 +54,7 @@ Paths must stay under **both** the agent’s \`output_roots\` **and** the global
 
 ## Settings
 
-Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**; orchestration uses the **Skills** menu in chat.
+Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**; legacy orchestration uses skill toggles there too (not from chat).
 `,
 	},
 	{

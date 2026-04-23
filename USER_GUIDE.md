@@ -17,7 +17,7 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — By default, chat uses a **unified agent turn** via **Claude Code** or **Hermes Agent** (Settings → **Agent runtime**). That agent uses **its own CLI-installed skills** for vault search and graph-oriented extraction; the plugin applies graph writes through the usual confirmation UI. Turn off **Unified agent orchestration** to restore the older **planner + LOCAL_VAULT / EXTRACT_TO_GRAPH** flow and chat **Skills** menu for vault markdown skills. **Vault prompts** under **`OSINTCopilot/custom/`** still augment the agent. **Chat history** defaults to **`OSINTCopilot/conversations/`**.
+2. **Local AI** — By default, chat uses a **unified agent turn** via **Claude Code** or **Hermes Agent**. When **both** CLIs respond to health checks, the **chat header** lets you pick **Claude** vs **Hermes** (saved as **Agent runtime** in Settings). If only one CLI works, the plugin picks it automatically. That agent uses **its own CLI-installed skills** for vault search and graph-oriented extraction; the plugin applies graph writes through the usual confirmation UI. Turn off **Unified agent orchestration** to restore the older **planner + LOCAL_VAULT / EXTRACT_TO_GRAPH** flow; legacy tool enablement uses **Settings** / saved **skill toggles** (there is no Skills menu in chat). **Vault prompts** under **`OSINTCopilot/custom/`** still augment the agent. **Chat history** defaults to **`OSINTCopilot/conversations/`**.
 3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. AI calls go through your selected **local** CLI (Claude Code and/or Hermes as configured).
 
 ### Who is this for?
@@ -78,7 +78,7 @@ Under **Settings → OSINT Copilot → Unified chat agent**:
 | Setting | Purpose |
 |--------|---------|
 | **Agent runtime** | **Claude Code** (default) or **Hermes Agent** — which CLI receives the unified JSON prompt on stdin. |
-| **Unified agent orchestration** | When **on** (default), chat skips the legacy planner and built-in search/extract tools. When **off**, the old planner + **Skills** (`LOCAL_VAULT`, `EXTRACT_TO_GRAPH`, `SKILL_*`) runs again. |
+| **Unified agent orchestration** | When **on** (default), chat skips the legacy planner and built-in search/extract tools. When **off**, the old planner + planner tools (`LOCAL_VAULT`, `EXTRACT_TO_GRAPH`, `SKILL_*`) runs again, driven by **Settings** / **skill toggles** — not from chat. |
 | **Hermes CLI path** / **extra args** / **timeout** / **health-check args** | Used only when Agent runtime is **Hermes**. Extra args are split on whitespace and prepended before stdin is sent (your Hermes build may require a subcommand — set it here). |
 | **Test agent runtime** | Health check for the **selected** runtime. |
 
@@ -111,7 +111,7 @@ On load, the plugin creates missing files under **`OSINTCopilot/custom/prompts/`
 
 Default **`OSINTCopilot/custom/skills`**. On first run the plugin creates **`README.md`** and **`example-skill.md`** if missing.
 
-Each custom skill is a Markdown file with YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description`). The orchestration planner may propose **`SKILL_<id>`** when that skill is enabled in the chat **Skills** menu.
+Each custom skill is a Markdown file with YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description`). The **legacy** orchestration planner may propose **`SKILL_<id>`** when that skill is enabled via **skill toggles** (defaults + settings), not from the chat UI.
 
 **Settings:** **Skills folder** under **OSINT Copilot**.
 
@@ -150,18 +150,18 @@ Access the main chat interface via:
 - **Ribbon Icon**: Click the OSINT Copilot icon in the left sidebar
 - **Command Palette**: `Ctrl/Cmd + P` → "OSINT Copilot: Open Chat"
 
-### Orchestration and Skills
+### Orchestration and runtime
 
-**Default (unified):** one **Agent runtime** turn per message — no separate planner step. The external agent (Claude or Hermes) is instructed to use **its own** skills for vault search and graph extraction; results must match the JSON contract so the plugin can show **proposed graph changes** for you to confirm.
+**Default (unified):** one **Agent runtime** turn per message — no separate planner step. The external agent (Claude or Hermes) is instructed to use **its own** skills for vault search and graph extraction; results must match the JSON contract so the plugin can show **proposed graph changes** for you to confirm. Search vs graph behavior follows your **message and attachments**.
 
-**Legacy mode:** disable **Unified agent orchestration** in Settings. Then the chat uses a **planner** that proposes which **tools** to run; you choose capabilities via the **Skills** button.
+**Legacy mode:** disable **Unified agent orchestration** in Settings. Then the chat uses a **planner** that proposes which **tools** to run; enablement follows **skill toggles** in plugin data / defaults (there is no per-message Skills control in the chat header).
 
 | Built-in skill | Planner tool | Role (legacy only) |
 |----------------|--------------|---------------------|
 | **Local search** | `LOCAL_VAULT` | Search across your vault notes for relevant snippets |
 | **Graph generation** | `EXTRACT_TO_GRAPH` | Extract entities into the graph from attachment context |
 
-**Custom vault skills** (`SKILL_<id>`) apply to **legacy** orchestration only. Files live under **`OSINTCopilot/custom/skills/`**. Use **Add new skill…** in the Skills menu to create a template file.
+**Custom vault skills** (`SKILL_<id>`) apply to **legacy** orchestration only. Files live under **`OSINTCopilot/custom/skills/`**. Duplicate **`example-skill.md`** or add a new Markdown file with valid frontmatter.
 
 Your **vault prompts** (`rules/global.md`, agents) are still merged into the unified agent prompt as **vault augmentation**.
 
@@ -173,7 +173,7 @@ Your **vault prompts** (`rules/global.md`, agents) are still merged into the uni
 
 **Unified (default):** type your question; the selected **Agent runtime** returns Markdown plus optional retrieval hits. No Skills toggle required.
 
-**Legacy:** disable unified orchestration, enable **Local search** under **Skills**, approve the planner when prompted.
+**Legacy:** disable unified orchestration, ensure **Local search** is enabled for the planner (via **skill toggles** / defaults in settings-backed data), approve the planner when prompted.
 
 **Tips:** Use **Reload vault prompts** after editing rules under `OSINTCopilot/custom/prompts/`.
 
@@ -238,7 +238,7 @@ What TTPs are associated with Lazarus Group?
 - Locks are stored in plugin data (paths survive restarts). Renaming a locked note in the vault updates the lock entry. Deleting a file outside the plugin still removes the file from disk.
 
 **Creating Entities**:
-1. Enable **Graph generation** under **Skills**, attach or paste source text, and run orchestration so the planner can use `EXTRACT_TO_GRAPH`
+1. (**Legacy planner**) Ensure **Graph generation** is enabled for tools, attach or paste source text, and run orchestration so the planner can use `EXTRACT_TO_GRAPH`. (**Unified**) Describe extraction intent and attach or paste source text; the runtime handles the rest.
 2. Manually create via Command Palette: "Create Entity"
 3. Entities are saved as markdown notes with YAML frontmatter
 
@@ -258,12 +258,9 @@ What TTPs are associated with Lazarus Group?
 **Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`OSINTCopilot/custom/prompts/skills/graph-extraction.md`**.
 
 **How to use**
-1. Enable **Graph generation** under **Skills**.
-2. Attach files, paste a URL (or text), or include content so the orchestration run has attachment/context for `EXTRACT_TO_GRAPH`.
-3. The plugin runs **local** `claude` with the graph-extraction skill when that tool is executed.
-
-**A. Entity-focused** — Paste raw intel with **Graph generation** enabled.  
-**B. After vault search** — Run a turn with **Local search** enabled, then continue in the same thread with attachments if you need extraction.
+1. **Unified (default):** attach files, paste a URL (or text); say clearly if you want entities extracted. **Legacy:** ensure **Graph generation** is allowed for the planner, then attach or paste so `EXTRACT_TO_GRAPH` can run.
+2. Attach files, paste a URL (or text), or include content so the run has attachment/context for extraction.
+3. The plugin runs **local** `claude` with the graph-extraction skill when that legacy tool is executed; unified mode uses your selected **Claude** or **Hermes** runtime instead.
 
 **Extracted Information**:
 - Entity type and properties
