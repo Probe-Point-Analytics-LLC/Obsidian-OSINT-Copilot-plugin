@@ -20,6 +20,9 @@ import {
 } from '../skills/skill-runtime';
 import type { PlannerTooling } from '../skills/skill-types';
 import { executeVaultSkillTool } from '../skills/skill-executor';
+import { createAgentProvider } from './agent-runtime/create-agent-provider';
+import type { AgentTurnContext } from './agent-runtime/provider-types';
+import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
 
 export interface OrchestrationPlan {
     reasoning: string;
@@ -111,6 +114,17 @@ export class OrchestrationService {
         };
 
         try {
+            if (this.plugin.settings.unifiedAgentOrchestration !== false) {
+                return await this.processRequestUnified(
+                    query,
+                    attachmentsContext,
+                    currentGraphState,
+                    conversationMemory,
+                    onProgress,
+                    options,
+                );
+            }
+
             onProgress("Preparing local tools...", 10);
             await this.verifyProviderAndCredits();
             checkAborted();
@@ -253,6 +267,119 @@ export class OrchestrationService {
             console.error("[OrchestrationService] Error in continueAfterToolReview:", error);
             this.handleError(error);
             throw error;
+        }
+    }
+
+    private buildGraphEntitiesSummary(graphState: any): string {
+        const entities = graphState?.entities;
+        if (!Array.isArray(entities) || entities.length === 0) {
+            return "Empty graph.";
+        }
+        const lines = entities
+            .slice(0, 50)
+            .map((e: { type?: string; label?: string; id?: string }) => `- ${e.type ?? "?"}: ${e.label ?? e.id ?? "?"}`);
+        if (entities.length > 50) {
+            lines.push(`... and ${entities.length - 50} more entities`);
+        }
+        return lines.join("\n");
+    }
+
+    /**
+     * Single local agent turn (Claude Code or Hermes): vault search + graph extraction via the external agent's skills.
+     */
+    private async processRequestUnified(
+        query: string,
+        attachmentsContext: string,
+        currentGraphState: any,
+        conversationMemory: { role: string, content: string }[],
+        onProgress: (msg: string, percent: number, meta?: OrchestrationProgressMeta) => void,
+        options?: ProcessRequestOptions,
+    ): Promise<OrchestrationResult> {
+        const checkAborted = () => {
+            if (options?.abortSignal?.aborted) {
+                throw new DOMException("Aborted", "AbortError");
+            }
+        };
+
+        await this.verifyProviderAndCredits();
+        checkAborted();
+        onProgress("Preparing unified local agent...", 10);
+
+        let ctx = attachmentsContext;
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const urls = query.match(urlRegex);
+        if (urls && urls.length > 0) {
+            onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
+            for (const url of urls) {
+                checkAborted();
+                try {
+                    const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+                    ctx += `\n\n=== Content from ${url} ===\n${extractedText}`;
+                } catch (e) {
+                    console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+                    ctx += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${
+                        e instanceof Error ? e.message : String(e)
+                    }]`;
+                }
+            }
+        }
+
+        onProgress("Running unified agent...", 35);
+        checkAborted();
+
+        let vaultAug = "";
+        try {
+            vaultAug = (await this.plugin.vaultPromptLoader?.getOrchestrationAugmentation()) ?? "";
+        } catch (e) {
+            console.warn("[OrchestrationService] vault prompts:", e);
+        }
+
+        const agentCtx: AgentTurnContext = {
+            query,
+            attachmentsContext: ctx,
+            graphEntitiesSummary: this.buildGraphEntitiesSummary(currentGraphState),
+            conversationMemory,
+            vaultAugmentation: vaultAug,
+        };
+
+        const provider = createAgentProvider(this.plugin);
+        try {
+            const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct));
+            checkAborted();
+
+            let answer = turn.answer_markdown || "";
+            if (turn.retrieval_hits?.length) {
+                const srcLines = turn.retrieval_hits
+                    .map((h) => {
+                        const sn = h.snippet ? ` — _${h.snippet.slice(0, 200)}${h.snippet.length > 200 ? "…" : ""}_` : "";
+                        return `- \`${h.path}\`${sn}`;
+                    })
+                    .join("\n");
+                answer += `\n\n### Retrieval\n${srcLines}`;
+            }
+
+            let proposedCommands: string[] | undefined;
+            if (this.plugin.settings.enableGraphFeatures && turn.graph_operations?.length) {
+                proposedCommands = aiOperationsToGraphCommands(turn.graph_operations);
+            }
+
+            onProgress("Complete", 100);
+            return {
+                finalResponse: answer,
+                proposedCommands,
+                phase: "SYNTHESIS_COMPLETE",
+            };
+        } catch (e) {
+            if (e instanceof DOMException && e.name === "AbortError") {
+                throw e;
+            }
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error("[OrchestrationService] Unified agent failed:", e);
+            onProgress("Complete", 100);
+            return {
+                finalResponse: `**Unified agent error (${provider.id})**\n\n${msg}`,
+                phase: "SYNTHESIS_COMPLETE",
+            };
         }
     }
 
@@ -491,52 +618,6 @@ Respond with this exact JSON structure:
         return false;
     }
 
-    /** Convert graph API operations into @@ graph command strings (same shape as feedResultsToGraphExtraction). */
-    private operationsToGraphCommands(operations: AIOperation[]): string[] {
-        const commands: string[] = [];
-        for (const op of operations) {
-            if (op.entities) {
-                op.entities.forEach((entity) => {
-                    commands.push(
-                        `@@create_entity ${JSON.stringify({
-                            type: entity.type,
-                            label: getEntityLabel(entity.type as EntityType, entity.properties || {}),
-                            properties: entity.properties,
-                            sources: entity.sources,
-                        })}`
-                    );
-                });
-            }
-            if (op.connections) {
-                op.connections.forEach((conn) => {
-                    let fromLabel = conn.from_label;
-                    let toLabel = conn.to_label;
-
-                    if (!fromLabel && op.entities && op.entities[conn.from]) {
-                        const ent = op.entities[conn.from];
-                        fromLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
-                    }
-                    if (!toLabel && op.entities && op.entities[conn.to]) {
-                        const ent = op.entities[conn.to];
-                        toLabel = getEntityLabel(ent.type as EntityType, ent.properties || {});
-                    }
-
-                    if (fromLabel && toLabel) {
-                        commands.push(
-                            `@@create_link ${JSON.stringify({
-                                from: fromLabel,
-                                to: toLabel,
-                                relationship: conn.relationship,
-                                sources: conn.sources,
-                            })}`
-                        );
-                    }
-                });
-            }
-        }
-        return commands;
-    }
-
     /**
      * Walk ingestible vault files, extract entities per batch with local Claude CLI,
      * and auto-apply graph commands as each batch completes.
@@ -628,7 +709,7 @@ Respond with this exact JSON structure:
 
             const batchCmds =
                 extraction.success && extraction.operations?.length
-                    ? this.operationsToGraphCommands(extraction.operations)
+                    ? aiOperationsToGraphCommands(extraction.operations)
                     : [];
 
             if (!extraction.success) {
@@ -782,7 +863,7 @@ Respond with this exact JSON structure:
                             true
                         );
                         const graphCommands = extraction.success && extraction.operations?.length
-                            ? this.operationsToGraphCommands(extraction.operations)
+                            ? aiOperationsToGraphCommands(extraction.operations)
                             : [];
                         results["EXTRACT_TO_GRAPH"] = {
                             __extractToGraph: true,
@@ -890,7 +971,7 @@ Respond with this exact JSON structure:
             );
 
             if (extraction.success && extraction.operations) {
-                commands.push(...this.operationsToGraphCommands(extraction.operations));
+                commands.push(...aiOperationsToGraphCommands(extraction.operations));
             }
         } catch (error) {
             console.error("[OrchestrationService] Post-search extraction failed:", error);

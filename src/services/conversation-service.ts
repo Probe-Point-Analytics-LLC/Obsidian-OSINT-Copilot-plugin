@@ -3,7 +3,11 @@
  */
 import { App, normalizePath } from 'obsidian';
 
-/** Primary chat task mode (header dropdown). Legacy per-flag fields are derived for YAML backward compatibility. */
+/**
+ * Primary chat task mode (header dropdown). Legacy per-flag fields are derived for YAML backward compatibility.
+ * Note: main `handleSend` routes non–vault-ingest sends through orchestration; unified vs legacy tools is decided
+ * in `OrchestrationService` (`unifiedAgentOrchestration`), not by switching handlers for the textarea path.
+ */
 export type CopilotChatMode = 'general' | 'graph' | 'local';
 
 export function legacyFlagsForChatMode(mode: CopilotChatMode): {

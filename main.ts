@@ -68,6 +68,7 @@ import { isTaskAgentRunnable } from './src/task-agents/task-agent-settings';
 import { SkillRegistry } from './src/skills/skill-registry';
 import { SkillBootstrapService } from './src/skills/skill-bootstrap';
 import { listSkillsForMenu } from './src/skills/skill-runtime';
+import { createAgentProvider } from './src/services/agent-runtime/create-agent-provider';
 import {
   DEFAULT_CONVERSATION_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
@@ -124,6 +125,17 @@ interface VaultAISettings {
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
   claudeCodeModel: string;
+  /** When true (default), chat uses one local agent turn (Claude Code or Hermes) instead of planner + LOCAL_VAULT / EXTRACT tools. */
+  unifiedAgentOrchestration: boolean;
+  /** Which local CLI backs unified chat + JSON agent turns. */
+  agentRuntimeProvider: 'claude-code' | 'hermes-agent';
+  /** Hermes (or compatible) agent CLI — see USER_GUIDE. */
+  hermesAgentCliPath: string;
+  /** Extra argv after the executable, whitespace-separated (e.g. "run --json"). */
+  hermesAgentExtraArgs: string;
+  hermesAgentTimeoutMs: number;
+  /** argv used only for Settings → Test (e.g. "--version"). */
+  hermesAgentHealthCheckArgs: string;
   customCheckpoints: CustomCheckpoint[];
   // --- Theme Mode ---
   themeMode: 'system' | 'light' | 'dark';
@@ -196,6 +208,12 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
+  unifiedAgentOrchestration: true,
+  agentRuntimeProvider: 'claude-code',
+  hermesAgentCliPath: 'hermes',
+  hermesAgentExtraArgs: '',
+  hermesAgentTimeoutMs: 120_000,
+  hermesAgentHealthCheckArgs: '--version',
   customCheckpoints: [],
 
   themeMode: 'system',
@@ -703,6 +721,25 @@ export default class VaultAIPlugin extends Plugin {
     merged.oidsfModalLayers = mergeOidsfModalLayers(
       raw.oidsfModalLayers as Partial<OIDSFModalLayers> | undefined,
     );
+    if (typeof merged.unifiedAgentOrchestration !== 'boolean') {
+      merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
+    }
+    const arp = merged.agentRuntimeProvider;
+    if (arp !== 'claude-code' && arp !== 'hermes-agent') {
+      merged.agentRuntimeProvider = DEFAULT_SETTINGS.agentRuntimeProvider;
+    }
+    if (typeof merged.hermesAgentCliPath !== 'string' || !merged.hermesAgentCliPath.trim()) {
+      merged.hermesAgentCliPath = DEFAULT_SETTINGS.hermesAgentCliPath;
+    }
+    if (typeof merged.hermesAgentExtraArgs !== 'string') {
+      merged.hermesAgentExtraArgs = DEFAULT_SETTINGS.hermesAgentExtraArgs;
+    }
+    if (typeof merged.hermesAgentTimeoutMs !== 'number' || merged.hermesAgentTimeoutMs < 5000) {
+      merged.hermesAgentTimeoutMs = DEFAULT_SETTINGS.hermesAgentTimeoutMs;
+    }
+    if (typeof merged.hermesAgentHealthCheckArgs !== 'string' || !merged.hermesAgentHealthCheckArgs.trim()) {
+      merged.hermesAgentHealthCheckArgs = DEFAULT_SETTINGS.hermesAgentHealthCheckArgs;
+    }
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
       await this.saveData(this.settings);
@@ -2113,7 +2150,10 @@ Instructions for this skill (local Claude).`;
       text: "Skills",
       cls: "vault-ai-skills-btn",
     });
-    skillsBtn.title = "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
+    skillsBtn.title =
+      this.plugin.settings.unifiedAgentOrchestration !== false
+        ? "Optional vault skills (legacy flow only). Unified mode uses your selected agent runtime's skills."
+        : "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
     skillsBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
       void this.openSkillsMenu(skillsBtn);
@@ -2389,6 +2429,14 @@ Instructions for this skill (local Claude).`;
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
+    if (this.plugin.settings.unifiedAgentOrchestration !== false) {
+      const p = this.plugin.settings.agentRuntimeProvider === 'hermes-agent' ? 'Hermes Agent' : 'Claude Code';
+      return {
+        icon: "🤖",
+        title: "Unified agent:",
+        text: `One local **${p}** turn per message (vault search + graph proposals via that agent's skills). Disable in Settings → **Legacy orchestration** to restore planner + built-in tools.`,
+      };
+    }
     return {
       icon: "🤖",
       title: "Orchestration:",
@@ -5956,11 +6004,118 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
+    // ── Unified chat agent (Claude Code or Hermes) ─────────────────────────
+    new Setting(containerEl).setName("Unified chat agent").setHeading();
+    containerEl.createEl("p", {
+      text: "Chat uses one local agent turn (JSON contract). Pick Claude Code or Hermes; the agent uses its own installed skills for vault search and graph-oriented extraction. Graph writes still go through the plugin confirmation flow when proposed.",
+      cls: "setting-item-description",
+    });
+
+    new Setting(containerEl)
+      .setName("Agent runtime")
+      .setDesc("Which CLI handles unified chat turns.")
+      .addDropdown((dd) =>
+        dd
+          .addOption("claude-code", "Claude Code")
+          .addOption("hermes-agent", "Hermes Agent")
+          .setValue(this.plugin.settings.agentRuntimeProvider)
+          .onChange(async (v) => {
+            this.plugin.settings.agentRuntimeProvider = v === "hermes-agent" ? "hermes-agent" : "claude-code";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Unified agent orchestration")
+      .setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
+          this.plugin.settings.unifiedAgentOrchestration = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes CLI path")
+      .setDesc("Executable for Hermes Agent (only used when Agent runtime is Hermes).")
+      .addText((text) =>
+        text
+          .setPlaceholder("hermes")
+          .setValue(this.plugin.settings.hermesAgentCliPath)
+          .onChange(async (value) => {
+            this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes extra CLI args")
+      .setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.")
+      .addText((text) =>
+        text
+          .setPlaceholder("")
+          .setValue(this.plugin.settings.hermesAgentExtraArgs)
+          .onChange(async (value) => {
+            this.plugin.settings.hermesAgentExtraArgs = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes request timeout (ms)")
+      .addText((text) =>
+        text
+          .setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs))
+          .setValue(String(this.plugin.settings.hermesAgentTimeoutMs))
+          .onChange(async (value) => {
+            const n = parseInt(value.trim(), 10);
+            this.plugin.settings.hermesAgentTimeoutMs =
+              Number.isFinite(n) && n >= 5000 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes health-check args")
+      .setDesc("Whitespace-separated argv used only by “Test agent runtime” (e.g. --version).")
+      .addText((text) =>
+        text
+          .setPlaceholder("--version")
+          .setValue(this.plugin.settings.hermesAgentHealthCheckArgs)
+          .onChange(async (value) => {
+            this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Test agent runtime")
+      .setDesc("Checks reachability for the selected Agent runtime (Claude or Hermes).")
+      .addButton((btn) =>
+        btn.setButtonText("Test connection").onClick(async () => {
+          btn.setButtonText("Testing...");
+          btn.setDisabled(true);
+          try {
+            const provider = createAgentProvider(this.plugin);
+            const ok = await provider.healthCheck();
+            new Notice(
+              ok
+                ? `${provider.id === "hermes-agent" ? "Hermes" : "Claude Code"} CLI is reachable.`
+                : "CLI not reachable. Check path and health-check args.",
+            );
+          } catch (e: unknown) {
+            new Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+          }
+          btn.setButtonText("Test connection");
+          btn.setDisabled(false);
+        }),
+      );
+
     // ── Graph Extraction (Claude Code) ─────────────────────────────────────
     new Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
 
     containerEl.createEl("p", {
-      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description",
     });
 
@@ -5991,10 +6146,10 @@ class VaultAISettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Test Claude Code")
-      .setDesc("Verify that the Claude CLI is reachable.")
+      .setName("Test Claude CLI (extraction)")
+      .setDesc("Quick probe of the Claude executable used for graph extraction (same binary as unified mode when Agent runtime is Claude Code).")
       .addButton((btn) =>
-        btn.setButtonText("Test connection").onClick(async () => {
+        btn.setButtonText("Test Claude binary").onClick(async () => {
           btn.setButtonText("Testing...");
           btn.setDisabled(true);
           try {
@@ -6006,7 +6161,7 @@ class VaultAISettingTab extends PluginSettingTab {
           } catch (e: any) {
             new Notice("Error: " + (e.message || String(e)));
           }
-          btn.setButtonText("Test connection");
+          btn.setButtonText("Test Claude binary");
           btn.setDisabled(false);
         })
       );

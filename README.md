@@ -180,13 +180,14 @@ Once installed, you'll see the OSINT Copilot tools in the left sidebar:
 
 ![OSINT Copilot Tools](screenshots/Copilot%20tools%20pallete%20left%20bar.png)
 
-The chat header uses a **task mode** dropdown:
+Chat **send** uses a **unified local agent** by default (Settings → **Unified chat agent**):
 
-1. **General agent** — Orchestrated investigation (local vault search + local extraction tools).
-2. **Graph generation** — Entity extraction only from your text/attachments (local Claude).
-3. **Local search** — Vault Q&A over your indexed notes (local Claude).
+- **Claude Code** or **Hermes Agent** (user-selectable) runs **one JSON turn** per message: Markdown answer + optional `graph_operations` (same shape as graph extraction) + `retrieval_hits`. The external agent is instructed to use **its own installed skills/tools** for vault search and entity work. Proposed graph changes still go through the plugin’s **confirm / apply** flow.
+- Turn off **Unified agent orchestration** in Settings to restore the **legacy** flow: planner + built-in **LOCAL_VAULT** / **EXTRACT_TO_GRAPH** tools and chat **Skills** toggles.
 
-Optional **custom chat checkpoints** (OpenAI-compatible URLs) are configured in **Settings** if you need a separate LLM endpoint; they are not part of the tri-mode dropdown.
+The chat header may still show **mode** labels for UX; routing always calls orchestration unless **Vault graph ingest** mode is selected.
+
+Optional **custom chat checkpoints** (OpenAI-compatible URLs) in **Settings** are legacy; they are not used by the unified agent path.
 
 ### Example: Investigating Lukoil
 
@@ -787,7 +788,7 @@ For issues, feature requests, or questions:
 
 ### Documentation (current)
 
-- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), and **Skills-based orchestration** with no remote investigation API.
+- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), **unified agent runtime** (Claude Code or Hermes + JSON turn, legacy planner toggle), and **Skills-based orchestration** (legacy path) with no remote investigation API.
 
 ### Recent Improvements
 

@@ -17,8 +17,8 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — **Orchestration** (planner + tools) uses the **Claude Code CLI** (`claude`) on your machine. Enable **Local search**, **Graph generation**, and **custom skills** from the chat **Skills** menu. Customization files live under **`OSINTCopilot/custom/`** (prompts, skills, task agents, outputs — visible in the vault). **Chat history** defaults to **`OSINTCopilot/conversations/`**.
-3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. All AI traffic goes through **Claude Code** when you use AI features.
+2. **Local AI** — By default, chat uses a **unified agent turn** via **Claude Code** or **Hermes Agent** (Settings → **Agent runtime**). That agent uses **its own CLI-installed skills** for vault search and graph-oriented extraction; the plugin applies graph writes through the usual confirmation UI. Turn off **Unified agent orchestration** to restore the older **planner + LOCAL_VAULT / EXTRACT_TO_GRAPH** flow and chat **Skills** menu for vault markdown skills. **Vault prompts** under **`OSINTCopilot/custom/`** still augment the agent. **Chat history** defaults to **`OSINTCopilot/conversations/`**.
+3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. AI calls go through your selected **local** CLI (Claude Code and/or Hermes as configured).
 
 ### Who is this for?
 
@@ -71,12 +71,27 @@ Copy `main.js`, `manifest.json`, and `styles.css` from the repo root into your v
 
 Open **Settings → OSINT Copilot**.
 
-### 1. Claude Code CLI (local AI)
+### 1. Unified chat agent (Claude Code or Hermes)
+
+Under **Settings → OSINT Copilot → Unified chat agent**:
+
+| Setting | Purpose |
+|--------|---------|
+| **Agent runtime** | **Claude Code** (default) or **Hermes Agent** — which CLI receives the unified JSON prompt on stdin. |
+| **Unified agent orchestration** | When **on** (default), chat skips the legacy planner and built-in search/extract tools. When **off**, the old planner + **Skills** (`LOCAL_VAULT`, `EXTRACT_TO_GRAPH`, `SKILL_*`) runs again. |
+| **Hermes CLI path** / **extra args** / **timeout** / **health-check args** | Used only when Agent runtime is **Hermes**. Extra args are split on whitespace and prepended before stdin is sent (your Hermes build may require a subcommand — set it here). |
+| **Test agent runtime** | Health check for the **selected** runtime. |
+
+Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
+
+**Graph extraction (Claude Code)** settings still configure the `claude` binary used for **bulk** extraction (vault ingest, attachment pipeline, task agents). Those flows are unchanged; only the **default chat** path uses the unified agent unless you disable it.
+
+### 1b. Claude Code CLI (graph extraction & fallback)
 
 - **Claude Code CLI path** — Default `claude` if the binary is on your `PATH`; otherwise the full path to the executable.  
 - **Model** — Passed through to the CLI (e.g. `sonnet`).  
 
-Install and authenticate per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). Without a working CLI, **entity extraction** and most **vault Q&A / orchestration** paths will not run.
+Used for **entity extraction** when not using the unified Hermes-only setup, and for **task agents**. When **Agent runtime** is Claude, unified chat also uses this service.
 
 ### 2. Vault prompts (first run + edits)
 
@@ -118,12 +133,12 @@ Default text for vault-oriented answers; combine with **vault rules/agents** for
 
 ### What needs what?
 
-| Capability | Claude CLI |
-|------------|------------|
-| Graph / timeline / map | No |
-| Graph generation (extract entities from pasted text) | Yes |
-| Local search (vault Q&A) | Yes |
-| General agent (orchestration) | Yes |
+| Capability | Local AI |
+|------------|----------|
+| Graph / timeline / map | No (pure Obsidian) |
+| Default chat (unified agent) | **Claude Code** or **Hermes** (Settings → Agent runtime) |
+| Legacy planner + built-in tools | **Claude Code** for planner + tools (disable unified orchestration) |
+| Bulk graph extraction / vault ingest / task agents | **Claude Code** CLI (Graph extraction settings) |
 
 ---
 
@@ -137,27 +152,30 @@ Access the main chat interface via:
 
 ### Orchestration and Skills
 
-The chat uses a **single orchestration agent**: the planner proposes which **tools** to run; you choose which capabilities are available via the **Skills** button in the chat header.
+**Default (unified):** one **Agent runtime** turn per message — no separate planner step. The external agent (Claude or Hermes) is instructed to use **its own** skills for vault search and graph extraction; results must match the JSON contract so the plugin can show **proposed graph changes** for you to confirm.
 
-| Built-in skill | Planner tool | Role |
-|----------------|--------------|------|
+**Legacy mode:** disable **Unified agent orchestration** in Settings. Then the chat uses a **planner** that proposes which **tools** to run; you choose capabilities via the **Skills** button.
+
+| Built-in skill | Planner tool | Role (legacy only) |
+|----------------|--------------|---------------------|
 | **Local search** | `LOCAL_VAULT` | Search across your vault notes for relevant snippets |
-| **Graph generation** | `EXTRACT_TO_GRAPH` | Extract entities into the graph (when you attach files, URLs, or pasted text the orchestration pipeline includes as context) |
+| **Graph generation** | `EXTRACT_TO_GRAPH` | Extract entities into the graph from attachment context |
 
-**Custom skills** live as Markdown under **`OSINTCopilot/custom/skills/`** (configurable in **Settings → OSINT Copilot → Skills folder**). Each file uses `skill_kind: vault` and an `id` in frontmatter; the planner can invoke them as `SKILL_<id>`. Use **Add new skill…** in the Skills menu to create a template file.
+**Custom vault skills** (`SKILL_<id>`) apply to **legacy** orchestration only. Files live under **`OSINTCopilot/custom/skills/`**. Use **Add new skill…** in the Skills menu to create a template file.
 
-Toggle skills on or off per vault; the planner only sees **enabled** skills. Your **vault prompts** (rules, agents under the prompts folder) still apply to orchestration.
+Your **vault prompts** (`rules/global.md`, agents) are still merged into the unified agent prompt as **vault augmentation**.
 
 ---
 
-### Feature 1: Vault Q&A (local search via orchestration)
+### Feature 1: Vault Q&A (unified agent or legacy orchestration)
 
-**Purpose:** Ask questions over your vault; the orchestration planner may use the **Local search** skill (`LOCAL_VAULT`) and synthesize answers with **Claude Code CLI**.
+**Purpose:** Ask questions over your vault.
 
-**How it works**
-1. Ensure **Local search** is enabled under **Skills**.
-2. Type your question; the planner proposes tools — approve the plan when prompted.
-3. Use **Reload vault prompts** after editing rules under `OSINTCopilot/custom/prompts/`.
+**Unified (default):** type your question; the selected **Agent runtime** returns Markdown plus optional retrieval hits. No Skills toggle required.
+
+**Legacy:** disable unified orchestration, enable **Local search** under **Skills**, approve the planner when prompted.
+
+**Tips:** Use **Reload vault prompts** after editing rules under `OSINTCopilot/custom/prompts/`.
 
 **Example Queries**:
 ```

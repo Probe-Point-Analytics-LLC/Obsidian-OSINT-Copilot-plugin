@@ -7179,20 +7179,20 @@ function mergeOidsfModalLayers(partial) {
 }
 
 // src/entities/types.ts
-var EntityType = /* @__PURE__ */ ((EntityType3) => {
-  EntityType3["Person"] = "Person";
-  EntityType3["Event"] = "Event";
-  EntityType3["Location"] = "Location";
-  EntityType3["Company"] = "Company";
-  EntityType3["Email"] = "Email";
-  EntityType3["Phone"] = "Phone";
-  EntityType3["Username"] = "Username";
-  EntityType3["Vehicle"] = "Vehicle";
-  EntityType3["Website"] = "Website";
-  EntityType3["Evidence"] = "Evidence";
-  EntityType3["Image"] = "Image";
-  EntityType3["Text"] = "Text";
-  return EntityType3;
+var EntityType = /* @__PURE__ */ ((EntityType4) => {
+  EntityType4["Person"] = "Person";
+  EntityType4["Event"] = "Event";
+  EntityType4["Location"] = "Location";
+  EntityType4["Company"] = "Company";
+  EntityType4["Email"] = "Email";
+  EntityType4["Phone"] = "Phone";
+  EntityType4["Username"] = "Username";
+  EntityType4["Vehicle"] = "Vehicle";
+  EntityType4["Website"] = "Website";
+  EntityType4["Evidence"] = "Evidence";
+  EntityType4["Image"] = "Image";
+  EntityType4["Text"] = "Text";
+  return EntityType4;
 })(EntityType || {});
 function getFTMEntityConfig(schemaName) {
   const schema4 = ftmSchemaService.getSchema(schemaName);
@@ -16415,14 +16415,14 @@ Tip: paste the text content directly into the chat instead.`
     const nodeFs = require("fs");
     const nodePath = require("path");
     const os = require("os");
-    const { execFile } = require("child_process");
+    const { execFile: execFile2 } = require("child_process");
     const buffer = await this.readFileAsArrayBuffer(file);
     const tmpDir = os.tmpdir();
     const tmpFile = nodePath.join(tmpDir, `osint-copilot-${Date.now()}.pdf`);
     try {
       nodeFs.writeFileSync(tmpFile, Buffer.from(buffer));
       const text = await new Promise((resolve, reject) => {
-        execFile("pdftotext", ["-layout", tmpFile, "-"], {
+        execFile2("pdftotext", ["-layout", tmpFile, "-"], {
           maxBuffer: 10 * 1024 * 1024,
           timeout: 3e4
         }, (error, stdout, stderr) => {
@@ -16843,7 +16843,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         reject(new DOMException("Aborted", "AbortError"));
         return;
       }
-      const { execFile } = require("child_process");
+      const { execFile: execFile2 } = require("child_process");
       const args = [
         "--print",
         "--output-format",
@@ -16853,7 +16853,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         "--max-turns",
         String(maxTurns)
       ];
-      const child = execFile(
+      const child = execFile2(
         this.config.cliPath,
         args,
         {
@@ -16990,8 +16990,8 @@ Return ONLY the extracted information as plain text. No markdown formatting, no 
   async isAvailable() {
     return new Promise((resolve) => {
       try {
-        const { execFile } = require("child_process");
-        execFile(this.config.cliPath, ["--version"], { timeout: 5e3 }, (error) => {
+        const { execFile: execFile2 } = require("child_process");
+        execFile2(this.config.cliPath, ["--version"], { timeout: 5e3 }, (error) => {
           resolve(!error);
         });
       } catch {
@@ -25485,6 +25485,420 @@ ${attachmentsContext || "(none)"}`;
   return text;
 }
 
+// src/services/agent-runtime/provider-types.ts
+var AGENT_TURN_SCHEMA_VERSION = "osint_copilot_agent_turn_v1";
+
+// src/services/agent-runtime/build-unified-agent-prompt.ts
+var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdown fences, no prose outside JSON) matching this schema:
+{
+  "version": "${AGENT_TURN_SCHEMA_VERSION}",
+  "answer_markdown": "string \u2014 Markdown answer for the user",
+  "retrieval_hits": [ { "path": "vault-relative/path.md", "snippet": "optional short excerpt" } ],
+  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...] } ]
+}
+
+Rules for graph_operations:
+- Use the same structure as OSINT graph extraction: entities have "type" and "properties"; connections use numeric "from"/"to" indices into the entities array in the SAME operation object, plus "relationship" (UPPER_SNAKE_CASE).
+- Only include graph_operations when the user wants new intelligence mapped into the graph; otherwise use an empty array.
+- Use your local agent skills and tools (file search, codebase/vault tools, web if available) to search the user's vault / context before answering.
+- retrieval_hits should list the main vault note paths you relied on (if any).`;
+function buildUnifiedAgentSystemPrompt(providerLabel) {
+  return `You are the OSINT Copilot unified agent (${providerLabel}).
+
+${JSON_CONTRACT}
+
+Important:
+- Prefer concise, investigative Markdown in answer_markdown.
+- Cite vault paths inline where useful.
+- Do not fabricate retrieval_hits; only list sources you actually used.`;
+}
+function buildUnifiedAgentUserPrompt(ctx) {
+  const memory = ctx.conversationMemory && ctx.conversationMemory.length > 0 ? ctx.conversationMemory.map((m) => `${m.role.toUpperCase()}:
+${m.content}`).join("\n\n---\n\n") : "(no prior messages)";
+  const parts = [
+    "=== USER REQUEST ===",
+    ctx.query,
+    "",
+    "=== ATTACHMENT / URL / EXTRACTED CONTEXT (may be empty) ===",
+    ctx.attachmentsContext?.trim() || "(none)",
+    "",
+    "=== EXISTING GRAPH (summary) ===",
+    ctx.graphEntitiesSummary,
+    "",
+    "=== CONVERSATION MEMORY ===",
+    memory
+  ];
+  if (ctx.vaultAugmentation?.trim()) {
+    parts.push("", "=== VAULT RULES / AGENT AUGMENTATION (user-editable) ===", ctx.vaultAugmentation.trim());
+  }
+  parts.push("", "Produce the JSON object now.");
+  return parts.join("\n");
+}
+
+// src/services/agent-runtime/parse-agent-turn-json.ts
+function extractJsonObject(raw) {
+  const trimmed = raw.trim();
+  try {
+    const d = JSON.parse(trimmed);
+    if (d && typeof d === "object")
+      return trimmed;
+  } catch {
+  }
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch) {
+    try {
+      JSON.parse(fenceMatch[1].trim());
+      return fenceMatch[1].trim();
+    } catch {
+    }
+  }
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  return match ? match[0] : null;
+}
+function normalizeSources(raw) {
+  if (!Array.isArray(raw))
+    return void 0;
+  const out = [];
+  for (const s of raw) {
+    if (!s || typeof s !== "object")
+      continue;
+    const o = s;
+    out.push({
+      inferred: Boolean(o.inferred),
+      source_url: typeof o.source_url === "string" ? o.source_url : void 0,
+      rationale: typeof o.rationale === "string" ? o.rationale : void 0,
+      claims: Array.isArray(o.claims) ? o.claims.filter((c) => {
+        if (!c || typeof c !== "object")
+          return false;
+        const cl = c;
+        return typeof cl.path === "string" && typeof cl.value === "string";
+      }).map((c) => ({ path: c.path, value: c.value })) : void 0
+    });
+  }
+  return out.length ? out : void 0;
+}
+function normalizeGraphOperations(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const ops = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object")
+      continue;
+    const o = item;
+    const action = o.action === "update" ? "update" : "create";
+    const entities = Array.isArray(o.entities) ? o.entities.map((e) => {
+      if (!e || typeof e !== "object")
+        return null;
+      const ent = e;
+      return {
+        type: String(ent.type ?? ""),
+        properties: ent.properties && typeof ent.properties === "object" ? ent.properties : {},
+        sources: normalizeSources(ent.sources)
+      };
+    }) : [];
+    const connections = Array.isArray(o.connections) ? o.connections.map((c) => {
+      if (!c || typeof c !== "object")
+        return null;
+      const conn = c;
+      return {
+        from: Number(conn.from),
+        to: Number(conn.to),
+        relationship: String(conn.relationship ?? ""),
+        from_label: conn.from_label,
+        to_label: conn.to_label,
+        from_type: conn.from_type,
+        to_type: conn.to_type,
+        sources: normalizeSources(conn.sources)
+      };
+    }) : [];
+    const cleanEntities = entities.filter(Boolean);
+    const cleanConnections = connections.filter(Boolean);
+    ops.push({
+      action,
+      entities: cleanEntities.length ? cleanEntities : void 0,
+      connections: cleanConnections.length ? cleanConnections : void 0,
+      updates: Array.isArray(o.updates) ? o.updates : void 0
+    });
+  }
+  return ops;
+}
+function normalizeHits(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const hits = [];
+  for (const h of raw) {
+    if (!h || typeof h !== "object")
+      continue;
+    const o = h;
+    const path = typeof o.path === "string" ? o.path : "";
+    if (!path)
+      continue;
+    hits.push({
+      path,
+      snippet: typeof o.snippet === "string" ? o.snippet : void 0
+    });
+  }
+  return hits;
+}
+function parseAgentTurnResult(raw, provider) {
+  const excerpt = raw.length > 2e3 ? raw.slice(0, 2e3) + "\u2026" : raw;
+  const jsonStr = extractJsonObject(raw);
+  if (!jsonStr) {
+    return {
+      version: AGENT_TURN_SCHEMA_VERSION,
+      answer_markdown: `**Agent response could not be parsed as JSON.**
+
+Show raw output (truncated):
+
+\`\`\`
+${excerpt}
+\`\`\``,
+      retrieval_hits: [],
+      graph_operations: [],
+      diagnostics: { provider, raw_excerpt: excerpt, notes: "no_json_object" }
+    };
+  }
+  try {
+    const data = JSON.parse(jsonStr);
+    const version = data.version === AGENT_TURN_SCHEMA_VERSION ? AGENT_TURN_SCHEMA_VERSION : AGENT_TURN_SCHEMA_VERSION;
+    const answer = typeof data.answer_markdown === "string" ? data.answer_markdown : typeof data.answer === "string" ? data.answer : typeof data.response === "string" ? data.response : "";
+    const hits = normalizeHits(data.retrieval_hits ?? data.retrievalHits ?? data.hits);
+    const graphOps = normalizeGraphOperations(data.graph_operations ?? data.graphOperations ?? data.operations);
+    const diag = {
+      provider,
+      raw_excerpt: excerpt,
+      notes: typeof data.diagnostics === "object" && data.diagnostics !== null ? JSON.stringify(data.diagnostics).slice(0, 500) : void 0
+    };
+    return {
+      version,
+      answer_markdown: answer || "_Empty answer from model._",
+      retrieval_hits: hits,
+      graph_operations: graphOps,
+      diagnostics: diag
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      version: AGENT_TURN_SCHEMA_VERSION,
+      answer_markdown: `**Invalid agent JSON:** ${msg}
+
+Raw (truncated):
+
+\`\`\`
+${excerpt}
+\`\`\``,
+      retrieval_hits: [],
+      graph_operations: [],
+      diagnostics: { provider, raw_excerpt: excerpt, notes: "json_parse_error" }
+    };
+  }
+}
+
+// src/services/agent-runtime/claude-agent-provider.ts
+var ClaudeAgentProvider = class {
+  constructor(graphApi) {
+    this.graphApi = graphApi;
+    this.id = "claude-code";
+  }
+  async runTurn(ctx, signal, onProgress) {
+    onProgress?.("Running Claude Code agent (JSON turn)...", 25);
+    const system = buildUnifiedAgentSystemPrompt("Claude Code");
+    const user = buildUnifiedAgentUserPrompt(ctx);
+    const raw = await this.graphApi.callRemoteModel(
+      [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      true,
+      void 0,
+      signal
+    );
+    onProgress?.("Parsing agent response...", 85);
+    return parseAgentTurnResult(raw, "claude-code");
+  }
+  async healthCheck() {
+    const health = await this.graphApi.checkHealth();
+    return health !== null && health.status === "ok";
+  }
+};
+
+// src/services/agent-runtime/hermes-agent-provider.ts
+var import_child_process = require("child_process");
+function splitArgv(line) {
+  const s = line.trim();
+  if (!s)
+    return [];
+  return s.split(/\s+/).filter(Boolean);
+}
+var HermesAgentProvider = class {
+  constructor(cfg) {
+    this.cfg = cfg;
+    this.id = "hermes-agent";
+  }
+  async runTurn(ctx, signal, onProgress) {
+    onProgress?.("Running Hermes agent (JSON turn)...", 25);
+    const system = buildUnifiedAgentSystemPrompt("Hermes Agent");
+    const user = buildUnifiedAgentUserPrompt(ctx);
+    const fullPrompt = `${system}
+
+---
+
+${user}`;
+    const args = splitArgv(this.cfg.extraArgs);
+    const stdout = await this.invokeHermes(fullPrompt, args, signal);
+    onProgress?.("Parsing agent response...", 85);
+    return parseAgentTurnResult(stdout, "hermes-agent");
+  }
+  invokeHermes(prompt, args, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      const child = (0, import_child_process.execFile)(
+        this.cfg.cliPath || "hermes",
+        args,
+        {
+          encoding: "utf8",
+          timeout: this.cfg.timeoutMs || 12e4,
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...process.env, NO_COLOR: "1" }
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const anyErr = error;
+            if (anyErr.killed || anyErr.signal === "SIGTERM") {
+              reject(new DOMException("Aborted", "AbortError"));
+            } else {
+              reject(
+                new Error(
+                  `Hermes CLI error (code ${anyErr.code ?? "?"}): ${stderr || error.message}`
+                )
+              );
+            }
+            return;
+          }
+          resolve(stdout || "");
+        }
+      );
+      child.stdin?.write(prompt);
+      child.stdin?.end();
+      if (signal) {
+        const onAbort = () => {
+          child.kill("SIGTERM");
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+  async healthCheck() {
+    const args = splitArgv(this.cfg.healthCheckArgs);
+    try {
+      await new Promise((resolve, reject) => {
+        (0, import_child_process.execFile)(
+          this.cfg.cliPath || "hermes",
+          args.length ? args : ["--version"],
+          {
+            encoding: "utf8",
+            timeout: 8e3,
+            maxBuffer: 1024 * 1024,
+            env: { ...process.env, NO_COLOR: "1" }
+          },
+          (err) => {
+            if (err)
+              reject(err);
+            else
+              resolve();
+          }
+        );
+      });
+      return true;
+    } catch {
+      try {
+        await new Promise((resolve, reject) => {
+          (0, import_child_process.execFile)(
+            this.cfg.cliPath || "hermes",
+            ["-h"],
+            {
+              encoding: "utf8",
+              timeout: 8e3,
+              maxBuffer: 1024 * 1024,
+              env: { ...process.env, NO_COLOR: "1" }
+            },
+            (err) => {
+              if (err)
+                reject(err);
+              else
+                resolve();
+            }
+          );
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+};
+
+// src/services/agent-runtime/create-agent-provider.ts
+function createAgentProvider(plugin) {
+  const s = plugin.settings;
+  if (s.agentRuntimeProvider === "hermes-agent") {
+    return new HermesAgentProvider({
+      cliPath: s.hermesAgentCliPath || "hermes",
+      extraArgs: s.hermesAgentExtraArgs || "",
+      timeoutMs: s.hermesAgentTimeoutMs ?? 12e4,
+      healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version"
+    });
+  }
+  return new ClaudeAgentProvider(plugin.graphApiService);
+}
+
+// src/services/graph-commands-from-operations.ts
+function aiOperationsToGraphCommands(operations) {
+  const commands = [];
+  for (const op of operations) {
+    if (op.entities) {
+      op.entities.forEach((entity) => {
+        commands.push(
+          `@@create_entity ${JSON.stringify({
+            type: entity.type,
+            label: getEntityLabel(entity.type, entity.properties || {}),
+            properties: entity.properties,
+            sources: entity.sources
+          })}`
+        );
+      });
+    }
+    if (op.connections) {
+      op.connections.forEach((conn) => {
+        let fromLabel = conn.from_label;
+        let toLabel = conn.to_label;
+        if (!fromLabel && op.entities && op.entities[conn.from]) {
+          const ent = op.entities[conn.from];
+          fromLabel = getEntityLabel(ent.type, ent.properties || {});
+        }
+        if (!toLabel && op.entities && op.entities[conn.to]) {
+          const ent = op.entities[conn.to];
+          toLabel = getEntityLabel(ent.type, ent.properties || {});
+        }
+        if (fromLabel && toLabel) {
+          commands.push(
+            `@@create_link ${JSON.stringify({
+              from: fromLabel,
+              to: toLabel,
+              relationship: conn.relationship,
+              sources: conn.sources
+            })}`
+          );
+        }
+      });
+    }
+  }
+  return commands;
+}
+
 // src/services/orchestration-service.ts
 var ORCHESTRATION_TOOL_DISPLAY_NAMES = {
   LOCAL_VAULT: "Local Search",
@@ -25521,6 +25935,16 @@ var _OrchestrationService = class _OrchestrationService {
       }
     };
     try {
+      if (this.plugin.settings.unifiedAgentOrchestration !== false) {
+        return await this.processRequestUnified(
+          query,
+          attachmentsContext,
+          currentGraphState,
+          conversationMemory,
+          onProgress,
+          options
+        );
+      }
       onProgress("Preparing local tools...", 10);
       await this.verifyProviderAndCredits();
       checkAborted();
@@ -25637,6 +26061,106 @@ ${extractedText}`;
       console.error("[OrchestrationService] Error in continueAfterToolReview:", error);
       this.handleError(error);
       throw error;
+    }
+  }
+  buildGraphEntitiesSummary(graphState) {
+    const entities = graphState?.entities;
+    if (!Array.isArray(entities) || entities.length === 0) {
+      return "Empty graph.";
+    }
+    const lines = entities.slice(0, 50).map((e) => `- ${e.type ?? "?"}: ${e.label ?? e.id ?? "?"}`);
+    if (entities.length > 50) {
+      lines.push(`... and ${entities.length - 50} more entities`);
+    }
+    return lines.join("\n");
+  }
+  /**
+   * Single local agent turn (Claude Code or Hermes): vault search + graph extraction via the external agent's skills.
+   */
+  async processRequestUnified(query, attachmentsContext, currentGraphState, conversationMemory, onProgress, options) {
+    const checkAborted = () => {
+      if (options?.abortSignal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+    };
+    await this.verifyProviderAndCredits();
+    checkAborted();
+    onProgress("Preparing unified local agent...", 10);
+    let ctx = attachmentsContext;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const urls = query.match(urlRegex);
+    if (urls && urls.length > 0) {
+      onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
+      for (const url of urls) {
+        checkAborted();
+        try {
+          const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+          ctx += `
+
+=== Content from ${url} ===
+${extractedText}`;
+        } catch (e) {
+          console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+          ctx += `
+
+=== Content from ${url} ===
+[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
+        }
+      }
+    }
+    onProgress("Running unified agent...", 35);
+    checkAborted();
+    let vaultAug = "";
+    try {
+      vaultAug = await this.plugin.vaultPromptLoader?.getOrchestrationAugmentation() ?? "";
+    } catch (e) {
+      console.warn("[OrchestrationService] vault prompts:", e);
+    }
+    const agentCtx = {
+      query,
+      attachmentsContext: ctx,
+      graphEntitiesSummary: this.buildGraphEntitiesSummary(currentGraphState),
+      conversationMemory,
+      vaultAugmentation: vaultAug
+    };
+    const provider = createAgentProvider(this.plugin);
+    try {
+      const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct));
+      checkAborted();
+      let answer = turn.answer_markdown || "";
+      if (turn.retrieval_hits?.length) {
+        const srcLines = turn.retrieval_hits.map((h) => {
+          const sn = h.snippet ? ` \u2014 _${h.snippet.slice(0, 200)}${h.snippet.length > 200 ? "\u2026" : ""}_` : "";
+          return `- \`${h.path}\`${sn}`;
+        }).join("\n");
+        answer += `
+
+### Retrieval
+${srcLines}`;
+      }
+      let proposedCommands;
+      if (this.plugin.settings.enableGraphFeatures && turn.graph_operations?.length) {
+        proposedCommands = aiOperationsToGraphCommands(turn.graph_operations);
+      }
+      onProgress("Complete", 100);
+      return {
+        finalResponse: answer,
+        proposedCommands,
+        phase: "SYNTHESIS_COMPLETE"
+      };
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        throw e;
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[OrchestrationService] Unified agent failed:", e);
+      onProgress("Complete", 100);
+      return {
+        finalResponse: `**Unified agent error (${provider.id})**
+
+${msg}`,
+        phase: "SYNTHESIS_COMPLETE"
+      };
     }
   }
   describeRoutedIntentLine(intent) {
@@ -25832,49 +26356,6 @@ Respond with this exact JSON structure:
       return true;
     return false;
   }
-  /** Convert graph API operations into @@ graph command strings (same shape as feedResultsToGraphExtraction). */
-  operationsToGraphCommands(operations) {
-    const commands = [];
-    for (const op of operations) {
-      if (op.entities) {
-        op.entities.forEach((entity) => {
-          commands.push(
-            `@@create_entity ${JSON.stringify({
-              type: entity.type,
-              label: getEntityLabel(entity.type, entity.properties || {}),
-              properties: entity.properties,
-              sources: entity.sources
-            })}`
-          );
-        });
-      }
-      if (op.connections) {
-        op.connections.forEach((conn) => {
-          let fromLabel = conn.from_label;
-          let toLabel = conn.to_label;
-          if (!fromLabel && op.entities && op.entities[conn.from]) {
-            const ent = op.entities[conn.from];
-            fromLabel = getEntityLabel(ent.type, ent.properties || {});
-          }
-          if (!toLabel && op.entities && op.entities[conn.to]) {
-            const ent = op.entities[conn.to];
-            toLabel = getEntityLabel(ent.type, ent.properties || {});
-          }
-          if (fromLabel && toLabel) {
-            commands.push(
-              `@@create_link ${JSON.stringify({
-                from: fromLabel,
-                to: toLabel,
-                relationship: conn.relationship,
-                sources: conn.sources
-              })}`
-            );
-          }
-        });
-      }
-    }
-    return commands;
-  }
   /**
    * Walk ingestible vault files, extract entities per batch with local Claude CLI,
    * and auto-apply graph commands as each batch completes.
@@ -25940,7 +26421,7 @@ ${text}`);
         extractFailures += batchFiles.length;
         continue;
       }
-      const batchCmds = extraction.success && extraction.operations?.length ? this.operationsToGraphCommands(extraction.operations) : [];
+      const batchCmds = extraction.success && extraction.operations?.length ? aiOperationsToGraphCommands(extraction.operations) : [];
       if (!extraction.success) {
         extractFailures += batchFiles.length;
       }
@@ -26054,7 +26535,7 @@ Content Preview: ${content.substring(0, 500)}...`);
               extractSignal,
               true
             );
-            const graphCommands = extraction.success && extraction.operations?.length ? this.operationsToGraphCommands(extraction.operations) : [];
+            const graphCommands = extraction.success && extraction.operations?.length ? aiOperationsToGraphCommands(extraction.operations) : [];
             results["EXTRACT_TO_GRAPH"] = {
               __extractToGraph: true,
               graphCommands,
@@ -26148,7 +26629,7 @@ ${r.summary || ""}
         (/* @__PURE__ */ new Date()).toISOString()
       );
       if (extraction.success && extraction.operations) {
-        commands.push(...this.operationsToGraphCommands(extraction.operations));
+        commands.push(...aiOperationsToGraphCommands(extraction.operations));
       }
     } catch (error) {
       console.error("[OrchestrationService] Post-search extraction failed:", error);
@@ -28521,6 +29002,12 @@ var DEFAULT_SETTINGS = {
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
+  unifiedAgentOrchestration: true,
+  agentRuntimeProvider: "claude-code",
+  hermesAgentCliPath: "hermes",
+  hermesAgentExtraArgs: "",
+  hermesAgentTimeoutMs: 12e4,
+  hermesAgentHealthCheckArgs: "--version",
   customCheckpoints: [],
   themeMode: "system",
   lockedVaultPaths: [],
@@ -28943,6 +29430,25 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     merged.oidsfModalLayers = mergeOidsfModalLayers(
       raw.oidsfModalLayers
     );
+    if (typeof merged.unifiedAgentOrchestration !== "boolean") {
+      merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
+    }
+    const arp = merged.agentRuntimeProvider;
+    if (arp !== "claude-code" && arp !== "hermes-agent") {
+      merged.agentRuntimeProvider = DEFAULT_SETTINGS.agentRuntimeProvider;
+    }
+    if (typeof merged.hermesAgentCliPath !== "string" || !merged.hermesAgentCliPath.trim()) {
+      merged.hermesAgentCliPath = DEFAULT_SETTINGS.hermesAgentCliPath;
+    }
+    if (typeof merged.hermesAgentExtraArgs !== "string") {
+      merged.hermesAgentExtraArgs = DEFAULT_SETTINGS.hermesAgentExtraArgs;
+    }
+    if (typeof merged.hermesAgentTimeoutMs !== "number" || merged.hermesAgentTimeoutMs < 5e3) {
+      merged.hermesAgentTimeoutMs = DEFAULT_SETTINGS.hermesAgentTimeoutMs;
+    }
+    if (typeof merged.hermesAgentHealthCheckArgs !== "string" || !merged.hermesAgentHealthCheckArgs.trim()) {
+      merged.hermesAgentHealthCheckArgs = DEFAULT_SETTINGS.hermesAgentHealthCheckArgs;
+    }
     this.settings = merged;
     if (stripped) {
       await this.saveData(this.settings);
@@ -30086,7 +30592,7 @@ Instructions for this skill (local Claude).`;
       text: "Skills",
       cls: "vault-ai-skills-btn"
     });
-    skillsBtn.title = "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
+    skillsBtn.title = this.plugin.settings.unifiedAgentOrchestration !== false ? "Optional vault skills (legacy flow only). Unified mode uses your selected agent runtime's skills." : "Enable or disable orchestration skills (local search, graph extraction, vault skills)";
     skillsBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
       void this.openSkillsMenu(skillsBtn);
@@ -30313,6 +30819,14 @@ Instructions for this skill (local Claude).`;
    * Returns object with content parts or null if no disclaimer needed.
    */
   getModeDisclaimer() {
+    if (this.plugin.settings.unifiedAgentOrchestration !== false) {
+      const p = this.plugin.settings.agentRuntimeProvider === "hermes-agent" ? "Hermes Agent" : "Claude Code";
+      return {
+        icon: "\u{1F916}",
+        title: "Unified agent:",
+        text: `One local **${p}** turn per message (vault search + graph proposals via that agent's skills). Disable in Settings \u2192 **Legacy orchestration** to restore planner + built-in tools.`
+      };
+    }
     return {
       icon: "\u{1F916}",
       title: "Orchestration:",
@@ -33231,9 +33745,68 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
+    new import_obsidian28.Setting(containerEl).setName("Unified chat agent").setHeading();
+    containerEl.createEl("p", {
+      text: "Chat uses one local agent turn (JSON contract). Pick Claude Code or Hermes; the agent uses its own installed skills for vault search and graph-oriented extraction. Graph writes still go through the plugin confirmation flow when proposed.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian28.Setting(containerEl).setName("Agent runtime").setDesc("Which CLI handles unified chat turns.").addDropdown(
+      (dd) => dd.addOption("claude-code", "Claude Code").addOption("hermes-agent", "Hermes Agent").setValue(this.plugin.settings.agentRuntimeProvider).onChange(async (v) => {
+        this.plugin.settings.agentRuntimeProvider = v === "hermes-agent" ? "hermes-agent" : "claude-code";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Unified agent orchestration").setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.").addToggle(
+      (t) => t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
+        this.plugin.settings.unifiedAgentOrchestration = v;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (only used when Agent runtime is Hermes).").addText(
+      (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
+        this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
+      (text) => text.setPlaceholder("").setValue(this.plugin.settings.hermesAgentExtraArgs).onChange(async (value) => {
+        this.plugin.settings.hermesAgentExtraArgs = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
+      (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs)).setValue(String(this.plugin.settings.hermesAgentTimeoutMs)).onChange(async (value) => {
+        const n = parseInt(value.trim(), 10);
+        this.plugin.settings.hermesAgentTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
+      (text) => text.setPlaceholder("--version").setValue(this.plugin.settings.hermesAgentHealthCheckArgs).onChange(async (value) => {
+        this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the selected Agent runtime (Claude or Hermes).").addButton(
+      (btn) => btn.setButtonText("Test connection").onClick(async () => {
+        btn.setButtonText("Testing...");
+        btn.setDisabled(true);
+        try {
+          const provider = createAgentProvider(this.plugin);
+          const ok = await provider.healthCheck();
+          new import_obsidian28.Notice(
+            ok ? `${provider.id === "hermes-agent" ? "Hermes" : "Claude Code"} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
+          );
+        } catch (e) {
+          new import_obsidian28.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+        }
+        btn.setButtonText("Test connection");
+        btn.setDisabled(false);
+      })
+    );
     new import_obsidian28.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
-      text: "Entity extraction uses Claude Code CLI running locally on your machine. Make sure 'claude' is installed and available on your PATH.",
+      text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description"
     });
     new import_obsidian28.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
@@ -33248,8 +33821,8 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Test Claude Code").setDesc("Verify that the Claude CLI is reachable.").addButton(
-      (btn) => btn.setButtonText("Test connection").onClick(async () => {
+    new import_obsidian28.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Quick probe of the Claude executable used for graph extraction (same binary as unified mode when Agent runtime is Claude Code).").addButton(
+      (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
@@ -33261,7 +33834,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         } catch (e) {
           new import_obsidian28.Notice("Error: " + (e.message || String(e)));
         }
-        btn.setButtonText("Test connection");
+        btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);
       })
     );

@@ -39,8 +39,20 @@ describe('ChatView', () => {
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
+            unifiedAgentOrchestration: true,
+            agentRuntimeProvider: 'claude-code',
+            hermesAgentCliPath: 'hermes',
+            hermesAgentExtraArgs: '',
+            hermesAgentTimeoutMs: 120_000,
+            hermesAgentHealthCheckArgs: '--version',
             themeMode: 'system',
             customCheckpoints: [],
+            advancedGraphMode: true,
+            lockedVaultPaths: [],
+            activeGraphId: 'default',
+            graphWorkspaces: [{ id: 'default', name: 'Default' }],
+            enabledSchemaFamilies: {},
+            oidsfModalLayers: {},
         } as any;
 
         (plugin as any).conversationService = {
