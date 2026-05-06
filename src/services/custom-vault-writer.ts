@@ -2,6 +2,7 @@ import { normalizePath, TFile, TFolder, type App } from 'obsidian';
 import type VaultAIPlugin from '../../main';
 import {
 	DEFAULT_CREDENTIALS_FOLDER,
+	DEFAULT_ENRICHERS_FOLDER,
 	DEFAULT_SKILLS_FOLDER,
 	OSINT_COPILOT_CUSTOM_ROOT,
 } from '../constants/vault-layout';
@@ -30,6 +31,10 @@ function credentialsRoot(plugin: VaultAIPlugin): string {
 	return normalizePath(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
 }
 
+function enrichersRoot(plugin: VaultAIPlugin): string {
+	return normalizePath(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+}
+
 /** Re-validate op paths against current settings (defense in depth). */
 export function resolveSkillMarkdownPath(plugin: VaultAIPlugin, skillId: string): string {
 	const id = parseSkillIdForVault(skillId);
@@ -47,6 +52,20 @@ export function resolveCredentialFilePath(plugin: VaultAIPlugin, relativePath: s
 	assertPathUnderCustomRoot(file, 'Credentials file');
 	if (!pathIsUnderPrefix(file, root)) {
 		throw new Error('Credential path escapes credentials folder');
+	}
+	return file;
+}
+
+/** `{enrichersRoot}/{id}.json` — id already normalized slug. */
+export function resolveEnricherJsonPath(plugin: VaultAIPlugin, enricherId: string): string {
+	const id = parseSkillIdForVault(enricherId);
+	if (!id) throw new Error('Invalid enricher id');
+	const root = enrichersRoot(plugin);
+	assertPathUnderCustomRoot(root, 'Enrichers root');
+	const file = normalizePath(`${root}/${id}.json`);
+	assertPathUnderCustomRoot(file, 'Enricher file');
+	if (!pathIsUnderPrefix(file, root)) {
+		throw new Error('Enricher path escapes enrichers folder');
 	}
 	return file;
 }
@@ -85,6 +104,7 @@ export interface ApplyCustomVaultOperationsResult {
 	applied: number;
 	errors: string[];
 	skillsTouched: boolean;
+	enrichersTouched: boolean;
 }
 
 /**
@@ -97,6 +117,7 @@ export async function applyCustomVaultOperations(
 	const errors: string[] = [];
 	let applied = 0;
 	let skillsTouched = false;
+	let enrichersTouched = false;
 
 	for (const op of ops) {
 		try {
@@ -146,6 +167,30 @@ export async function applyCustomVaultOperations(
 					}
 					break;
 				}
+				case 'upsert_enricher': {
+					const path = resolveEnricherJsonPath(plugin, op.id);
+					enrichersTouched = true;
+					await ensureFolderChain(plugin.app, path);
+					const existing = plugin.app.vault.getAbstractFileByPath(path);
+					const body = JSON.stringify(op.spec, null, 2);
+					if (existing instanceof TFile) {
+						await plugin.app.vault.modify(existing, body);
+					} else {
+						await plugin.app.vault.create(path, body);
+					}
+					applied++;
+					break;
+				}
+				case 'delete_enricher': {
+					const path = resolveEnricherJsonPath(plugin, op.id);
+					enrichersTouched = true;
+					const existing = plugin.app.vault.getAbstractFileByPath(path);
+					if (existing instanceof TFile) {
+						await plugin.app.vault.delete(existing);
+						applied++;
+					}
+					break;
+				}
 				default:
 					break;
 			}
@@ -157,8 +202,11 @@ export async function applyCustomVaultOperations(
 	if (skillsTouched) {
 		plugin.skillRegistry.invalidate();
 	}
+	if (enrichersTouched) {
+		plugin.enricherRegistry.invalidate();
+	}
 
-	return { applied, errors, skillsTouched };
+	return { applied, errors, skillsTouched, enrichersTouched };
 }
 
 /** Ensure credentials root folder exists. */

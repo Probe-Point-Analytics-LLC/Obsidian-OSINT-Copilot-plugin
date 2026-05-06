@@ -126,6 +126,8 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 - Planner tool IDs are exposed as `ENRICH_<id>`.
 - Store secrets in the vault **credentials** folder and reference them with `bearer_vault` / `header_vault` / `query_vault` in the enricher JSON (or use `*_env` types if you manage keys outside the vault). Never paste API keys into chat, skills, or `answer_markdown`.
 
+**Unified chat — agent-proposed enricher JSON:** The unified agent can include **`upsert_enricher`** (and optionally **`delete_enricher`**) in **`custom_vault_operations`** alongside **`upsert_skill`**. Invalid specs are discarded before you see them; you still confirm with **Apply selected** in chat, same as skills and credentials. After apply, the new `enrichers/<id>.json` is on disk and the enricher list reloads.
+
 **Unified chat — calling enrichers without Bash:** The agent’s JSON response can include `enricher_invocations`, e.g. `[{ "enricher_id": "leakcheck", "query": "user@domain.com" }]`. The plugin then runs those HTTP requests **inside Obsidian** (Node), so you do not need `curl` or shell approval. Prefer this for APIs like LeakCheck instead of vault skills that tell Claude Code to run terminal commands.
 
 **Id must match the spec:** `enricher_id` is resolved with the same rules as the `id` field inside each `OSINTCopilot/custom/enrichers/*.json` file (normalized to lowercase and hyphenated). The model’s guessed name is not enough — e.g. `leakcheck_v2` in the agent JSON will not resolve if your file only has `"id": "leakcheck"`. If you see **Unknown enricher**, check the message’s **Available enricher ids** line or copy `id` exactly from the JSON. The chat progress bar shows **Enricher i/n** while enrichers run.

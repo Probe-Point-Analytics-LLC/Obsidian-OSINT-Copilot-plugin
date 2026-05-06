@@ -1,15 +1,22 @@
 /**
- * Unified-agent JSON: proposed writes under OSINTCopilot/custom/ (skills + credentials).
+ * Unified-agent JSON: proposed writes under OSINTCopilot/custom/ (skills, credentials, enrichers).
  * Applied only after user confirmation in chat.
  */
 
+import type { EnricherSpec } from './enrichers/enricher-schema';
+import { normalizeEnricherSpec } from './enrichers/enricher-schema';
+
 export const MAX_CREDENTIAL_FILE_CHARS = 256_000;
+/** Max serialized size for raw enricher spec payload before normalize (bytes of JSON string). */
+export const MAX_ENRICHER_SPEC_JSON_CHARS = 200_000;
 
 export type CustomVaultOperation =
 	| CustomVaultUpsertSkill
 	| CustomVaultDeleteSkill
 	| CustomVaultPutCredentials
-	| CustomVaultDeleteCredentials;
+	| CustomVaultDeleteCredentials
+	| CustomVaultUpsertEnricher
+	| CustomVaultDeleteEnricher;
 
 export interface CustomVaultUpsertSkill {
 	action: 'upsert_skill';
@@ -33,6 +40,18 @@ export interface CustomVaultPutCredentials {
 export interface CustomVaultDeleteCredentials {
 	action: 'delete_credentials';
 	relativePath: string;
+}
+
+/** Validated enricher spec; written as `{id}.json` under the vault enrichers folder on apply. */
+export interface CustomVaultUpsertEnricher {
+	action: 'upsert_enricher';
+	id: string;
+	spec: EnricherSpec;
+}
+
+export interface CustomVaultDeleteEnricher {
+	action: 'delete_enricher';
+	id: string;
 }
 
 /** Normalize vault skill id for filenames (alphanumeric, underscore, hyphen). */
@@ -89,6 +108,47 @@ function pushDeleteCreds(out: CustomVaultOperation[], o: Record<string, unknown>
 	out.push({ action: 'delete_credentials', relativePath });
 }
 
+function parseSpecObject(o: Record<string, unknown>): Record<string, unknown> | null {
+	const raw = o.spec;
+	if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+		return { ...(raw as Record<string, unknown>) };
+	}
+	if (typeof raw === 'string') {
+		try {
+			const p = JSON.parse(raw) as unknown;
+			if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>;
+		} catch {
+			return null;
+		}
+	}
+	return null;
+}
+
+function pushUpsertEnricher(out: CustomVaultOperation[], o: Record<string, unknown>): void {
+	const specObj = parseSpecObject(o);
+	if (!specObj) return;
+	const idFromOp = parseSkillIdForVault(o.id);
+	const idFromSpec = specObj.id != null ? parseSkillIdForVault(specObj.id) : '';
+	const idCombined = idFromOp || idFromSpec;
+	if (!idCombined) return;
+	const merged: Record<string, unknown> = { ...specObj, id: idCombined };
+	try {
+		const rawJson = JSON.stringify(merged);
+		if (rawJson.length > MAX_ENRICHER_SPEC_JSON_CHARS) return;
+	} catch {
+		return;
+	}
+	const normalized = normalizeEnricherSpec(merged);
+	if (!normalized) return;
+	out.push({ action: 'upsert_enricher', id: normalized.id, spec: normalized });
+}
+
+function pushDeleteEnricher(out: CustomVaultOperation[], o: Record<string, unknown>): void {
+	const id = parseSkillIdForVault(o.id);
+	if (!id) return;
+	out.push({ action: 'delete_enricher', id });
+}
+
 /** Parse and validate custom_vault_operations from agent JSON; drops invalid entries. */
 export function normalizeCustomVaultOperations(raw: unknown): CustomVaultOperation[] {
 	if (!Array.isArray(raw)) return [];
@@ -110,6 +170,12 @@ export function normalizeCustomVaultOperations(raw: unknown): CustomVaultOperati
 			case 'delete_credentials':
 				pushDeleteCreds(out, o);
 				break;
+			case 'upsert_enricher':
+				pushUpsertEnricher(out, o);
+				break;
+			case 'delete_enricher':
+				pushDeleteEnricher(out, o);
+				break;
 			default:
 				break;
 		}
@@ -128,5 +194,9 @@ export function summarizeCustomVaultOperation(op: CustomVaultOperation): string 
 			return `Write credentials file "${op.relativePath}" (${op.content.length} chars)`;
 		case 'delete_credentials':
 			return `Delete credentials "${op.relativePath}"`;
+		case 'upsert_enricher':
+			return `Upsert enricher "${op.id}" (${op.spec.name})`;
+		case 'delete_enricher':
+			return `Delete enricher "${op.id}"`;
 	}
 }

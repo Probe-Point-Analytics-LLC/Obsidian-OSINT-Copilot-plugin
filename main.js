@@ -25490,8 +25490,93 @@ function parseVaultSkillPlannerTool(tool) {
 // src/services/enrichers/enricher-executor.ts
 var import_obsidian15 = require("obsidian");
 
+// src/services/enrichers/enricher-schema.ts
+function parseId(v) {
+  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function normalizeEnricherInvocationId(raw) {
+  const id = parseId(raw);
+  return id || null;
+}
+function enrichToolId(id) {
+  return `ENRICH_${id}`;
+}
+function parseEnrichToolId(toolId) {
+  if (!toolId.startsWith("ENRICH_"))
+    return null;
+  const id = parseId(toolId.slice("ENRICH_".length));
+  return id || null;
+}
+function normalizeEnricherSpec(raw) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const r = raw;
+  const id = parseId(r.id);
+  if (!id)
+    return null;
+  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const timeoutMs = Number(r.limits?.timeoutMs);
+  const retries = Number(r.limits?.retries);
+  const maxResponseChars = Number(r.limits?.maxResponseChars);
+  const authTypeRaw = String(r.auth?.type || "none").trim();
+  const statusRaw = String(r.status || "draft");
+  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
+  const enabled = r.enabled !== false;
+  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
+  const vaultRelRaw = typeof r.auth?.vaultRelativePath === "string" ? String(r.auth.vaultRelativePath).trim() : typeof r.auth?.vault_relative_path === "string" ? String(r.auth.vault_relative_path).trim() : "";
+  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? void 0;
+  const envTypes = ["bearer_env", "header_env", "query_env"];
+  const vaultTypes = ["bearer_vault", "header_vault", "query_vault"];
+  let authType = "none";
+  if (envTypes.includes(authTypeRaw))
+    authType = authTypeRaw;
+  else if (vaultTypes.includes(authTypeRaw)) {
+    authType = vaultRelativePath ? authTypeRaw : "none";
+  }
+  return {
+    id,
+    name: String(r.name || id).trim() || id,
+    description: String(r.description || "").trim(),
+    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
+    status,
+    enabled,
+    allowedDomains,
+    auth: {
+      type: authType,
+      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
+      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
+      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0,
+      vaultRelativePath
+    },
+    request: {
+      method,
+      urlTemplate: String(r.request?.urlTemplate || "").trim(),
+      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
+        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
+      ) : {},
+      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
+    },
+    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
+    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
+      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
+      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
+    } : void 0,
+    skillInstructions: String(r.skillInstructions || "").trim(),
+    limits: {
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
+      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
+      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
+    },
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function isEnricherRunnable(spec) {
+  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
+}
+
 // src/services/custom-vault-operations.ts
 var MAX_CREDENTIAL_FILE_CHARS = 256e3;
+var MAX_ENRICHER_SPEC_JSON_CHARS = 2e5;
 function parseSkillIdForVault(raw) {
   return String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -25540,6 +25625,50 @@ function pushDeleteCreds(out, o) {
     return;
   out.push({ action: "delete_credentials", relativePath });
 }
+function parseSpecObject(o) {
+  const raw = o.spec;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return { ...raw };
+  }
+  if (typeof raw === "string") {
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object" && !Array.isArray(p))
+        return p;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function pushUpsertEnricher(out, o) {
+  const specObj = parseSpecObject(o);
+  if (!specObj)
+    return;
+  const idFromOp = parseSkillIdForVault(o.id);
+  const idFromSpec = specObj.id != null ? parseSkillIdForVault(specObj.id) : "";
+  const idCombined = idFromOp || idFromSpec;
+  if (!idCombined)
+    return;
+  const merged = { ...specObj, id: idCombined };
+  try {
+    const rawJson = JSON.stringify(merged);
+    if (rawJson.length > MAX_ENRICHER_SPEC_JSON_CHARS)
+      return;
+  } catch {
+    return;
+  }
+  const normalized = normalizeEnricherSpec(merged);
+  if (!normalized)
+    return;
+  out.push({ action: "upsert_enricher", id: normalized.id, spec: normalized });
+}
+function pushDeleteEnricher(out, o) {
+  const id = parseSkillIdForVault(o.id);
+  if (!id)
+    return;
+  out.push({ action: "delete_enricher", id });
+}
 function normalizeCustomVaultOperations(raw) {
   if (!Array.isArray(raw))
     return [];
@@ -25562,6 +25691,12 @@ function normalizeCustomVaultOperations(raw) {
       case "delete_credentials":
         pushDeleteCreds(out, o);
         break;
+      case "upsert_enricher":
+        pushUpsertEnricher(out, o);
+        break;
+      case "delete_enricher":
+        pushDeleteEnricher(out, o);
+        break;
       default:
         break;
     }
@@ -25578,6 +25713,10 @@ function summarizeCustomVaultOperation(op) {
       return `Write credentials file "${op.relativePath}" (${op.content.length} chars)`;
     case "delete_credentials":
       return `Delete credentials "${op.relativePath}"`;
+    case "upsert_enricher":
+      return `Upsert enricher "${op.id}" (${op.spec.name})`;
+    case "delete_enricher":
+      return `Delete enricher "${op.id}"`;
   }
 }
 
@@ -25736,90 +25875,6 @@ ${truncate(summary, spec.limits.maxResponseChars)}`;
   throw new Error(`Enricher ${spec.name} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
-// src/services/enrichers/enricher-schema.ts
-function parseId(v) {
-  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-function normalizeEnricherInvocationId(raw) {
-  const id = parseId(raw);
-  return id || null;
-}
-function enrichToolId(id) {
-  return `ENRICH_${id}`;
-}
-function parseEnrichToolId(toolId) {
-  if (!toolId.startsWith("ENRICH_"))
-    return null;
-  const id = parseId(toolId.slice("ENRICH_".length));
-  return id || null;
-}
-function normalizeEnricherSpec(raw) {
-  if (!raw || typeof raw !== "object")
-    return null;
-  const r = raw;
-  const id = parseId(r.id);
-  if (!id)
-    return null;
-  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
-  const timeoutMs = Number(r.limits?.timeoutMs);
-  const retries = Number(r.limits?.retries);
-  const maxResponseChars = Number(r.limits?.maxResponseChars);
-  const authTypeRaw = String(r.auth?.type || "none").trim();
-  const statusRaw = String(r.status || "draft");
-  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
-  const enabled = r.enabled !== false;
-  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
-  const vaultRelRaw = typeof r.auth?.vaultRelativePath === "string" ? String(r.auth.vaultRelativePath).trim() : typeof r.auth?.vault_relative_path === "string" ? String(r.auth.vault_relative_path).trim() : "";
-  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? void 0;
-  const envTypes = ["bearer_env", "header_env", "query_env"];
-  const vaultTypes = ["bearer_vault", "header_vault", "query_vault"];
-  let authType = "none";
-  if (envTypes.includes(authTypeRaw))
-    authType = authTypeRaw;
-  else if (vaultTypes.includes(authTypeRaw)) {
-    authType = vaultRelativePath ? authTypeRaw : "none";
-  }
-  return {
-    id,
-    name: String(r.name || id).trim() || id,
-    description: String(r.description || "").trim(),
-    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
-    status,
-    enabled,
-    allowedDomains,
-    auth: {
-      type: authType,
-      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
-      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
-      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0,
-      vaultRelativePath
-    },
-    request: {
-      method,
-      urlTemplate: String(r.request?.urlTemplate || "").trim(),
-      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
-        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
-      ) : {},
-      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
-    },
-    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
-    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
-      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
-      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
-    } : void 0,
-    skillInstructions: String(r.skillInstructions || "").trim(),
-    limits: {
-      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
-      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
-      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
-    },
-    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-function isEnricherRunnable(spec) {
-  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
-}
-
 // src/skills/skill-executor.ts
 async function executeVaultSkillTool(plugin, toolId, query, attachmentsContext, signal) {
   const vid = parseVaultSkillPlannerTool(toolId);
@@ -25890,7 +25945,9 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
     { "action": "upsert_skill", "id": "skill_id", "name": "Title", "description": "Planner description", "body": "Markdown body instructions for the skill" },
     { "action": "delete_skill", "id": "skill_id" },
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
-    { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" }
+    { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" },
+    { "action": "upsert_enricher", "id": "enricher_slug", "spec": { "id": "enricher_slug", "name": "API title", "description": "...", "status": "active", "enabled": true, "allowedDomains": ["api.vendor.com"], "auth": { "type": "bearer_vault", "vaultRelativePath": "vendor/secret.txt" }, "request": { "method": "GET", "urlTemplate": "https://api.vendor.com/v1?q={{query}}" }, "inputHints": [], "skillInstructions": "", "limits": { "timeoutMs": 15000, "retries": 1, "maxResponseChars": 8000 }, "updatedAt": "ISO-8601" } },
+    { "action": "delete_enricher", "id": "enricher_slug" }
   ],
   "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
@@ -25902,11 +25959,13 @@ Rules for graph_operations:
 - retrieval_hits should list the main vault note paths you relied on (if any).
 
 Rules for custom_vault_operations:
-- Only when the user explicitly asks to add, remove, or change vault skills or to store API keys/secrets under the vault custom area.
+- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, or to store API keys/secrets under the vault custom area.
 - Use an empty array when no vault file changes are requested.
-- NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials only.
+- NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
+- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include the API hostname used in request.urlTemplate; urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation).
+- delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
@@ -28549,7 +28608,7 @@ description: Short line for the planner tool list
 Body: instructions used when this skill runs (local Claude).
 \`\`\`
 
-Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations**.
+Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations** (including **upsert_enricher** for enricher JSON under the enrichers folder \u2014 confirm in chat before writes).
 
 `
   },
@@ -28668,6 +28727,9 @@ function skillsRoot(plugin) {
 function credentialsRoot(plugin) {
   return (0, import_obsidian26.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
 }
+function enrichersRoot(plugin) {
+  return (0, import_obsidian26.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+}
 function resolveSkillMarkdownPath(plugin, skillId) {
   const id = parseSkillIdForVault(skillId);
   if (!id || id === "readme")
@@ -28685,6 +28747,19 @@ function resolveCredentialFilePath(plugin, relativePath) {
   assertPathUnderCustomRoot(file, "Credentials file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Credential path escapes credentials folder");
+  }
+  return file;
+}
+function resolveEnricherJsonPath(plugin, enricherId) {
+  const id = parseSkillIdForVault(enricherId);
+  if (!id)
+    throw new Error("Invalid enricher id");
+  const root = enrichersRoot(plugin);
+  assertPathUnderCustomRoot(root, "Enrichers root");
+  const file = (0, import_obsidian26.normalizePath)(`${root}/${id}.json`);
+  assertPathUnderCustomRoot(file, "Enricher file");
+  if (!pathIsUnderPrefix2(file, root)) {
+    throw new Error("Enricher path escapes enrichers folder");
   }
   return file;
 }
@@ -28718,6 +28793,7 @@ async function applyCustomVaultOperations(plugin, ops) {
   const errors = [];
   let applied = 0;
   let skillsTouched = false;
+  let enrichersTouched = false;
   for (const op of ops) {
     try {
       switch (op.action) {
@@ -28766,6 +28842,30 @@ async function applyCustomVaultOperations(plugin, ops) {
           }
           break;
         }
+        case "upsert_enricher": {
+          const path = resolveEnricherJsonPath(plugin, op.id);
+          enrichersTouched = true;
+          await ensureFolderChain(plugin.app, path);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          const body = JSON.stringify(op.spec, null, 2);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.modify(existing, body);
+          } else {
+            await plugin.app.vault.create(path, body);
+          }
+          applied++;
+          break;
+        }
+        case "delete_enricher": {
+          const path = resolveEnricherJsonPath(plugin, op.id);
+          enrichersTouched = true;
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.delete(existing);
+            applied++;
+          }
+          break;
+        }
         default:
           break;
       }
@@ -28776,7 +28876,10 @@ async function applyCustomVaultOperations(plugin, ops) {
   if (skillsTouched) {
     plugin.skillRegistry.invalidate();
   }
-  return { applied, errors, skillsTouched };
+  if (enrichersTouched) {
+    plugin.enricherRegistry.invalidate();
+  }
+  return { applied, errors, skillsTouched, enrichersTouched };
 }
 async function ensureCredentialsFolder(plugin) {
   const root = credentialsRoot(plugin);
@@ -32669,7 +32772,7 @@ ${ev.details}`;
           border-radius: 8px;
           border-left: 4px solid var(--text-accent);
         `;
-        vaultOpsDiv.createEl("h4", { text: "\u{1F4C1} Proposed vault changes (skills / credentials)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("h4", { text: "\u{1F4C1} Proposed vault changes (skills / credentials / enrichers)" }).style.marginTop = "0";
         vaultOpsDiv.createEl("p", {
           text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here."
         }).style.fontSize = "small";
@@ -34570,7 +34673,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     );
     new import_obsidian31.Setting(containerEl).setName("Skills (vault)").setHeading();
     new import_obsidian31.Setting(containerEl).setName("Skills folder").setDesc(
-      "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (and enricher HTTP tools use companion skills here)."
+      "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (same flow can propose enricher *.json under the enrichers folder; enricher HTTP tools use companion skills here)."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
         this.plugin.settings.skillsFolder = value.trim() || DEFAULT_SKILLS_FOLDER;

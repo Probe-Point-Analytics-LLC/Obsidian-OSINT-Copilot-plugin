@@ -10,7 +10,9 @@ const JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markd
     { "action": "upsert_skill", "id": "skill_id", "name": "Title", "description": "Planner description", "body": "Markdown body instructions for the skill" },
     { "action": "delete_skill", "id": "skill_id" },
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
-    { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" }
+    { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" },
+    { "action": "upsert_enricher", "id": "enricher_slug", "spec": { "id": "enricher_slug", "name": "API title", "description": "...", "status": "active", "enabled": true, "allowedDomains": ["api.vendor.com"], "auth": { "type": "bearer_vault", "vaultRelativePath": "vendor/secret.txt" }, "request": { "method": "GET", "urlTemplate": "https://api.vendor.com/v1?q={{query}}" }, "inputHints": [], "skillInstructions": "", "limits": { "timeoutMs": 15000, "retries": 1, "maxResponseChars": 8000 }, "updatedAt": "ISO-8601" } },
+    { "action": "delete_enricher", "id": "enricher_slug" }
   ],
   "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
@@ -22,11 +24,13 @@ Rules for graph_operations:
 - retrieval_hits should list the main vault note paths you relied on (if any).
 
 Rules for custom_vault_operations:
-- Only when the user explicitly asks to add, remove, or change vault skills or to store API keys/secrets under the vault custom area.
+- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, or to store API keys/secrets under the vault custom area.
 - Use an empty array when no vault file changes are requested.
-- NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials only.
+- NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
+- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side — follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include the API hostname used in request.urlTemplate; urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation).
+- delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.

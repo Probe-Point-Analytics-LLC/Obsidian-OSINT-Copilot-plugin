@@ -17,7 +17,7 @@ description: Short line for the planner tool list
 Body: instructions used when this skill runs (local Claude).
 \`\`\`
 
-Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations**.
+Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations** (including **upsert_enricher** for enricher JSON under the enrichers folder — confirm in chat before writes).
 
 `,
 	},

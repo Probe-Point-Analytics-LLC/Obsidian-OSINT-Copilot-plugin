@@ -3858,7 +3858,7 @@ export class ChatView extends ItemView {
           border-radius: 8px;
           border-left: 4px solid var(--text-accent);
         `;
-        vaultOpsDiv.createEl("h4", { text: "📁 Proposed vault changes (skills / credentials)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("h4", { text: "📁 Proposed vault changes (skills / credentials / enrichers)" }).style.marginTop = "0";
         vaultOpsDiv.createEl("p", {
           text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here.",
         }).style.fontSize = "small";
@@ -6151,7 +6151,7 @@ class VaultAISettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Skills folder")
       .setDesc(
-        "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (and enricher HTTP tools use companion skills here).",
+        "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (same flow can propose enricher *.json under the enrichers folder; enricher HTTP tools use companion skills here).",
       )
       .addText((text) =>
         text

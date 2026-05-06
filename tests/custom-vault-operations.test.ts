@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	MAX_ENRICHER_SPEC_JSON_CHARS,
 	normalizeCredentialsRelativePath,
 	normalizeCustomVaultOperations,
 	parseSkillIdForVault,
@@ -53,5 +54,78 @@ describe('custom vault operations', () => {
 
 	it('parseSkillIdForVault normalizes', () => {
 		expect(parseSkillIdForVault('  Hello World  ')).toBe('hello-world');
+	});
+
+	const minimalEnricherSpec = (id: string) => ({
+		id,
+		name: 'Test API',
+		description: 'unit test',
+		status: 'active',
+		enabled: true,
+		allowedDomains: ['api.example.test'],
+		auth: { type: 'none' },
+		request: { method: 'GET', urlTemplate: `https://api.example.test/v1?q={{query}}&ctx={{attachments_context}}` },
+		inputHints: ['email'],
+		skillInstructions: '',
+		limits: { timeoutMs: 15000, retries: 1, maxResponseChars: 8000 },
+		updatedAt: '2026-01-01T00:00:00.000Z',
+	});
+
+	it('normalizes upsert_enricher and uses normalized id from spec', () => {
+		const ops = normalizeCustomVaultOperations([
+			{
+				action: 'upsert_enricher',
+				spec: minimalEnricherSpec('Leak Check API'),
+			},
+		]);
+		expect(ops).toHaveLength(1);
+		expect(ops[0]).toMatchObject({ action: 'upsert_enricher', id: 'leak-check-api' });
+		if (ops[0].action === 'upsert_enricher') {
+			expect(ops[0].spec.id).toBe('leak-check-api');
+			expect(ops[0].spec.request.urlTemplate).toContain('{{query}}');
+		}
+	});
+
+	it('drops upsert_enricher when spec is invalid or oversize', () => {
+		expect(
+			normalizeCustomVaultOperations([
+				{ action: 'upsert_enricher', id: 'x', spec: null },
+				{ action: 'upsert_enricher', id: '', spec: { name: 'no id' } },
+			]),
+		).toHaveLength(0);
+
+		const pad = 'x'.repeat(MAX_ENRICHER_SPEC_JSON_CHARS + 50);
+		const big = normalizeCustomVaultOperations([
+			{
+				action: 'upsert_enricher',
+				spec: { ...minimalEnricherSpec('big'), description: pad },
+			},
+		]);
+		expect(big).toHaveLength(0);
+	});
+
+	it('normalizes delete_enricher id and summarizes enricher ops', () => {
+		const ops = normalizeCustomVaultOperations([{ action: 'delete_enricher', id: 'Remove Me!' }]);
+		expect(ops).toEqual([{ action: 'delete_enricher', id: 'remove-me' }]);
+		const u = summarizeCustomVaultOperation({
+			action: 'upsert_enricher',
+			id: 'a',
+			spec: {
+				id: 'a',
+				name: 'N',
+				description: '',
+				status: 'active',
+				enabled: true,
+				allowedDomains: ['x.com'],
+				auth: { type: 'none' },
+				request: { method: 'GET', urlTemplate: 'https://x.com/{{query}}' },
+				inputHints: [],
+				skillInstructions: '',
+				limits: { timeoutMs: 15000, retries: 1, maxResponseChars: 8000 },
+				updatedAt: '2026-01-01T00:00:00.000Z',
+			},
+		});
+		expect(u).toContain('Upsert enricher');
+		expect(u).toContain('N');
 	});
 });
