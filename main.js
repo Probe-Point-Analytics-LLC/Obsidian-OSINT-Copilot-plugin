@@ -16853,20 +16853,27 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         "--max-turns",
         String(maxTurns)
       ];
+      const cwd = this.config.cliWorkingDirectory?.trim();
       const child = execFile2(
         this.config.cliPath,
         args,
         {
           timeout: this.config.timeoutMs,
           maxBuffer: 10 * 1024 * 1024,
-          env: { ...process.env, NO_COLOR: "1" }
+          env: { ...process.env, NO_COLOR: "1" },
+          ...cwd ? { cwd } : {}
         },
         (error, stdout, stderr) => {
           if (error) {
             if (error.killed || error.signal === "SIGTERM") {
               reject(new DOMException("Aborted", "AbortError"));
             } else {
-              reject(new Error(`Claude CLI error (code ${error.code}): ${stderr || error.message}`));
+              const errOut = stderr?.trim() ?? "";
+              const stdOut = stdout?.trim() ?? "";
+              const combined = [errOut, stdOut].filter(Boolean).join("\n");
+              const tail = combined || error.message || "unknown error";
+              console.error("[ClaudeCodeService] CLI failed", { code: error.code, stderr: errOut, stdout: stdOut });
+              reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
             }
             return;
           }
@@ -29056,7 +29063,8 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     const pluginDir = basePath && this.manifest.dir ? `${basePath}/${this.manifest.dir}` : "";
     const svc = new ClaudeCodeService(pluginDir, {
       cliPath: this.settings.claudeCodeCliPath || "claude",
-      model: this.settings.claudeCodeModel || "sonnet"
+      model: this.settings.claudeCodeModel || "sonnet",
+      cliWorkingDirectory: basePath || void 0
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
@@ -33797,18 +33805,31 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Quick probe of the Claude executable used for graph extraction (same binary as unified mode when Agent runtime is Claude Code).").addButton(
+    new import_obsidian28.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
       (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
+          const adapter = this.plugin.app.vault.adapter;
+          const vaultRoot = typeof adapter.getBasePath === "function" ? String(adapter.getBasePath() || "") : "";
           const svc = new ClaudeCodeService("", {
-            cliPath: this.plugin.settings.claudeCodeCliPath
+            cliPath: this.plugin.settings.claudeCodeCliPath || "claude",
+            model: this.plugin.settings.claudeCodeModel || "sonnet",
+            timeoutMs: 45e3,
+            cliWorkingDirectory: vaultRoot || void 0
           });
           const ok = await svc.isAvailable();
-          new import_obsidian28.Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+          if (!ok) {
+            new import_obsidian28.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
+            btn.setButtonText("Test Claude binary");
+            btn.setDisabled(false);
+            return;
+          }
+          await svc.chat("", "Reply with exactly the single word: OK");
+          new import_obsidian28.Notice("Claude CLI is available and responded to a test request.", 6e3);
         } catch (e) {
-          new import_obsidian28.Notice("Error: " + (e.message || String(e)));
+          const msg = e?.message || String(e);
+          new import_obsidian28.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
         }
         btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);

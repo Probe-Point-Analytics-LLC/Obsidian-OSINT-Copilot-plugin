@@ -5,6 +5,11 @@ export interface ClaudeCodeConfig {
     model: string;
     maxTokens: number;
     timeoutMs: number;
+    /**
+     * When set (e.g. Obsidian vault root from `adapter.getBasePath()`), passed as `cwd` to the CLI process
+     * so Claude Code resolves relative paths and sandbox allowlists consistently with the open vault.
+     */
+    cliWorkingDirectory?: string;
 }
 
 const DEFAULT_CONFIG: ClaudeCodeConfig = {
@@ -136,6 +141,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                 '--max-turns', String(maxTurns),
             ];
 
+            const cwd = this.config.cliWorkingDirectory?.trim();
             const child = execFile(
                 this.config.cliPath,
                 args,
@@ -143,13 +149,20 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                     timeout: this.config.timeoutMs,
                     maxBuffer: 10 * 1024 * 1024,
                     env: { ...process.env, NO_COLOR: '1' },
+                    ...(cwd ? { cwd } : {}),
                 },
                 (error: any, stdout: string, stderr: string) => {
                     if (error) {
                         if (error.killed || error.signal === 'SIGTERM') {
                             reject(new DOMException('Aborted', 'AbortError'));
                         } else {
-                            reject(new Error(`Claude CLI error (code ${error.code}): ${stderr || error.message}`));
+                            const errOut = stderr?.trim() ?? '';
+                            const stdOut = stdout?.trim() ?? '';
+                            // Claude Code often prints fatal messages on stdout; include both for Obsidian notices and logs.
+                            const combined = [errOut, stdOut].filter(Boolean).join('\n');
+                            const tail = combined || error.message || 'unknown error';
+                            console.error('[ClaudeCodeService] CLI failed', { code: error.code, stderr: errOut, stdout: stdOut });
+                            reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
                         }
                         return;
                     }

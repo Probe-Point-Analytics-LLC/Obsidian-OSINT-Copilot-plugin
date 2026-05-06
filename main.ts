@@ -272,6 +272,7 @@ export default class VaultAIPlugin extends Plugin {
     const svc = new ClaudeCodeService(pluginDir, {
       cliPath: this.settings.claudeCodeCliPath || 'claude',
       model: this.settings.claudeCodeModel || 'sonnet',
+      cliWorkingDirectory: basePath || undefined,
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
@@ -6102,19 +6103,33 @@ class VaultAISettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Test Claude CLI (extraction)")
-      .setDesc("Quick probe of the Claude executable used for graph extraction (same binary as unified mode when Agent runtime is Claude Code).")
+      .setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.")
       .addButton((btn) =>
         btn.setButtonText("Test Claude binary").onClick(async () => {
           btn.setButtonText("Testing...");
           btn.setDisabled(true);
           try {
-            const svc = new ClaudeCodeService('', {
-              cliPath: this.plugin.settings.claudeCodeCliPath,
+            const adapter = this.plugin.app.vault.adapter as any;
+            const vaultRoot =
+              typeof adapter.getBasePath === "function" ? String(adapter.getBasePath() || "") : "";
+            const svc = new ClaudeCodeService("", {
+              cliPath: this.plugin.settings.claudeCodeCliPath || "claude",
+              model: this.plugin.settings.claudeCodeModel || "sonnet",
+              timeoutMs: 45_000,
+              cliWorkingDirectory: vaultRoot || undefined,
             });
             const ok = await svc.isAvailable();
-            new Notice(ok ? "Claude Code CLI is available!" : "Claude CLI not found. Check the path.");
+            if (!ok) {
+              new Notice("Claude CLI not found. Check the path and PATH.", 8000);
+              btn.setButtonText("Test Claude binary");
+              btn.setDisabled(false);
+              return;
+            }
+            await svc.chat("", "Reply with exactly the single word: OK");
+            new Notice("Claude CLI is available and responded to a test request.", 6000);
           } catch (e: any) {
-            new Notice("Error: " + (e.message || String(e)));
+            const msg = e?.message || String(e);
+            new Notice(msg.length > 2000 ? msg.slice(0, 2000) + "…" : msg, 12000);
           }
           btn.setButtonText("Test Claude binary");
           btn.setDisabled(false);
