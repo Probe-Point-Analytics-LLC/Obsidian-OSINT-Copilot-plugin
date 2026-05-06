@@ -145,6 +145,8 @@ interface VaultAISettings {
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
   claudeCodeModel: string;
+  /** Whitespace-separated extra argv for Claude Code CLI (e.g. permission mode). See USER_GUIDE. */
+  claudeCodeExtraArgs: string;
   /** Which local CLI backs unified chat + JSON agent turns. */
   agentRuntimeProvider: string;
   /** Hermes (or compatible) agent CLI — see USER_GUIDE. */
@@ -233,6 +235,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
+  claudeCodeExtraArgs: '',
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: 'hermes',
   hermesAgentExtraArgs: '',
@@ -298,6 +301,7 @@ export default class VaultAIPlugin extends Plugin {
       cliPath: this.settings.claudeCodeCliPath || 'claude',
       model: this.settings.claudeCodeModel || 'sonnet',
       cliWorkingDirectory: basePath || undefined,
+      extraCliArgs: this.settings.claudeCodeExtraArgs ?? '',
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
@@ -1036,6 +1040,9 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     }
     if (typeof merged.hermesAgentCliPath !== 'string' || !merged.hermesAgentCliPath.trim()) {
       merged.hermesAgentCliPath = DEFAULT_SETTINGS.hermesAgentCliPath;
+    }
+    if (typeof merged.claudeCodeExtraArgs !== 'string') {
+      merged.claudeCodeExtraArgs = DEFAULT_SETTINGS.claudeCodeExtraArgs;
     }
     if (typeof merged.hermesAgentExtraArgs !== 'string') {
       merged.hermesAgentExtraArgs = DEFAULT_SETTINGS.hermesAgentExtraArgs;
@@ -6521,6 +6528,21 @@ class VaultAISettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Claude Code extra CLI args")
+      .setDesc(
+        "Whitespace-separated flags appended after --max-turns for every Claude Code invocation (chat, extraction, skills). Example: --permission-mode bypassPermissions (disables interactive Bash approval — dangerous: the model may run shell without prompts). Prefer vault enricher JSON + enricher_invocations in the agent JSON for HTTP APIs instead of curl.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("")
+          .setValue(this.plugin.settings.claudeCodeExtraArgs)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCodeExtraArgs = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Extraction log verbosity")
       .setDesc("How much Claude extraction detail is shown in chat while processing attachments.")
       .addDropdown((dd) =>
@@ -6562,6 +6584,7 @@ class VaultAISettingTab extends PluginSettingTab {
               model: this.plugin.settings.claudeCodeModel || "sonnet",
               timeoutMs: 45_000,
               cliWorkingDirectory: vaultRoot || undefined,
+              extraCliArgs: this.plugin.settings.claudeCodeExtraArgs ?? "",
             });
             const ok = await svc.isAvailable();
             if (!ok) {

@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { buildUnifiedAgentSystemPrompt, buildUnifiedAgentUserPrompt } from './build-unified-agent-prompt';
 import { parseAgentTurnResult } from './parse-agent-turn-json';
 import type { AgentProvider, AgentTurnContext, AgentTurnResult } from './provider-types';
+import { splitCliArgsLine } from './cli-args';
 
 export interface HermesAgentRuntimeConfig {
     cliPath: string;
@@ -10,12 +11,6 @@ export interface HermesAgentRuntimeConfig {
     timeoutMs: number;
     /** argv tokens for health check (default asks for --version). */
     healthCheckArgs: string;
-}
-
-function splitArgv(line: string): string[] {
-    const s = line.trim();
-    if (!s) return [];
-    return s.split(/\s+/).filter(Boolean);
 }
 
 export class HermesAgentProvider implements AgentProvider {
@@ -33,7 +28,7 @@ export class HermesAgentProvider implements AgentProvider {
         const user = buildUnifiedAgentUserPrompt(ctx);
         const fullPrompt = `${system}\n\n---\n\n${user}`;
 
-        const args = splitArgv(this.cfg.extraArgs);
+        const args = splitCliArgsLine(this.cfg.extraArgs);
         const stdout = await this.invokeHermes(fullPrompt, args, signal);
         onProgress?.('Parsing agent response...', 85);
         return parseAgentTurnResult(stdout, 'hermes-agent');
@@ -84,7 +79,7 @@ export class HermesAgentProvider implements AgentProvider {
     }
 
     async healthCheck(): Promise<boolean> {
-        const args = splitArgv(this.cfg.healthCheckArgs);
+        const args = splitCliArgsLine(this.cfg.healthCheckArgs);
         try {
             await new Promise<void>((resolve, reject) => {
                 execFile(

@@ -2,11 +2,13 @@ import type { AIOperation, OsintSourceInput } from '../../entities/types';
 import { normalizeCustomVaultOperations } from '../custom-vault-operations';
 import {
     AGENT_TURN_SCHEMA_VERSION,
+    type AgentEnricherInvocation,
     type AgentRetrievalHit,
     type AgentTurnDiagnostics,
     type AgentTurnResult,
     type AgentRuntimeId,
 } from './provider-types';
+import { normalizeEnricherInvocationId } from '../enrichers/enricher-schema';
 
 function extractJsonObject(raw: string): string | null {
     const trimmed = raw.trim();
@@ -102,6 +104,28 @@ function normalizeGraphOperations(raw: unknown): AIOperation[] {
     return ops;
 }
 
+const MAX_ENRICHER_INVOCATIONS = 8;
+const MAX_ENRICHER_QUERY_CHARS = 12_000;
+
+function normalizeEnricherInvocations(raw: unknown): AgentEnricherInvocation[] {
+    if (!Array.isArray(raw)) return [];
+    const out: AgentEnricherInvocation[] = [];
+    for (const item of raw) {
+        if (out.length >= MAX_ENRICHER_INVOCATIONS) break;
+        if (!item || typeof item !== 'object') continue;
+        const o = item as Record<string, unknown>;
+        const enricher_id = normalizeEnricherInvocationId(o.enricher_id ?? o.enricherId ?? o.id);
+        if (!enricher_id) continue;
+        let query = typeof o.query === 'string' ? o.query : '';
+        if (query.length > MAX_ENRICHER_QUERY_CHARS) {
+            query = query.slice(0, MAX_ENRICHER_QUERY_CHARS);
+        }
+        if (!query.trim()) continue;
+        out.push({ enricher_id, query });
+    }
+    return out;
+}
+
 function normalizeHits(raw: unknown): AgentRetrievalHit[] {
     if (!Array.isArray(raw)) return [];
     const hits: AgentRetrievalHit[] = [];
@@ -132,6 +156,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
             retrieval_hits: [],
             graph_operations: [],
             custom_vault_operations: [],
+            enricher_invocations: [],
             diagnostics: { provider, raw_excerpt: excerpt, notes: 'no_json_object' },
         };
     }
@@ -152,6 +177,9 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
         const customVaultOps = normalizeCustomVaultOperations(
             data.custom_vault_operations ?? data.customVaultOperations,
         );
+        const enricherInvocations = normalizeEnricherInvocations(
+            data.enricher_invocations ?? data.enricherInvocations,
+        );
         const diag: AgentTurnDiagnostics = {
             provider,
             raw_excerpt: excerpt,
@@ -165,6 +193,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
             retrieval_hits: hits,
             graph_operations: graphOps,
             custom_vault_operations: customVaultOps,
+            enricher_invocations: enricherInvocations,
             diagnostics: diag,
         };
     } catch (e) {
@@ -175,6 +204,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
             retrieval_hits: [],
             graph_operations: [],
             custom_vault_operations: [],
+            enricher_invocations: [],
             diagnostics: { provider, raw_excerpt: excerpt, notes: 'json_parse_error' },
         };
     }

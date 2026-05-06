@@ -1,4 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../src/skills/skill-executor', () => ({
+    executeEnricherTool: vi.fn().mockResolvedValue('enricher-mock-result'),
+    executeVaultSkillTool: vi.fn(),
+}));
+
+import { executeEnricherTool } from '../src/skills/skill-executor';
 import { OrchestrationService } from '../src/services/orchestration-service';
 import { parseAgentTurnResult } from '../src/services/agent-runtime/parse-agent-turn-json';
 import { AGENT_TURN_SCHEMA_VERSION } from '../src/services/agent-runtime/provider-types';
@@ -19,6 +26,25 @@ describe('parseAgentTurnResult', () => {
         const r = parseAgentTurnResult('not json at all', 'hermes-agent');
         expect(r.answer_markdown).toContain('could not be parsed');
         expect(r.graph_operations).toEqual([]);
+        expect(r.enricher_invocations).toEqual([]);
+    });
+
+    it('normalizes enricher_invocations', () => {
+        const raw = JSON.stringify({
+            version: AGENT_TURN_SCHEMA_VERSION,
+            answer_markdown: 'ok',
+            retrieval_hits: [],
+            graph_operations: [],
+            custom_vault_operations: [],
+            enricher_invocations: [
+                { enricher_id: 'LeakCheck', query: 'user@example.com' },
+                { enricher_id: 'x', query: '' },
+                { enricher_id: '', query: 'nope' },
+            ],
+        });
+        const r = parseAgentTurnResult(raw, 'claude-code');
+        expect(r.enricher_invocations).toHaveLength(1);
+        expect(r.enricher_invocations[0]).toEqual({ enricher_id: 'leakcheck', query: 'user@example.com' });
     });
 });
 
@@ -92,6 +118,7 @@ describe('OrchestrationService unified path', () => {
                 },
             ],
             custom_vault_operations: [{ action: 'put_credentials', relativePath: 't.txt', content: 'x' }],
+            enricher_invocations: [],
         });
 
         const plugin: any = {
@@ -136,5 +163,61 @@ describe('OrchestrationService unified path', () => {
             action: 'put_credentials',
             relativePath: 't.txt',
         });
+        expect(executeEnricherTool).not.toHaveBeenCalled();
+    });
+
+    it('runs executeEnricherTool for each enricher_invocations entry', async () => {
+        vi.mocked(executeEnricherTool).mockClear();
+        const turnJson = JSON.stringify({
+            version: AGENT_TURN_SCHEMA_VERSION,
+            answer_markdown: 'Queued enricher.',
+            retrieval_hits: [],
+            graph_operations: [],
+            custom_vault_operations: [],
+            enricher_invocations: [{ enricher_id: 'leakcheck', query: 'scammer@dom.test' }],
+        });
+
+        const plugin: any = {
+            settings: {
+                enableGraphFeatures: true,
+                credentialsFolder: 'OSINTCopilot/custom/credentials',
+                agentRuntimeProvider: 'claude-code',
+                hermesAgentCliPath: 'hermes',
+                hermesAgentExtraArgs: '',
+                hermesAgentTimeoutMs: 120_000,
+                hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
+            },
+            graphApiService: {
+                extractTextFromUrl: vi.fn(),
+                callRemoteModel: vi.fn().mockResolvedValue(turnJson),
+            },
+            vaultPromptLoader: {
+                getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),
+            },
+            app: { vault: {} },
+        };
+
+        const orch = new OrchestrationService(plugin);
+        const result = await orch.processRequest(
+            'run check',
+            '',
+            { entities: [], connections: [] },
+            [],
+            {},
+            vi.fn(),
+            {},
+        );
+
+        expect(executeEnricherTool).toHaveBeenCalledTimes(1);
+        expect(executeEnricherTool).toHaveBeenCalledWith(
+            plugin,
+            'ENRICH_leakcheck',
+            'scammer@dom.test',
+            '',
+            undefined,
+        );
+        expect(result.finalResponse).toContain('## Enricher results');
+        expect(result.finalResponse).toContain('enricher-mock-result');
     });
 });

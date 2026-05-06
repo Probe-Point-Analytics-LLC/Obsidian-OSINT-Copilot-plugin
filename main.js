@@ -16825,6 +16825,14 @@ _GraphApiService.TEXT_EXTENSIONS = /* @__PURE__ */ new Set([
 ]);
 var GraphApiService = _GraphApiService;
 
+// src/services/agent-runtime/cli-args.ts
+function splitCliArgsLine(line) {
+  const s = line.trim();
+  if (!s)
+    return [];
+  return s.split(/\s+/).filter(Boolean);
+}
+
 // src/services/claude-code-service.ts
 var DEFAULT_CONFIG = {
   cliPath: "claude",
@@ -16962,6 +16970,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         return;
       }
       const { execFile: execFile2 } = require("child_process");
+      const extra = splitCliArgsLine(this.config.extraCliArgs ?? "");
       const args = [
         "--print",
         "--output-format",
@@ -16969,13 +16978,14 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         "--model",
         this.config.model,
         "--max-turns",
-        String(maxTurns)
+        String(maxTurns),
+        ...extra
       ];
       const cwd = this.config.cliWorkingDirectory?.trim();
       logOptions?.emit?.({
         phase: "invoke_start",
         level: "info",
-        message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}`,
+        message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}${extra.length ? ` +${extra.length} extra arg(s)` : ""}`,
         details: cwd ? `cwd=${cwd}` : "cwd=(default)",
         timestamp: Date.now()
       });
@@ -25730,6 +25740,10 @@ ${truncate(summary, spec.limits.maxResponseChars)}`;
 function parseId(v) {
   return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
+function normalizeEnricherInvocationId(raw) {
+  const id = parseId(raw);
+  return id || null;
+}
 function enrichToolId(id) {
   return `ENRICH_${id}`;
 }
@@ -25868,7 +25882,8 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
     { "action": "delete_skill", "id": "skill_id" },
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
     { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" }
-  ]
+  ],
+  "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
 
 Rules for graph_operations:
@@ -25882,7 +25897,12 @@ Rules for custom_vault_operations:
 - Use an empty array when no vault file changes are requested.
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials only.
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
-- upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).`;
+- upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
+
+Rules for enricher_invocations:
+- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
+- Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs \u2014 use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
+- enricher_id must match the enricher spec id (slug). query is substituted into the enricher templates as {query} / attachments_context as documented in each spec.`;
 function buildUnifiedAgentSystemPrompt(providerLabel) {
   return `You are the OSINT Copilot unified agent (${providerLabel}).
 
@@ -26004,6 +26024,31 @@ function normalizeGraphOperations(raw) {
   }
   return ops;
 }
+var MAX_ENRICHER_INVOCATIONS = 8;
+var MAX_ENRICHER_QUERY_CHARS = 12e3;
+function normalizeEnricherInvocations(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const out = [];
+  for (const item of raw) {
+    if (out.length >= MAX_ENRICHER_INVOCATIONS)
+      break;
+    if (!item || typeof item !== "object")
+      continue;
+    const o = item;
+    const enricher_id = normalizeEnricherInvocationId(o.enricher_id ?? o.enricherId ?? o.id);
+    if (!enricher_id)
+      continue;
+    let query = typeof o.query === "string" ? o.query : "";
+    if (query.length > MAX_ENRICHER_QUERY_CHARS) {
+      query = query.slice(0, MAX_ENRICHER_QUERY_CHARS);
+    }
+    if (!query.trim())
+      continue;
+    out.push({ enricher_id, query });
+  }
+  return out;
+}
 function normalizeHits(raw) {
   if (!Array.isArray(raw))
     return [];
@@ -26038,6 +26083,7 @@ ${excerpt}
       retrieval_hits: [],
       graph_operations: [],
       custom_vault_operations: [],
+      enricher_invocations: [],
       diagnostics: { provider, raw_excerpt: excerpt, notes: "no_json_object" }
     };
   }
@@ -26050,6 +26096,9 @@ ${excerpt}
     const customVaultOps = normalizeCustomVaultOperations(
       data.custom_vault_operations ?? data.customVaultOperations
     );
+    const enricherInvocations = normalizeEnricherInvocations(
+      data.enricher_invocations ?? data.enricherInvocations
+    );
     const diag = {
       provider,
       raw_excerpt: excerpt,
@@ -26061,6 +26110,7 @@ ${excerpt}
       retrieval_hits: hits,
       graph_operations: graphOps,
       custom_vault_operations: customVaultOps,
+      enricher_invocations: enricherInvocations,
       diagnostics: diag
     };
   } catch (e) {
@@ -26077,6 +26127,7 @@ ${excerpt}
       retrieval_hits: [],
       graph_operations: [],
       custom_vault_operations: [],
+      enricher_invocations: [],
       diagnostics: { provider, raw_excerpt: excerpt, notes: "json_parse_error" }
     };
   }
@@ -26112,12 +26163,6 @@ var ClaudeAgentProvider = class {
 
 // src/services/agent-runtime/hermes-agent-provider.ts
 var import_child_process = require("child_process");
-function splitArgv(line) {
-  const s = line.trim();
-  if (!s)
-    return [];
-  return s.split(/\s+/).filter(Boolean);
-}
 var HermesAgentProvider = class {
   constructor(cfg) {
     this.cfg = cfg;
@@ -26132,7 +26177,7 @@ var HermesAgentProvider = class {
 ---
 
 ${user}`;
-    const args = splitArgv(this.cfg.extraArgs);
+    const args = splitCliArgsLine(this.cfg.extraArgs);
     const stdout = await this.invokeHermes(fullPrompt, args, signal);
     onProgress?.("Parsing agent response...", 85);
     return parseAgentTurnResult(stdout, "hermes-agent");
@@ -26180,7 +26225,7 @@ ${user}`;
     });
   }
   async healthCheck() {
-    const args = splitArgv(this.cfg.healthCheckArgs);
+    const args = splitCliArgsLine(this.cfg.healthCheckArgs);
     try {
       await new Promise((resolve, reject) => {
         (0, import_child_process.execFile)(
@@ -26514,6 +26559,40 @@ ${extractedText}`;
 
 ### Retrieval
 ${srcLines}`;
+      }
+      if (turn.enricher_invocations?.length) {
+        onProgress("Running vault enricher calls...", 55);
+        const blocks = [];
+        for (const inv of turn.enricher_invocations) {
+          checkAborted();
+          const toolId = enrichToolId(inv.enricher_id);
+          try {
+            const out = await executeEnricherTool(
+              this.plugin,
+              toolId,
+              inv.query,
+              ctx,
+              options?.abortSignal
+            );
+            blocks.push(`### Enricher \`${inv.enricher_id}\`
+
+${out}`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            blocks.push(`### Enricher \`${inv.enricher_id}\`
+
+**Error:** ${msg}`);
+          }
+        }
+        if (blocks.length) {
+          answer += `
+
+---
+
+## Enricher results
+
+${blocks.join("\n\n---\n\n")}`;
+        }
       }
       let proposedCommands;
       if (this.plugin.settings.enableGraphFeatures && turn.graph_operations?.length) {
@@ -29513,6 +29592,7 @@ var DEFAULT_SETTINGS = {
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
+  claudeCodeExtraArgs: "",
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: "hermes",
   hermesAgentExtraArgs: "",
@@ -29550,7 +29630,8 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
     const svc = new ClaudeCodeService(pluginDir, {
       cliPath: this.settings.claudeCodeCliPath || "claude",
       model: this.settings.claudeCodeModel || "sonnet",
-      cliWorkingDirectory: basePath || void 0
+      cliWorkingDirectory: basePath || void 0,
+      extraCliArgs: this.settings.claudeCodeExtraArgs ?? ""
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
@@ -30234,6 +30315,9 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     }
     if (typeof merged.hermesAgentCliPath !== "string" || !merged.hermesAgentCliPath.trim()) {
       merged.hermesAgentCliPath = DEFAULT_SETTINGS.hermesAgentCliPath;
+    }
+    if (typeof merged.claudeCodeExtraArgs !== "string") {
+      merged.claudeCodeExtraArgs = DEFAULT_SETTINGS.claudeCodeExtraArgs;
     }
     if (typeof merged.hermesAgentExtraArgs !== "string") {
       merged.hermesAgentExtraArgs = DEFAULT_SETTINGS.hermesAgentExtraArgs;
@@ -34668,6 +34752,14 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian31.Setting(containerEl).setName("Claude Code extra CLI args").setDesc(
+      "Whitespace-separated flags appended after --max-turns for every Claude Code invocation (chat, extraction, skills). Example: --permission-mode bypassPermissions (disables interactive Bash approval \u2014 dangerous: the model may run shell without prompts). Prefer vault enricher JSON + enricher_invocations in the agent JSON for HTTP APIs instead of curl."
+    ).addText(
+      (text) => text.setPlaceholder("").setValue(this.plugin.settings.claudeCodeExtraArgs).onChange(async (value) => {
+        this.plugin.settings.claudeCodeExtraArgs = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian31.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
       (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
         this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
@@ -34691,7 +34783,8 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
             cliPath: this.plugin.settings.claudeCodeCliPath || "claude",
             model: this.plugin.settings.claudeCodeModel || "sonnet",
             timeoutMs: 45e3,
-            cliWorkingDirectory: vaultRoot || void 0
+            cliWorkingDirectory: vaultRoot || void 0,
+            extraCliArgs: this.plugin.settings.claudeCodeExtraArgs ?? ""
           });
           const ok = await svc.isAvailable();
           if (!ok) {

@@ -1,4 +1,5 @@
 import { Entity, ProcessTextResponse, AIOperation, type OsintSourceInput } from '../entities/types';
+import { splitCliArgsLine } from './agent-runtime/cli-args';
 
 export interface ClaudeCodeConfig {
     cliPath: string;
@@ -10,6 +11,11 @@ export interface ClaudeCodeConfig {
      * so Claude Code resolves relative paths and sandbox allowlists consistently with the open vault.
      */
     cliWorkingDirectory?: string;
+    /**
+     * Extra argv appended after `--max-turns` (whitespace-separated), e.g. `--permission-mode bypassPermissions`.
+     * Dangerous: allows unattended Bash if the model requests it.
+     */
+    extraCliArgs?: string;
 }
 
 export type ExtractionLogLevel = 'info' | 'warn' | 'error' | 'debug';
@@ -203,18 +209,20 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
 
             const { execFile } = require('child_process') as typeof import('child_process');
 
+            const extra = splitCliArgsLine(this.config.extraCliArgs ?? '');
             const args = [
                 '--print',
                 '--output-format', 'text',
                 '--model', this.config.model,
                 '--max-turns', String(maxTurns),
+                ...extra,
             ];
 
             const cwd = this.config.cliWorkingDirectory?.trim();
             logOptions?.emit?.({
                 phase: 'invoke_start',
                 level: 'info',
-                message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}`,
+                message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}${extra.length ? ` +${extra.length} extra arg(s)` : ''}`,
                 details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
                 timestamp: Date.now(),
             });

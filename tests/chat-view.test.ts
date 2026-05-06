@@ -41,6 +41,7 @@ describe('ChatView', () => {
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
+            claudeCodeExtraArgs: '',
             agentRuntimeProvider: 'claude-code',
             hermesAgentCliPath: 'hermes',
             hermesAgentExtraArgs: '',

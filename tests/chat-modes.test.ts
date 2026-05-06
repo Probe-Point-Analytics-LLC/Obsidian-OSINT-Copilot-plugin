@@ -70,6 +70,7 @@ describe('ChatView send routing', () => {
       apiProvider: 'claude-code' as const,
       claudeCodeCliPath: 'claude',
       claudeCodeModel: 'sonnet',
+      claudeCodeExtraArgs: '',
       agentRuntimeProvider: 'claude-code' as const,
       hermesAgentCliPath: 'hermes',
       hermesAgentExtraArgs: '',

@@ -14,7 +14,7 @@ import { buildInferredOsintSources } from './osint-confidence-engine';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { parseVaultSkillPlannerTool } from '../skills/skill-runtime';
 import { executeEnricherTool, executeVaultSkillTool } from '../skills/skill-executor';
-import { parseEnrichToolId } from './enrichers/enricher-schema';
+import { enrichToolId, parseEnrichToolId } from './enrichers/enricher-schema';
 import { createAgentProvider } from './agent-runtime/create-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
@@ -254,6 +254,31 @@ export class OrchestrationService {
                     })
                     .join("\n");
                 answer += `\n\n### Retrieval\n${srcLines}`;
+            }
+
+            if (turn.enricher_invocations?.length) {
+                onProgress("Running vault enricher calls...", 55);
+                const blocks: string[] = [];
+                for (const inv of turn.enricher_invocations) {
+                    checkAborted();
+                    const toolId = enrichToolId(inv.enricher_id);
+                    try {
+                        const out = await executeEnricherTool(
+                            this.plugin,
+                            toolId,
+                            inv.query,
+                            ctx,
+                            options?.abortSignal,
+                        );
+                        blocks.push(`### Enricher \`${inv.enricher_id}\`\n\n${out}`);
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        blocks.push(`### Enricher \`${inv.enricher_id}\`\n\n**Error:** ${msg}`);
+                    }
+                }
+                if (blocks.length) {
+                    answer += `\n\n---\n\n## Enricher results\n\n${blocks.join("\n\n---\n\n")}`;
+                }
             }
 
             let proposedCommands: string[] | undefined;

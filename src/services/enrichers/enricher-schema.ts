@@ -60,6 +60,12 @@ function parseId(v: unknown): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** Normalize an enricher id from JSON / model output (matches enricher spec file ids). */
+export function normalizeEnricherInvocationId(raw: unknown): string | null {
+  const id = parseId(raw);
+  return id || null;
+}
+
 export function enrichToolId(id: string): string {
   return `ENRICH_${id}`;
 }

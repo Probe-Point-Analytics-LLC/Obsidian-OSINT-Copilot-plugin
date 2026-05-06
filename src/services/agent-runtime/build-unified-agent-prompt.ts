@@ -11,7 +11,8 @@ const JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markd
     { "action": "delete_skill", "id": "skill_id" },
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
     { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" }
-  ]
+  ],
+  "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
 
 Rules for graph_operations:
@@ -25,7 +26,12 @@ Rules for custom_vault_operations:
 - Use an empty array when no vault file changes are requested.
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials only.
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
-- upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).`;
+- upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
+
+Rules for enricher_invocations:
+- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
+- Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs — use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
+- enricher_id must match the enricher spec id (slug). query is substituted into the enricher templates as {query} / attachments_context as documented in each spec.`;
 
 export function buildUnifiedAgentSystemPrompt(providerLabel: string): string {
     return `You are the OSINT Copilot unified agent (${providerLabel}).

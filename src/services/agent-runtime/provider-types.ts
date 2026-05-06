@@ -10,6 +10,12 @@ export interface AgentRetrievalHit {
     snippet?: string;
 }
 
+/** One HTTP enricher to run in-plugin (no Bash); id matches JSON under the vault enrichers folder. */
+export interface AgentEnricherInvocation {
+    enricher_id: string;
+    query: string;
+}
+
 export interface AgentTurnDiagnostics {
     provider: AgentRuntimeId;
     /** Short excerpt of raw model stdout for debugging (never full vault). */
@@ -31,6 +37,8 @@ export interface AgentTurnResult {
      * The UI applies these only after explicit user confirmation (never auto-written).
      */
     custom_vault_operations: CustomVaultOperation[];
+    /** Run after parse: plugin executes via Node HTTP (see enricher specs). */
+    enricher_invocations: AgentEnricherInvocation[];
     diagnostics?: AgentTurnDiagnostics;
 }
 

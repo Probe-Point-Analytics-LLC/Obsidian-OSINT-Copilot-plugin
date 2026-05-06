@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { enrichToolId, normalizeEnricherSpec, parseEnrichToolId } from "../src/services/enrichers/enricher-schema";
+import {
+  enrichToolId,
+  normalizeEnricherInvocationId,
+  normalizeEnricherSpec,
+  parseEnrichToolId,
+} from "../src/services/enrichers/enricher-schema";
 
 describe("enricher schema", () => {
   it("normalizes basic enricher spec", () => {
@@ -20,6 +25,11 @@ describe("enricher schema", () => {
     expect(enrichToolId("abc")).toBe("ENRICH_abc");
     expect(parseEnrichToolId("ENRICH_abc")).toBe("abc");
     expect(parseEnrichToolId("SKILL_x")).toBeNull();
+  });
+
+  it("normalizes invocation ids for agent JSON", () => {
+    expect(normalizeEnricherInvocationId("LeakCheck")).toBe("leakcheck");
+    expect(normalizeEnricherInvocationId("")).toBeNull();
   });
 
   it("normalizes vault-backed auth with relative path", () => {
