@@ -6570,7 +6570,7 @@ class VaultAISettingTab extends PluginSettingTab {
               btn.setDisabled(false);
               return;
             }
-            await svc.chat("", "Reply with exactly the single word: OK");
+            await svc.chat("", "Reply with exactly the single word: OK", undefined, undefined, 1);
             new Notice("Claude CLI is available and responded to a test request.", 6000);
           } catch (e: any) {
             const msg = e?.message || String(e);

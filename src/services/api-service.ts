@@ -379,6 +379,9 @@ export class GraphApiService {
         if (jsonResponse) {
             systemPrompt += '\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.';
         }
+        // #region agent log
+        fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9b4ad8'},body:JSON.stringify({sessionId:'9b4ad8',location:'api-service.ts:callRemoteModel',message:'routing to claudeCodeService.chat',data:{hypothesisId:'H2',jsonResponse,systemLen:systemPrompt.length,userLen:userContent.length},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
+        // #endregion
         return this.claudeCodeService.chat(systemPrompt, userContent, signal);
     }
 

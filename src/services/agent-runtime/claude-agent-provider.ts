@@ -15,6 +15,9 @@ export class ClaudeAgentProvider implements AgentProvider {
         onProgress?.('Running Claude Code agent (JSON turn)...', 25);
         const system = buildUnifiedAgentSystemPrompt('Claude Code');
         const user = buildUnifiedAgentUserPrompt(ctx);
+        // #region agent log
+        fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9b4ad8'},body:JSON.stringify({sessionId:'9b4ad8',location:'claude-agent-provider.ts:runTurn',message:'unified turn before callRemoteModel',data:{hypothesisId:'H4',systemLen:system.length,userLen:user.length},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
+        // #endregion
         const raw = await this.graphApi.callRemoteModel(
             [
                 { role: 'system', content: system },
