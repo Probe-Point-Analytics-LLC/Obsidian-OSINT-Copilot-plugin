@@ -1,66 +1,27 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { parseSkillMarkdown } from "../src/skills/parse-skill-markdown";
-import { buildPlannerTooling, filterToolsToCall } from "../src/skills/skill-runtime";
-import type { SkillRegistry } from "../src/skills/skill-registry";
+import { parseVaultSkillPlannerTool, vaultSkillPlannerToolId } from "../src/skills/skill-runtime";
 
 describe("parseSkillMarkdown", () => {
-	it("parses vault skill frontmatter and body", () => {
+	it("parses vault skill frontmatter", () => {
 		const raw = `---
 skill_kind: vault
-id: test_one
-name: Test
-description: Desc
+id: my_skill
+name: Test Skill
+description: Does a thing
 ---
-
-Body line`;
+Body line.`;
 		const m = parseSkillMarkdown(raw, "OSINTCopilot/custom/skills/t.md");
-		expect(m).not.toBeNull();
-		expect(m!.id).toBe("test_one");
-		expect(m!.body).toContain("Body line");
+		expect(m?.id).toBe("my_skill");
+		expect(m?.name).toBe("Test Skill");
+		expect(m?.body).toContain("Body line");
 	});
 });
 
-describe("filterToolsToCall", () => {
-	it("removes disabled tools and EXTRACT_TO_GRAPH without attachments", () => {
-		const enabled = new Set(["LOCAL_VAULT", "EXTRACT_TO_GRAPH"]);
-		expect(filterToolsToCall(["LOCAL_VAULT", "EXTRACT_TO_GRAPH"], enabled, false)).toEqual(["LOCAL_VAULT"]);
-		expect(filterToolsToCall(["LOCAL_VAULT", "BOGUS"], enabled, true)).toEqual(["LOCAL_VAULT"]);
-	});
-});
-
-describe("buildPlannerTooling", () => {
-	it("includes built-in tools when toggles default on", async () => {
-		const registry = {
-			listVaultSkills: vi.fn().mockResolvedValue([]),
-		} as unknown as SkillRegistry;
-		const t = await buildPlannerTooling(registry, {}, true);
-		expect(t.enabledPlannerToolIds.has("LOCAL_VAULT")).toBe(true);
-		expect(t.enabledPlannerToolIds.has("EXTRACT_TO_GRAPH")).toBe(true);
-	});
-
-	it("omits EXTRACT_TO_GRAPH when no attachments", async () => {
-		const registry = {
-			listVaultSkills: vi.fn().mockResolvedValue([]),
-		} as unknown as SkillRegistry;
-		const t = await buildPlannerTooling(registry, {}, false);
-		expect(t.enabledPlannerToolIds.has("LOCAL_VAULT")).toBe(true);
-		expect(t.enabledPlannerToolIds.has("EXTRACT_TO_GRAPH")).toBe(false);
-	});
-
-	it("includes runnable enrichers as planner tools", async () => {
-		const registry = {
-			listVaultSkills: vi.fn().mockResolvedValue([]),
-		} as unknown as SkillRegistry;
-		const enricherRegistry = {
-			listRunnable: vi.fn().mockResolvedValue([
-				{
-					id: "whois",
-					name: "WHOIS API",
-					description: "Domain enrichment",
-				},
-			]),
-		} as any;
-		const t = await buildPlannerTooling(registry, {}, true, enricherRegistry);
-		expect(t.enabledPlannerToolIds.has("ENRICH_whois")).toBe(true);
+describe("skill-runtime planner ids", () => {
+	it("formats and parses SKILL_ prefix", () => {
+		expect(vaultSkillPlannerToolId("foo")).toBe("SKILL_foo");
+		expect(parseVaultSkillPlannerTool("SKILL_foo")).toBe("foo");
+		expect(parseVaultSkillPlannerTool("LOCAL_VAULT")).toBeNull();
 	});
 });

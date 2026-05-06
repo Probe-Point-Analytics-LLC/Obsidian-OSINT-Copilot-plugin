@@ -1,4 +1,13 @@
-export type EnricherAuthType = "none" | "bearer_env" | "header_env" | "query_env";
+import { normalizeCredentialsRelativePath } from "../custom-vault-operations";
+
+export type EnricherAuthType =
+  | "none"
+  | "bearer_env"
+  | "header_env"
+  | "query_env"
+  | "bearer_vault"
+  | "header_vault"
+  | "query_vault";
 export type EnricherStatus = "draft" | "active" | "disabled";
 
 export interface EnricherAuthConfig {
@@ -6,6 +15,8 @@ export interface EnricherAuthConfig {
   envVar?: string;
   headerName?: string;
   queryParam?: string;
+  /** Relative path under vault credentials folder (see plugin settings). File contents = secret (trimmed). */
+  vaultRelativePath?: string;
 }
 
 export interface EnricherRequestConfig {
@@ -68,13 +79,29 @@ export function normalizeEnricherSpec(raw: unknown): EnricherSpec | null {
   const timeoutMs = Number((r.limits as any)?.timeoutMs);
   const retries = Number((r.limits as any)?.retries);
   const maxResponseChars = Number((r.limits as any)?.maxResponseChars);
-  const authType = String((r.auth as any)?.type || "none") as EnricherAuthType;
+  const authTypeRaw = String((r.auth as any)?.type || "none").trim() as EnricherAuthType;
   const statusRaw = String(r.status || "draft");
   const status: EnricherStatus = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
   const enabled = r.enabled !== false;
   const allowedDomains = Array.isArray(r.allowedDomains)
     ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean)
     : [];
+
+  const vaultRelRaw =
+    typeof (r.auth as any)?.vaultRelativePath === "string"
+      ? String((r.auth as any).vaultRelativePath).trim()
+      : typeof (r.auth as any)?.vault_relative_path === "string"
+        ? String((r.auth as any).vault_relative_path).trim()
+        : "";
+  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? undefined;
+
+  const envTypes: EnricherAuthType[] = ["bearer_env", "header_env", "query_env"];
+  const vaultTypes: EnricherAuthType[] = ["bearer_vault", "header_vault", "query_vault"];
+  let authType: EnricherAuthType = "none";
+  if (envTypes.includes(authTypeRaw)) authType = authTypeRaw;
+  else if (vaultTypes.includes(authTypeRaw)) {
+    authType = vaultRelativePath ? authTypeRaw : "none";
+  }
 
   return {
     id,
@@ -85,12 +112,13 @@ export function normalizeEnricherSpec(raw: unknown): EnricherSpec | null {
     enabled,
     allowedDomains,
     auth: {
-      type: authType === "bearer_env" || authType === "header_env" || authType === "query_env" ? authType : "none",
+      type: authType,
       envVar: typeof (r.auth as any)?.envVar === "string" ? String((r.auth as any).envVar).trim() : undefined,
       headerName:
         typeof (r.auth as any)?.headerName === "string" ? String((r.auth as any).headerName).trim() : undefined,
       queryParam:
         typeof (r.auth as any)?.queryParam === "string" ? String((r.auth as any).queryParam).trim() : undefined,
+      vaultRelativePath,
     },
     request: {
       method,

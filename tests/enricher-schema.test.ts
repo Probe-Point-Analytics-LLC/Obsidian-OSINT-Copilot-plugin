@@ -21,4 +21,31 @@ describe("enricher schema", () => {
     expect(parseEnrichToolId("ENRICH_abc")).toBe("abc");
     expect(parseEnrichToolId("SKILL_x")).toBeNull();
   });
+
+  it("normalizes vault-backed auth with relative path", () => {
+    const spec = normalizeEnricherSpec({
+      id: "vault-auth",
+      name: "V",
+      status: "active",
+      enabled: true,
+      request: { method: "GET", urlTemplate: "https://api.example.com" },
+      auth: { type: "bearer_vault", vaultRelativePath: "svc/token.txt" },
+      limits: { timeoutMs: 5000, retries: 0, maxResponseChars: 1000 },
+    });
+    expect(spec?.auth.type).toBe("bearer_vault");
+    expect(spec?.auth.vaultRelativePath).toBe("svc/token.txt");
+  });
+
+  it("falls back to none when vault auth missing path", () => {
+    const spec = normalizeEnricherSpec({
+      id: "x",
+      name: "V",
+      status: "active",
+      enabled: true,
+      request: { method: "GET", urlTemplate: "https://api.example.com" },
+      auth: { type: "header_vault" },
+      limits: { timeoutMs: 5000, retries: 0, maxResponseChars: 1000 },
+    });
+    expect(spec?.auth.type).toBe("none");
+  });
 });

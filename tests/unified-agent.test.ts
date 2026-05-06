@@ -91,12 +91,13 @@ describe('OrchestrationService unified path', () => {
                     entities: [{ type: 'Person', properties: { full_name: 'Bob' } }],
                 },
             ],
+            custom_vault_operations: [{ action: 'put_credentials', relativePath: 't.txt', content: 'x' }],
         });
 
         const plugin: any = {
             settings: {
-                unifiedAgentOrchestration: true,
                 enableGraphFeatures: true,
+                credentialsFolder: 'OSINTCopilot/custom/credentials',
                 agentRuntimeProvider: 'claude-code',
                 hermesAgentCliPath: 'hermes',
                 hermesAgentExtraArgs: '',
@@ -130,45 +131,10 @@ describe('OrchestrationService unified path', () => {
         expect(result.finalResponse).toContain('notes/a.md');
         expect(result.proposedCommands?.length).toBeGreaterThan(0);
         expect(result.proposedCommands?.[0]).toContain('@@create_entity');
-    });
-
-    it('uses legacy planner when unifiedAgentOrchestration is false', async () => {
-        const plugin: any = {
-            settings: {
-                unifiedAgentOrchestration: false,
-                enableGraphFeatures: true,
-                skillToggles: {},
-                agentRuntimeProvider: 'claude-code',
-                hermesAgentCliPath: 'hermes',
-                hermesAgentExtraArgs: '',
-                hermesAgentTimeoutMs: 120_000,
-                hermesAgentHealthCheckArgs: '--version',
-                customAgentRuntimes: [],
-            },
-            graphApiService: {
-                extractTextFromUrl: vi.fn(),
-                callRemoteModel: vi.fn().mockResolvedValue(
-                    JSON.stringify({
-                        reasoning: 'r',
-                        toolsToCall: ['LOCAL_VAULT'],
-                        isProposal: true,
-                        planSummary: '### Plan',
-                        directResponse: 'Will search',
-                        graphCommands: [],
-                    }),
-                ),
-            },
-            skillRegistry: {
-                listVaultSkills: vi.fn().mockResolvedValue([]),
-            },
-            vaultPromptLoader: {
-                getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),
-            },
-        };
-
-        const orch = new OrchestrationService(plugin);
-        const result = await orch.processRequest('q', '', { entities: [] }, [], {}, vi.fn(), {});
-        expect(result.phase).toBe('PLAN_PROPOSED');
-        expect(result.proposedPlan?.toolsToCall).toContain('LOCAL_VAULT');
+        expect(result.proposedCustomVaultOps?.length).toBe(1);
+        expect(result.proposedCustomVaultOps?.[0]).toMatchObject({
+            action: 'put_credentials',
+            relativePath: 't.txt',
+        });
     });
 });

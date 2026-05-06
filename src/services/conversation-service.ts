@@ -5,8 +5,7 @@ import { App, normalizePath } from 'obsidian';
 
 /**
  * Primary chat task mode (header dropdown). Legacy per-flag fields are derived for YAML backward compatibility.
- * Note: main `handleSend` routes non–vault-ingest sends through orchestration; unified vs legacy tools is decided
- * in `OrchestrationService` (`unifiedAgentOrchestration`), not by switching handlers for the textarea path.
+ * Note: main `handleSend` routes non–vault-ingest sends through unified agent orchestration.
  */
 export type CopilotChatMode = 'general' | 'graph' | 'local';
 
@@ -65,6 +64,8 @@ export interface ConversationMessage {
   reportFilePath?: string;
   usedEntities?: { id: string, label: string, type: string }[];
   proposedModifications?: string[];
+  /** Persisted proposed vault skill/credential ops (same shape as CustomVaultOperation). */
+  proposedCustomVaultOps?: Record<string, unknown>[];
   proposedPlan?: any;
 }
 

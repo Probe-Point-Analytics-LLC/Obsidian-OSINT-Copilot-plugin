@@ -31,7 +31,7 @@ __export(main_exports, {
   runtimeSettingsVisibility: () => runtimeSettingsVisibility
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian29 = require("obsidian");
+var import_obsidian31 = require("obsidian");
 
 // src/generated/oidsfBundledSchemas.ts
 var OIDSF_BUNDLED_SCHEMAS = {
@@ -14257,6 +14257,7 @@ var DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
 var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
 var DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`;
+var DEFAULT_CREDENTIALS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/credentials`;
 var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
 Research/`;
 var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
@@ -25464,226 +25465,130 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian15 = require("obsidian");
-
-// src/services/intent-router.ts
-function detectOrchestrationIntent(query) {
-  const q = query.trim().toLowerCase();
-  if (!q)
-    return "UNKNOWN";
-  const vaultWideScope = /\b(all|every|entire|whole|full)\s+(the\s+)?(local\s+)?(documents?|notes?|files?|markdowns?)\b/.test(q) || /\b(all|every)\s+notes?\b/.test(q) || /\b(all|every)\s+markdown\s+files?\b/.test(q) || /\b(this|my|the)\s+vault\b/.test(q) && /\b(all|every|entire)\b/.test(q) || /\bacross\s+(the\s+)?(vault|obsidian)\b/.test(q) || /\bvault[- ]wide\b/.test(q) || /\b(all|every)\s+local\s+documents?\b/.test(q);
-  const graphFromVault = /\b(build|create|make|generate|populate|construct)\s+(a\s+)?(knowledge\s+|entity\s+)?graph\b/.test(q) || /\b(populate|fill)\b.{0,40}\b(knowledge\s+|entity\s+)?graph\b/.test(q) || /\b(knowledge\s+)?graph\s+(from|based\s+on|using)\b/.test(q) || /\bentities?\s+(from|in)\s+(my\s+)?(vault|notes)\b/.test(q) || /\bmap\s+((all|my)\s+)?(notes|documents)\b/.test(q) || /\b(extract|ingest)\b.{0,50}\b(entities|graph)\b/.test(q);
-  const explicitVaultGraph = /\bbuild\s+(a\s+)?(knowledge\s+)?graph\b/.test(q) && /\b(vault|local\s+documents?|this\s+vault|all\s+.{0,30}\b(notes|documents))\b/.test(q);
-  const hasVaultGraph = vaultWideScope && graphFromVault || explicitVaultGraph || /\bpopulate\b/.test(q) && /\bgraph\b/.test(q) && /\b(vault|notes)\b/.test(q);
-  const externalInvestigation = /\b(dark\s*web|\.onion|breach|data\s*breach|leak\s*site|sanctions?\b|company\s+registry|whois|linkedin\.com)\b/.test(
-    q
-  ) || /\b(look\s*up|search)\s+(on\s+)?(the\s+)?(internet|web|google)\b/.test(q) || /\b(run|do|perform)\s+osint\b|\bosint\s+(on|for|about)\b/i.test(q) || /\bopen\s*source\s*(intel|intelligence)\b/.test(q) && /\b(not|outside|beyond)\s+(my\s+)?vault\b/.test(q);
-  const vaultQaSignals = /\b(what|which|where|who|how)\b.{0,80}\b(my\s+)?(vault|notes)\b|\b(my\s+)?(vault|notes)\b.{0,40}\b(say|contain|about|mention)\b/.test(
-    q
-  ) || /\bsearch\s+(in\s+)?(my\s+)?(vault|notes)\b/.test(q) || /\baccording\s+to\s+(my\s+)?notes\b/.test(q);
-  if (hasVaultGraph && externalInvestigation)
-    return "MIXED";
-  if (hasVaultGraph)
-    return "VAULT_GRAPH_BUILD";
-  if (externalInvestigation)
-    return "OSINT_TOOL_RUN";
-  if (vaultQaSignals && !hasVaultGraph)
-    return "VAULT_QA";
-  return "UNKNOWN";
-}
-
-// src/services/enrichers/enricher-schema.ts
-function parseId(v) {
-  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-function enrichToolId(id) {
-  return `ENRICH_${id}`;
-}
-function parseEnrichToolId(toolId) {
-  if (!toolId.startsWith("ENRICH_"))
-    return null;
-  const id = parseId(toolId.slice("ENRICH_".length));
-  return id || null;
-}
-function normalizeEnricherSpec(raw) {
-  if (!raw || typeof raw !== "object")
-    return null;
-  const r = raw;
-  const id = parseId(r.id);
-  if (!id)
-    return null;
-  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
-  const timeoutMs = Number(r.limits?.timeoutMs);
-  const retries = Number(r.limits?.retries);
-  const maxResponseChars = Number(r.limits?.maxResponseChars);
-  const authType = String(r.auth?.type || "none");
-  const statusRaw = String(r.status || "draft");
-  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
-  const enabled = r.enabled !== false;
-  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
-  return {
-    id,
-    name: String(r.name || id).trim() || id,
-    description: String(r.description || "").trim(),
-    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
-    status,
-    enabled,
-    allowedDomains,
-    auth: {
-      type: authType === "bearer_env" || authType === "header_env" || authType === "query_env" ? authType : "none",
-      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
-      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
-      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0
-    },
-    request: {
-      method,
-      urlTemplate: String(r.request?.urlTemplate || "").trim(),
-      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
-        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
-      ) : {},
-      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
-    },
-    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
-    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
-      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
-      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
-    } : void 0,
-    skillInstructions: String(r.skillInstructions || "").trim(),
-    limits: {
-      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
-      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
-      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
-    },
-    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-function isEnricherRunnable(spec) {
-  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
-}
+var import_obsidian16 = require("obsidian");
 
 // src/skills/skill-runtime.ts
 var SKILL_PLANNER_PREFIX = "SKILL_";
-function vaultSkillPlannerToolId(vaultSkillId) {
-  return `${SKILL_PLANNER_PREFIX}${vaultSkillId}`;
-}
 function parseVaultSkillPlannerTool(tool) {
   if (!tool.startsWith(SKILL_PLANNER_PREFIX))
     return null;
   const id = tool.slice(SKILL_PLANNER_PREFIX.length).trim();
   return id || null;
 }
-function isSkillToggleEnabled(skillToggles, key, defaultOn = true) {
-  const v = skillToggles[key];
-  if (v === void 0)
-    return defaultOn;
-  return v;
+
+// src/services/enrichers/enricher-executor.ts
+var import_obsidian15 = require("obsidian");
+
+// src/services/custom-vault-operations.ts
+var MAX_CREDENTIAL_FILE_CHARS = 256e3;
+function parseSkillIdForVault(raw) {
+  return String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
-function builtinEntries() {
-  return [
-    {
-      kind: "builtin",
-      id: "local_vault",
-      name: "Local search",
-      description: "Search across Obsidian notes in the vault (LOCAL_VAULT).",
-      plannerToolId: "LOCAL_VAULT"
-    },
-    {
-      kind: "builtin",
-      id: "graph_generation",
-      name: "Graph generation",
-      description: "Extract entities from attached text into the knowledge graph (EXTRACT_TO_GRAPH).",
-      plannerToolId: "EXTRACT_TO_GRAPH"
-    }
-  ];
+function normalizeCredentialsRelativePath(raw) {
+  const s = String(raw ?? "").trim().replace(/\\/g, "/");
+  if (!s || s.startsWith("/") || s.includes(".."))
+    return null;
+  const parts = s.split("/").filter((p) => p.length > 0);
+  if (parts.length === 0)
+    return null;
+  for (const p of parts) {
+    if (p === "." || p === "..")
+      return null;
+  }
+  return parts.join("/");
 }
-async function buildPlannerTooling(registry, skillToggles, hasAttachments, enricherRegistry) {
-  const vaultSkills = await registry.listVaultSkills();
-  const merged = [...builtinEntries()];
-  for (const v of vaultSkills) {
-    merged.push({
-      kind: "vault",
-      id: v.id,
-      name: v.name,
-      description: v.description || `Custom skill \`${v.id}\`.`,
-      plannerToolId: vaultSkillPlannerToolId(v.id),
-      sourcePath: v.sourcePath
-    });
-  }
-  if (enricherRegistry) {
-    const enrichers = await enricherRegistry.listRunnable();
-    for (const e of enrichers) {
-      merged.push({
-        kind: "vault",
-        id: `enricher:${e.id}`,
-        name: e.name,
-        description: e.description || `HTTP enricher \`${e.id}\`.`,
-        plannerToolId: enrichToolId(e.id)
-      });
-    }
-  }
-  const enabledPlannerToolIds = /* @__PURE__ */ new Set();
-  const availableToolsLines = [];
-  for (const e of merged) {
-    if (!isSkillToggleEnabled(skillToggles, e.id, true))
+function pushUpsertSkill(out, o) {
+  const id = parseSkillIdForVault(o.id);
+  if (!id || id === "readme")
+    return;
+  const name = String(o.name ?? id).trim() || id;
+  const description = String(o.description ?? "").trim();
+  const body = typeof o.body === "string" ? o.body : "";
+  if (body.length > 5e5)
+    return;
+  out.push({ action: "upsert_skill", id, name, description, body });
+}
+function pushDeleteSkill(out, o) {
+  const id = parseSkillIdForVault(o.id);
+  if (!id || id === "readme")
+    return;
+  out.push({ action: "delete_skill", id });
+}
+function pushPutCreds(out, o) {
+  const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+  if (!relativePath)
+    return;
+  const content = typeof o.content === "string" ? o.content : "";
+  if (content.length > MAX_CREDENTIAL_FILE_CHARS)
+    return;
+  out.push({ action: "put_credentials", relativePath, content });
+}
+function pushDeleteCreds(out, o) {
+  const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+  if (!relativePath)
+    return;
+  out.push({ action: "delete_credentials", relativePath });
+}
+function normalizeCustomVaultOperations(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object")
       continue;
-    if (e.plannerToolId === "EXTRACT_TO_GRAPH" && !hasAttachments) {
-      continue;
+    const o = item;
+    const action = String(o.action ?? "").trim().toLowerCase().replace(/-/g, "_");
+    switch (action) {
+      case "upsert_skill":
+        pushUpsertSkill(out, o);
+        break;
+      case "delete_skill":
+        pushDeleteSkill(out, o);
+        break;
+      case "put_credentials":
+        pushPutCreds(out, o);
+        break;
+      case "delete_credentials":
+        pushDeleteCreds(out, o);
+        break;
+      default:
+        break;
     }
-    enabledPlannerToolIds.add(e.plannerToolId);
-    const desc = e.description || e.name;
-    availableToolsLines.push(`- "${e.plannerToolId}" - ${desc}`);
   }
-  const defaultToolsExample = enabledPlannerToolIds.size > 0 ? Array.from(enabledPlannerToolIds).slice(0, 3) : [];
-  const criticalRulesLines = [];
-  if (enabledPlannerToolIds.has("LOCAL_VAULT")) {
-    criticalRulesLines.push(
-      "For investigative questions about the user's vault, propose LOCAL_VAULT when relevant."
-    );
-  }
-  if (hasAttachments && enabledPlannerToolIds.has("EXTRACT_TO_GRAPH")) {
-    criticalRulesLines.push(
-      "When attachments or extracted URLs are present, you may propose EXTRACT_TO_GRAPH to ingest into the graph."
-    );
-  }
-  const vaultCustom = merged.filter(
-    (e) => e.kind === "vault" && isSkillToggleEnabled(skillToggles, e.id, true) && enabledPlannerToolIds.has(e.plannerToolId)
-  );
-  for (const e of vaultCustom) {
-    criticalRulesLines.push(`You may propose "${e.plannerToolId}" when it matches the user's goal.`);
-  }
-  const buildRoutedIntentBlock = (intentLabel, att) => {
-    let attHint = "";
-    if (att) {
-      if (enabledPlannerToolIds.has("EXTRACT_TO_GRAPH")) {
-        attHint = " Attachments are present; EXTRACT_TO_GRAPH may be included if it helps ingest into the graph.";
-      }
-    } else {
-      attHint = " No attachment payload in this turn; do not select EXTRACT_TO_GRAPH.";
-    }
-    if (enabledPlannerToolIds.has("LOCAL_VAULT")) {
-      return `${intentLabel} \u2014 Use LOCAL_VAULT to search the user's vault when appropriate.${attHint}`;
-    }
-    return `${intentLabel} \u2014 Choose only from AVAILABLE TOOLS below.${attHint}`;
-  };
-  return {
-    availableToolsLines,
-    enabledPlannerToolIds,
-    defaultToolsExample: defaultToolsExample.length > 0 ? defaultToolsExample : ["LOCAL_VAULT"],
-    criticalRulesLines,
-    buildRoutedIntentBlock
-  };
+  return out;
 }
-function filterToolsToCall(tools, enabled, hasAttachments) {
-  return tools.filter((t) => {
-    if (!enabled.has(t))
-      return false;
-    if (t === "EXTRACT_TO_GRAPH" && !hasAttachments)
-      return false;
-    return true;
-  });
+function summarizeCustomVaultOperation(op) {
+  switch (op.action) {
+    case "upsert_skill":
+      return `Upsert skill "${op.id}" (${op.name})`;
+    case "delete_skill":
+      return `Delete skill "${op.id}"`;
+    case "put_credentials":
+      return `Write credentials file "${op.relativePath}" (${op.content.length} chars)`;
+    case "delete_credentials":
+      return `Delete credentials "${op.relativePath}"`;
+  }
 }
 
 // src/services/enrichers/enricher-executor.ts
+function pathIsUnderPrefix(path, prefix) {
+  const p = (0, import_obsidian15.normalizePath)(path);
+  const pre = (0, import_obsidian15.normalizePath)(prefix);
+  return p === pre || p.startsWith(pre + "/");
+}
+async function readVaultCredential(vault, credentialsFolder, vaultRelativePath) {
+  const root = (0, import_obsidian15.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+  const rel = normalizeCredentialsRelativePath(vaultRelativePath);
+  if (!rel)
+    throw new Error("Invalid vault credential relative path");
+  const full = (0, import_obsidian15.normalizePath)(`${root}/${rel}`);
+  if (!pathIsUnderPrefix(full, root))
+    throw new Error("Credential path escapes credentials folder");
+  const file = vault.getAbstractFileByPath(full);
+  if (!(file instanceof import_obsidian15.TFile))
+    throw new Error(`Credential file not found: ${rel}`);
+  return (await vault.read(file)).trim();
+}
 function interpolate(template, vars) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
 }
@@ -25709,10 +25614,22 @@ function truncate(v, max) {
     return v;
   return v.slice(0, max) + "...";
 }
-function authHeader(spec) {
+async function authHeader(spec, vault, credentialsFolder) {
   const cfg = spec.auth;
   if (cfg.type === "none")
     return {};
+  if (cfg.type === "bearer_vault" || cfg.type === "header_vault") {
+    if (!vault)
+      throw new Error("Vault-backed auth requires Obsidian vault access");
+    const rel = cfg.vaultRelativePath || "";
+    const secret2 = await readVaultCredential(vault, credentialsFolder, rel);
+    if (!secret2)
+      throw new Error(`Empty credential file: ${rel}`);
+    if (cfg.type === "bearer_vault") {
+      return { Authorization: `Bearer ${secret2}` };
+    }
+    return { [cfg.headerName || "X-API-Key"]: secret2 };
+  }
   const envVar = cfg.envVar || "";
   const secret = envVar ? process.env[envVar] : "";
   if (!secret)
@@ -25725,25 +25642,34 @@ function authHeader(spec) {
   }
   return {};
 }
-async function executeEnricherHttp(spec, query, attachmentsContext, signal) {
+async function executeEnricherHttp(spec, query, attachmentsContext, signal, vault, credentialsFolder) {
   const vars = {
     query,
     attachments_context: attachmentsContext || ""
   };
   const baseUrl = interpolate(spec.request.urlTemplate, vars);
   const url = new URL(baseUrl);
+  const credRoot = credentialsFolder ?? DEFAULT_CREDENTIALS_FOLDER;
   if (spec.auth.type === "query_env") {
     const envVar = spec.auth.envVar || "";
     const secret = envVar ? process.env[envVar] : "";
     if (!secret)
       throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
     url.searchParams.set(spec.auth.queryParam || "api_key", secret);
+  } else if (spec.auth.type === "query_vault") {
+    if (!vault)
+      throw new Error("Vault-backed query auth requires Obsidian vault access");
+    const rel = spec.auth.vaultRelativePath || "";
+    const secret = await readVaultCredential(vault, credRoot, rel);
+    if (!secret)
+      throw new Error(`Empty credential file: ${rel}`);
+    url.searchParams.set(spec.auth.queryParam || "api_key", secret);
   }
   ensureDomainAllowed(url.toString(), spec.allowedDomains);
   const headers = {
     Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
     ...spec.request.headers || {},
-    ...authHeader(spec)
+    ...await authHeader(spec, vault, credRoot)
   };
   const method = spec.request.method || "GET";
   const body = method === "POST" && spec.request.bodyTemplate ? interpolate(spec.request.bodyTemplate, vars) : void 0;
@@ -25799,6 +25725,86 @@ ${truncate(summary, spec.limits.maxResponseChars)}`;
   throw new Error(`Enricher ${spec.name} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
+// src/services/enrichers/enricher-schema.ts
+function parseId(v) {
+  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function enrichToolId(id) {
+  return `ENRICH_${id}`;
+}
+function parseEnrichToolId(toolId) {
+  if (!toolId.startsWith("ENRICH_"))
+    return null;
+  const id = parseId(toolId.slice("ENRICH_".length));
+  return id || null;
+}
+function normalizeEnricherSpec(raw) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const r = raw;
+  const id = parseId(r.id);
+  if (!id)
+    return null;
+  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const timeoutMs = Number(r.limits?.timeoutMs);
+  const retries = Number(r.limits?.retries);
+  const maxResponseChars = Number(r.limits?.maxResponseChars);
+  const authTypeRaw = String(r.auth?.type || "none").trim();
+  const statusRaw = String(r.status || "draft");
+  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
+  const enabled = r.enabled !== false;
+  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
+  const vaultRelRaw = typeof r.auth?.vaultRelativePath === "string" ? String(r.auth.vaultRelativePath).trim() : typeof r.auth?.vault_relative_path === "string" ? String(r.auth.vault_relative_path).trim() : "";
+  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? void 0;
+  const envTypes = ["bearer_env", "header_env", "query_env"];
+  const vaultTypes = ["bearer_vault", "header_vault", "query_vault"];
+  let authType = "none";
+  if (envTypes.includes(authTypeRaw))
+    authType = authTypeRaw;
+  else if (vaultTypes.includes(authTypeRaw)) {
+    authType = vaultRelativePath ? authTypeRaw : "none";
+  }
+  return {
+    id,
+    name: String(r.name || id).trim() || id,
+    description: String(r.description || "").trim(),
+    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
+    status,
+    enabled,
+    allowedDomains,
+    auth: {
+      type: authType,
+      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
+      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
+      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0,
+      vaultRelativePath
+    },
+    request: {
+      method,
+      urlTemplate: String(r.request?.urlTemplate || "").trim(),
+      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
+        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
+      ) : {},
+      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
+    },
+    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
+    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
+      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
+      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
+    } : void 0,
+    skillInstructions: String(r.skillInstructions || "").trim(),
+    limits: {
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
+      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
+      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
+    },
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function isEnricherRunnable(spec) {
+  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
+}
+
 // src/skills/skill-executor.ts
 async function executeVaultSkillTool(plugin, toolId, query, attachmentsContext, signal) {
   const vid = parseVaultSkillPlannerTool(toolId);
@@ -25836,7 +25842,14 @@ async function executeEnricherTool(plugin, toolId, query, attachmentsContext, si
   const spec = await plugin.enricherRegistry.getById(id);
   if (!spec)
     return `Unknown enricher \`${id}\`.`;
-  return executeEnricherHttp(spec, query, attachmentsContext, signal);
+  return executeEnricherHttp(
+    spec,
+    query,
+    attachmentsContext,
+    signal,
+    plugin.app.vault,
+    plugin.settings.credentialsFolder
+  );
 }
 
 // src/services/agent-runtime/provider-types.ts
@@ -25848,14 +25861,27 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
   "version": "${AGENT_TURN_SCHEMA_VERSION}",
   "answer_markdown": "string \u2014 Markdown answer for the user",
   "retrieval_hits": [ { "path": "vault-relative/path.md", "snippet": "optional short excerpt" } ],
-  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...] } ]
+  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...] } ],
+  "custom_vault_operations": [
+    { "action": "upsert_skill", "id": "skill_id", "name": "Title", "description": "Planner description", "body": "Markdown body instructions for the skill" },
+    { "action": "delete_skill", "id": "skill_id" },
+    { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
+    { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" }
+  ]
 }
 
 Rules for graph_operations:
 - Use the same structure as OSINT graph extraction: entities have "type" and "properties"; connections use numeric "from"/"to" indices into the entities array in the SAME operation object, plus "relationship" (UPPER_SNAKE_CASE).
 - Only include graph_operations when the user wants new intelligence mapped into the graph; otherwise use an empty array.
 - Use your local agent skills and tools (file search, codebase/vault tools, web if available) to search the user's vault / context before answering.
-- retrieval_hits should list the main vault note paths you relied on (if any).`;
+- retrieval_hits should list the main vault note paths you relied on (if any).
+
+Rules for custom_vault_operations:
+- Only when the user explicitly asks to add, remove, or change vault skills or to store API keys/secrets under the vault custom area.
+- Use an empty array when no vault file changes are requested.
+- NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials only.
+- relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
+- upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).`;
 function buildUnifiedAgentSystemPrompt(providerLabel) {
   return `You are the OSINT Copilot unified agent (${providerLabel}).
 
@@ -25864,7 +25890,8 @@ ${JSON_CONTRACT}
 Important:
 - Prefer concise, investigative Markdown in answer_markdown.
 - Cite vault paths inline where useful.
-- Do not fabricate retrieval_hits; only list sources you actually used.`;
+- Do not fabricate retrieval_hits; only list sources you actually used.
+- Proposed vault file edits require user confirmation in the UI before anything is written.`;
 }
 function buildUnifiedAgentUserPrompt(ctx) {
   const memory = ctx.conversationMemory && ctx.conversationMemory.length > 0 ? ctx.conversationMemory.map((m) => `${m.role.toUpperCase()}:
@@ -26009,6 +26036,7 @@ ${excerpt}
 \`\`\``,
       retrieval_hits: [],
       graph_operations: [],
+      custom_vault_operations: [],
       diagnostics: { provider, raw_excerpt: excerpt, notes: "no_json_object" }
     };
   }
@@ -26018,6 +26046,9 @@ ${excerpt}
     const answer = typeof data.answer_markdown === "string" ? data.answer_markdown : typeof data.answer === "string" ? data.answer : typeof data.response === "string" ? data.response : "";
     const hits = normalizeHits(data.retrieval_hits ?? data.retrievalHits ?? data.hits);
     const graphOps = normalizeGraphOperations(data.graph_operations ?? data.graphOperations ?? data.operations);
+    const customVaultOps = normalizeCustomVaultOperations(
+      data.custom_vault_operations ?? data.customVaultOperations
+    );
     const diag = {
       provider,
       raw_excerpt: excerpt,
@@ -26028,6 +26059,7 @@ ${excerpt}
       answer_markdown: answer || "_Empty answer from model._",
       retrieval_hits: hits,
       graph_operations: graphOps,
+      custom_vault_operations: customVaultOps,
       diagnostics: diag
     };
   } catch (e) {
@@ -26043,6 +26075,7 @@ ${excerpt}
 \`\`\``,
       retrieval_hits: [],
       graph_operations: [],
+      custom_vault_operations: [],
       diagnostics: { provider, raw_excerpt: excerpt, notes: "json_parse_error" }
     };
   }
@@ -26360,103 +26393,15 @@ var _OrchestrationService = class _OrchestrationService {
     return c.signal;
   }
   async processRequest(query, attachmentsContext, currentGraphState, conversationMemory, currentConversation, onProgress, options) {
-    const checkAborted = () => {
-      if (options?.abortSignal?.aborted) {
-        throw new DOMException("Aborted", "AbortError");
-      }
-    };
     try {
-      if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-        return await this.processRequestUnified(
-          query,
-          attachmentsContext,
-          currentGraphState,
-          conversationMemory,
-          onProgress,
-          options
-        );
-      }
-      onProgress("Preparing local tools...", 10);
-      await this.verifyProviderAndCredits();
-      checkAborted();
-      const urlRegex = /(https?:\/\/[^\s]+)/g;
-      const urls = query.match(urlRegex);
-      if (urls && urls.length > 0) {
-        onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
-        for (const url of urls) {
-          checkAborted();
-          try {
-            const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
-            attachmentsContext += `
-
-=== Content from ${url} ===
-${extractedText}`;
-          } catch (e) {
-            console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
-            attachmentsContext += `
-
-=== Content from ${url} ===
-[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
-          }
-        }
-      }
-      onProgress("Classifying intent and formulating plan...", 20);
-      checkAborted();
-      const routedIntent = detectOrchestrationIntent(query);
-      console.log("[OrchestrationService] Routed intent:", routedIntent);
-      const plan = await this.classifyIntent(
+      return await this.processRequestUnified(
         query,
         attachmentsContext,
         currentGraphState,
         conversationMemory,
-        routedIntent
+        onProgress,
+        options
       );
-      checkAborted();
-      if (plan.isProposal && plan.toolsToCall.length > 0) {
-        onProgress("Investigation plan proposed for review.", 100);
-        return {
-          finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
-          proposedPlan: plan,
-          phase: "PLAN_PROPOSED"
-        };
-      }
-      if (plan.toolsToCall.length === 0) {
-        onProgress("Generating response...", 90);
-        checkAborted();
-        const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
-        onProgress("Complete", 100);
-        return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
-      }
-      let toolAbortSignals;
-      if (plan.toolsToCall.length > 1 && options?.onToolsStarting) {
-        const sigs = options.onToolsStarting(plan.toolsToCall);
-        toolAbortSignals = sigs || void 0;
-      }
-      onProgress(
-        plan.toolsToCall.length > 1 ? `Running ${plan.toolsToCall.length} tools in parallel...` : `Executing tools: ${plan.toolsToCall.join(", ")}...`,
-        40
-      );
-      checkAborted();
-      const toolResults = await this.executeToolsInParallel(
-        plan.toolsToCall,
-        query,
-        attachmentsContext,
-        currentConversation,
-        (toolDisplay, msg, percent, _detail) => {
-          onProgress(msg, percent, { orchestrationTool: toolDisplay });
-        },
-        {
-          abortSignals: toolAbortSignals,
-          globalAbort: options?.abortSignal
-        }
-      );
-      onProgress("Tools complete. Awaiting review...", 60);
-      return {
-        finalResponse: "Investigation tools have completed. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.",
-        toolResults,
-        plan,
-        phase: "TOOLS_COMPLETE"
-      };
     } catch (error) {
       console.error("[OrchestrationService] Error:", error);
       this.handleError(error);
@@ -26573,10 +26518,12 @@ ${srcLines}`;
       if (this.plugin.settings.enableGraphFeatures && turn.graph_operations?.length) {
         proposedCommands = aiOperationsToGraphCommands(turn.graph_operations);
       }
+      const proposedCustomVaultOps = turn.custom_vault_operations?.length ? turn.custom_vault_operations : void 0;
       onProgress("Complete", 100);
       return {
         finalResponse: answer,
         proposedCommands,
+        proposedCustomVaultOps,
         phase: "SYNTHESIS_COMPLETE"
       };
     } catch (e) {
@@ -26594,171 +26541,12 @@ ${msg}`,
       };
     }
   }
-  describeRoutedIntentLine(intent) {
-    switch (intent) {
-      case "VAULT_GRAPH_BUILD":
-      case "VAULT_QA":
-        return `${intent} \u2014 User wants answers or graph data from their vault.`;
-      default:
-        return `${intent} \u2014 User request (investigation / OSINT workflow).`;
-    }
-  }
-  /** When the LLM returns no tools, default to first enabled tool from skills. */
-  fallbackProposalForEmptyTools(query, tooling) {
-    const first = tooling.defaultToolsExample[0] ?? [...tooling.enabledPlannerToolIds][0];
-    if (!first) {
-      return {
-        toolsToCall: [],
-        planSummary: `### No tools available
-Enable at least one planner tool in **Settings \u2192 OSINT Copilot** (legacy orchestration skill toggles / defaults).`,
-        directResponse: `No skills are enabled for the legacy planner. Open plugin Settings and turn on the built-in tools you need (e.g. Local search), or switch back to unified chat.`
-      };
-    }
-    const label = first === "LOCAL_VAULT" ? "Local vault" : first === "EXTRACT_TO_GRAPH" ? "Graph extraction" : first;
-    return {
-      toolsToCall: [first],
-      planSummary: `### Investigation Plan
-1. **${label}** \u2014 Run for: "${query}"
-
-*Adjust modules before running.*`,
-      directResponse: `I'll run **${label}** for your request.`
-    };
-  }
   async getVaultPromptAugmentation() {
     try {
       return await this.plugin.vaultPromptLoader?.getOrchestrationAugmentation() ?? "";
     } catch (e) {
       console.warn("[OrchestrationService] vault prompts:", e);
       return "";
-    }
-  }
-  async classifyIntent(query, attachmentsContext, graphState, conversationMemory, routedIntent) {
-    const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
-    const vaultAug = await this.getVaultPromptAugmentation();
-    const memoryContext = conversationMemory && conversationMemory.length > 0 ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:
-${msg.content}`).join("\n\n") : "No previous conversation.";
-    const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
-    const hasAttachments = !!(attachmentsContext && attachmentsContext.trim().length > 0);
-    const tooling = await buildPlannerTooling(
-      this.plugin.skillRegistry,
-      this.plugin.settings.skillToggles ?? {},
-      hasAttachments,
-      this.plugin.enricherRegistry
-    );
-    if (tooling.enabledPlannerToolIds.size === 0) {
-      return {
-        reasoning: "No skills are enabled for this session.",
-        toolsToCall: [],
-        graphCommands: [],
-        isProposal: true,
-        planSummary: "### No tools available\nEnable at least one planner tool in **Settings \u2192 OSINT Copilot** (legacy skill toggles; the chat header no longer has a Skills menu).",
-        directResponse: "No skills are enabled for the legacy planner. Open plugin Settings, adjust skill toggles under legacy orchestration, then send your message again."
-      };
-    }
-    const routedIntentBlock = tooling.buildRoutedIntentBlock(
-      this.describeRoutedIntentLine(routedIntent),
-      hasAttachments
-    );
-    const skillHints = tooling.criticalRulesLines.length > 0 ? `
-   Hints:
-${tooling.criticalRulesLines.map((l) => `   - ${l}`).join("\n")}` : "";
-    const availableToolsBlock = tooling.availableToolsLines.join("\n");
-    const defaultToolsExample = tooling.defaultToolsExample.length > 0 ? tooling.defaultToolsExample : [...tooling.enabledPlannerToolIds].slice(0, 2);
-    const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
-
-=== ROUTED INTENT (heuristic, trust this for tool choice) ===
-${routedIntentBlock}
-${vaultAug ? `
-=== VAULT-DEFINED RULES AND AGENT (user-editable markdown) ===
-${vaultAug}
-` : ""}
-
-=== CRITICAL RULES ===
-1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. Propose ONLY tools listed under AVAILABLE TOOLS below. Do not invent tool ids.${skillHints}
-3. Set "isProposal" to true and list the tools you recommend (for new requests).
-4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
-5. Your "directResponse" should describe your PLAN, never the answer to the question.
-6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
-
-=== AVAILABLE TOOLS ===
-${availableToolsBlock}
-
-=== USER'S ORCHESTRATION CONTEXT ===
-${systemPrompt}
-
-=== CURRENT GRAPH STATE (existing entities) ===
-Entities: ${Array.isArray(graphState?.entities) ? graphState.entities.length : 0} nodes
-${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e) => `- ${e.type}: ${e.label}`).join("\n") : "Empty graph"}
-
-=== CONVERSATION HISTORY ===
-${memoryContext}
-
-=== USER REQUEST ===
-${query}
-
-${isApproval ? '>>> THE USER IS APPROVING A PREVIOUS PLAN. Set "isProposal": false and list the final tools from the previous plan.' : '>>> THIS IS A NEW REQUEST. You MUST set "isProposal": true and propose tools.'}
-
-Respond with this exact JSON structure:
-{
-  "reasoning": "Your analysis of the query and why you chose these tools",
-  "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
-  "isProposal": ${isApproval ? "false" : "true"},
-  "toolsToCall": ${JSON.stringify(defaultToolsExample)},
-  "graphCommands": [],
-  "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
-}`;
-    try {
-      const responseText = await this.plugin.graphApiService.callRemoteModel(
-        [{ role: "user", content: prompt }],
-        true
-      );
-      console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2e3));
-      const match = responseText.match(/\{[\s\S]*\}/);
-      if (match) {
-        const rawPlan = JSON.parse(match[0]);
-        console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1e3));
-        let toolsToCall = rawPlan.toolsToCall || rawPlan.tools_to_call || [];
-        toolsToCall = filterToolsToCall(toolsToCall, tooling.enabledPlannerToolIds, hasAttachments);
-        const plan = {
-          reasoning: rawPlan.reasoning || "No reasoning provided.",
-          toolsToCall,
-          graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
-          directResponse: rawPlan.directResponse || rawPlan.direct_response,
-          isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,
-          planSummary: rawPlan.planSummary || rawPlan.plan_summary
-        };
-        if (!isApproval && plan.toolsToCall.length === 0) {
-          const fb = this.fallbackProposalForEmptyTools(query, tooling);
-          console.warn(
-            "[OrchestrationService] LLM returned no tools for a non-approval query. Forcing fallback proposal:",
-            routedIntent,
-            fb.toolsToCall
-          );
-          plan.isProposal = true;
-          plan.toolsToCall = fb.toolsToCall;
-          plan.planSummary = plan.planSummary || fb.planSummary;
-          plan.directResponse = plan.directResponse || fb.directResponse;
-        }
-        console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
-        return plan;
-      } else {
-        throw new Error("Could not parse JSON from LLM response.");
-      }
-    } catch (error) {
-      console.error("[OrchestrationService] Failed to classify intent:", error);
-      const fb = this.fallbackProposalForEmptyTools(query, tooling);
-      return {
-        reasoning: "Fallback due to classification error.",
-        toolsToCall: fb.toolsToCall,
-        graphCommands: [],
-        isProposal: true,
-        planSummary: `### Investigation Plan
-1. Fallback \u2014 ${fb.toolsToCall.length ? fb.toolsToCall.join(", ") : "none"}
-
-*The planner request failed; adjust modules and click Run.*`,
-        directResponse: fb.directResponse
-      };
     }
   }
   mimeTypeForIngestExtension(ext) {
@@ -26794,7 +26582,7 @@ Respond with this exact JSON structure:
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian15.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian16.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -27204,7 +26992,7 @@ ${r.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian15.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian16.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -27254,12 +27042,12 @@ ${r.summary || ""}
       ).open();
     });
     if (!confirmedValues) {
-      new import_obsidian15.Notice("Graph modifications cancelled by user.");
+      new import_obsidian16.Notice("Graph modifications cancelled by user.");
       return;
     }
     const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
     if (cmdsToExecute.length === 0) {
-      new import_obsidian15.Notice("No graph modifications selected.");
+      new import_obsidian16.Notice("No graph modifications selected.");
       return;
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, {
@@ -27268,7 +27056,7 @@ ${r.summary || ""}
     });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian15.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian16.Notice(`Successfully executed ${successCount} graph modification(s).`);
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -27339,7 +27127,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian15.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian16.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -27361,7 +27149,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -27375,7 +27163,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian16.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian17.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -27402,7 +27190,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian16.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian17.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -27429,7 +27217,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian16.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian17.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -27459,7 +27247,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian16.requestUrl)({ url });
+      const response = await (0, import_obsidian17.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -27493,7 +27281,7 @@ var UpdaterService = class {
 };
 
 // src/services/vault-prompt-loader.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 function parseMarkdownWithFrontmatter(raw) {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed.startsWith("---")) {
@@ -27547,10 +27335,10 @@ var VaultPromptLoader = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian17.normalizePath)(this.getPromptsRoot().trim());
+      const root = (0, import_obsidian18.normalizePath)(this.getPromptsRoot().trim());
       if (!root)
         return;
-      const norm = (0, import_obsidian17.normalizePath)(p);
+      const norm = (0, import_obsidian18.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.invalidateAll();
       }
@@ -27562,10 +27350,10 @@ var VaultPromptLoader = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian17.normalizePath)(this.getPromptsRoot().trim());
+          const root = (0, import_obsidian18.normalizePath)(this.getPromptsRoot().trim());
           if (!root)
             return;
-          const op = (0, import_obsidian17.normalizePath)(oldPath);
+          const op = (0, import_obsidian18.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.invalidateAll();
           }
@@ -27578,15 +27366,15 @@ var VaultPromptLoader = class {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian17.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
+    return (0, import_obsidian18.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
-    const path = (0, import_obsidian17.normalizePath)(`${this.root()}/${relativePath}`);
+    const path = (0, import_obsidian18.normalizePath)(`${this.root()}/${relativePath}`);
     const hit = this.cache.get(path);
     if (hit !== void 0)
       return hit;
     const f = this.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof import_obsidian17.TFile)) {
+    if (!(f instanceof import_obsidian18.TFile)) {
       this.cache.set(path, "");
       return null;
     }
@@ -27639,13 +27427,13 @@ var VaultPromptLoader = class {
   }
   /** List agent files under agents/ (for future UI). */
   async listAgents() {
-    const agentsPath = (0, import_obsidian17.normalizePath)(`${this.root()}/agents`);
+    const agentsPath = (0, import_obsidian18.normalizePath)(`${this.root()}/agents`);
     const folder = this.app.vault.getAbstractFileByPath(agentsPath);
-    if (!(folder instanceof import_obsidian17.TFolder))
+    if (!(folder instanceof import_obsidian18.TFolder))
       return [];
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian17.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian18.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -27674,7 +27462,7 @@ var VaultPromptLoader = class {
 };
 
 // src/services/vault-prompt-bootstrap.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/data/vault-prompt-defaults.ts
 var VAULT_PROMPT_DEFAULT_FILES = [
@@ -27773,11 +27561,11 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian18.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
+    const root = (0, import_obsidian19.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
-      const path = (0, import_obsidian18.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian19.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian18.TFile)
+      if (existing instanceof import_obsidian19.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -27786,7 +27574,7 @@ var VaultPromptBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian18.normalizePath)(path);
+    const norm = (0, import_obsidian19.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -27806,7 +27594,7 @@ var VaultPromptBootstrapService = class {
 };
 
 // src/task-agents/task-agent-registry.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 
 // src/task-agents/normalize-vault-path.ts
 function normalizeVaultPath(p) {
@@ -27884,10 +27672,10 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian19.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+      const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian19.normalizePath)(p);
+      const norm = (0, import_obsidian20.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -27899,10 +27687,10 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian19.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+          const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian19.normalizePath)(oldPath);
+          const op = (0, import_obsidian20.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -27916,15 +27704,15 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian19.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+    const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian19.TFolder)) {
+    if (!(folder instanceof import_obsidian20.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian19.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian20.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -27948,11 +27736,11 @@ var TaskAgentRegistry = class {
 };
 
 // src/task-agents/context-assembler.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 async function assembleTaskAgentContext(app, contextRoots, pluginIndex, maxNotes, maxChars, query) {
   if (contextRoots.length === 0)
     return "";
-  const roots = contextRoots.map((r) => (0, import_obsidian20.normalizePath)(r.trim())).filter(Boolean);
+  const roots = contextRoots.map((r) => (0, import_obsidian21.normalizePath)(r.trim())).filter(Boolean);
   const queryTerms = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   const candidates = [];
   for (const [, note] of pluginIndex) {
@@ -28132,7 +27920,7 @@ function parseVaultFilesJson(raw) {
 }
 
 // src/task-agents/write-applier.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 function buildNoteContent(entry) {
   const fm = (entry.frontmatter || "").trim();
   if (fm) {
@@ -28155,7 +27943,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
       result.errors.push("Skipping entry: missing path");
       continue;
     }
-    const rel = (0, import_obsidian21.normalizePath)(file.path.replace(/\\/g, "/"));
+    const rel = (0, import_obsidian22.normalizePath)(file.path.replace(/\\/g, "/"));
     if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
       result.errors.push(`Not allowed: ${rel}`);
       continue;
@@ -28167,7 +27955,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
     const content = buildNoteContent(file);
     try {
       const existing = app.vault.getAbstractFileByPath(rel);
-      if (existing instanceof import_obsidian21.TFile) {
+      if (existing instanceof import_obsidian22.TFile) {
         await app.vault.modify(existing, content);
         result.updated.push(rel);
       } else if (existing) {
@@ -28199,10 +27987,10 @@ function formatApplyNotice(res) {
   if (res.errors.length)
     parts.push(`Errors: ${res.errors.length}`);
   if (parts.length === 0) {
-    new import_obsidian21.Notice("Task agent: no files applied.");
+    new import_obsidian22.Notice("Task agent: no files applied.");
     return;
   }
-  new import_obsidian21.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
+  new import_obsidian22.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
   if (res.errors.length) {
     console.warn("[TaskAgent] apply errors:", res.errors);
   }
@@ -28315,7 +28103,7 @@ ${paths.map((p) => `- \`${p}\``).join("\n")}`;
 };
 
 // src/task-agents/task-agent-bootstrap.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/data/task-agent-defaults.ts
 var TASK_AGENT_DEFAULT_FILES = [
@@ -28365,7 +28153,7 @@ Paths must stay under **both** the agent\u2019s \`output_roots\` **and** the glo
 
 ## Settings
 
-Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**; legacy orchestration uses skill toggles there too (not from chat).
+Enable **Task agents**, set folder path, global output allowlist, and per-agent toggles. Task agents are configured in **Settings**.
 `
   },
   {
@@ -28447,13 +28235,13 @@ var TaskAgentBootstrapService = class {
     this.getTaskAgentsRoot = getTaskAgentsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian22.normalizePath)(
+    const root = (0, import_obsidian23.normalizePath)(
       this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
-      const path = (0, import_obsidian22.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian23.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian22.TFile)
+      if (existing instanceof import_obsidian23.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -28462,7 +28250,7 @@ var TaskAgentBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian22.normalizePath)(path);
+    const norm = (0, import_obsidian23.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -28494,7 +28282,7 @@ function isTaskAgentRunnable(manifest, settings) {
 }
 
 // src/skills/skill-registry.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 
 // src/skills/parse-skill-markdown.ts
 function parseSkillMarkdown(raw, sourcePath) {
@@ -28532,10 +28320,10 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+      const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian23.normalizePath)(p);
+      const norm = (0, import_obsidian24.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -28547,10 +28335,10 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+          const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian23.normalizePath)(oldPath);
+          const op = (0, import_obsidian24.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -28564,15 +28352,15 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian23.TFolder)) {
+    if (!(folder instanceof import_obsidian24.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian23.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian24.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -28596,7 +28384,7 @@ var SkillRegistry = class {
 };
 
 // src/skills/skill-bootstrap.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/data/skill-defaults.ts
 var SKILL_DEFAULT_FILES = [
@@ -28617,7 +28405,7 @@ description: Short line for the planner tool list
 Body: instructions used when this skill runs (local Claude).
 \`\`\`
 
-With **legacy** orchestration (unified mode off), built-in **Local search** and **Graph generation** follow **Settings** / saved **skill toggles**. Unified chat uses the **Claude** or **Hermes** runtime from the chat header instead.
+Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations**.
 
 `
   },
@@ -28627,10 +28415,10 @@ With **legacy** orchestration (unified mode off), built-in **Local search** and 
 skill_kind: vault
 id: example_skill
 name: Example skill
-description: Template \u2014 customize or duplicate this file to add planner-invokable skills (SKILL_example_skill).
+description: Template \u2014 customize or duplicate this file for vault-defined skills.
 ---
 
-You are a specialized sub-agent invoked when the orchestration planner selects this skill.
+You are a specialized sub-agent invoked when a workflow runs this skill file.
 
 Given the user request and any attachment context, produce a concise, actionable result for the main agent to synthesize.
 `
@@ -28644,11 +28432,11 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian24.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian25.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
-      const path = (0, import_obsidian24.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian25.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian24.TFile)
+      if (existing instanceof import_obsidian25.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -28657,7 +28445,7 @@ var SkillBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian24.normalizePath)(path);
+    const norm = (0, import_obsidian25.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -28716,8 +28504,149 @@ async function getChatRuntimeAvailability(plugin, forceRefresh = false) {
   return { byId: { ...value.byId }, availableIds: [...value.availableIds] };
 }
 
+// src/services/custom-vault-writer.ts
+var import_obsidian26 = require("obsidian");
+function pathIsUnderPrefix2(path, prefix) {
+  const p = (0, import_obsidian26.normalizePath)(path);
+  const pre = (0, import_obsidian26.normalizePath)(prefix);
+  return p === pre || p.startsWith(pre + "/");
+}
+function assertPathUnderCustomRoot(resolvedPath, purpose) {
+  const p = (0, import_obsidian26.normalizePath)(resolvedPath);
+  const root = (0, import_obsidian26.normalizePath)(OSINT_COPILOT_CUSTOM_ROOT);
+  if (!pathIsUnderPrefix2(p, root)) {
+    throw new Error(`${purpose}: path must stay under ${root}`);
+  }
+}
+function skillsRoot(plugin) {
+  return (0, import_obsidian26.normalizePath)(plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+}
+function credentialsRoot(plugin) {
+  return (0, import_obsidian26.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+}
+function resolveSkillMarkdownPath(plugin, skillId) {
+  const id = parseSkillIdForVault(skillId);
+  if (!id || id === "readme")
+    throw new Error("Invalid skill id");
+  const file = (0, import_obsidian26.normalizePath)(`${skillsRoot(plugin)}/${id}.md`);
+  assertPathUnderCustomRoot(file, "Skill file");
+  return file;
+}
+function resolveCredentialFilePath(plugin, relativePath) {
+  const rel = normalizeCredentialsRelativePath(relativePath);
+  if (!rel)
+    throw new Error("Invalid credentials relative path");
+  const root = credentialsRoot(plugin);
+  const file = (0, import_obsidian26.normalizePath)(`${root}/${rel}`);
+  assertPathUnderCustomRoot(file, "Credentials file");
+  if (!pathIsUnderPrefix2(file, root)) {
+    throw new Error("Credential path escapes credentials folder");
+  }
+  return file;
+}
+async function ensureFolderChain(app, filePath) {
+  const parts = (0, import_obsidian26.normalizePath)(filePath).split("/").slice(0, -1);
+  let current = "";
+  for (const p of parts) {
+    current = current ? `${current}/${p}` : p;
+    if (!app.vault.getAbstractFileByPath(current)) {
+      await app.vault.createFolder(current);
+    }
+  }
+}
+function yamlScalar(s) {
+  return JSON.stringify(s);
+}
+function buildSkillMarkdown(op) {
+  return [
+    "---",
+    "skill_kind: vault",
+    `id: ${op.id}`,
+    `name: ${yamlScalar(op.name)}`,
+    `description: ${yamlScalar(op.description)}`,
+    "---",
+    "",
+    op.body.trim(),
+    ""
+  ].join("\n");
+}
+async function applyCustomVaultOperations(plugin, ops) {
+  const errors = [];
+  let applied = 0;
+  let skillsTouched = false;
+  for (const op of ops) {
+    try {
+      switch (op.action) {
+        case "upsert_skill": {
+          const path = resolveSkillMarkdownPath(plugin, op.id);
+          skillsTouched = true;
+          await ensureFolderChain(plugin.app, path);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          const body = buildSkillMarkdown(op);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.modify(existing, body);
+          } else {
+            await plugin.app.vault.create(path, body);
+          }
+          applied++;
+          break;
+        }
+        case "delete_skill": {
+          const path = resolveSkillMarkdownPath(plugin, op.id);
+          skillsTouched = true;
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.delete(existing);
+            applied++;
+          }
+          break;
+        }
+        case "put_credentials": {
+          const path = resolveCredentialFilePath(plugin, op.relativePath);
+          await ensureFolderChain(plugin.app, path);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.modify(existing, op.content);
+          } else {
+            await plugin.app.vault.create(path, op.content);
+          }
+          applied++;
+          break;
+        }
+        case "delete_credentials": {
+          const path = resolveCredentialFilePath(plugin, op.relativePath);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.delete(existing);
+            applied++;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (skillsTouched) {
+    plugin.skillRegistry.invalidate();
+  }
+  return { applied, errors, skillsTouched };
+}
+async function ensureCredentialsFolder(plugin) {
+  const root = credentialsRoot(plugin);
+  assertPathUnderCustomRoot(root, "Credentials root");
+  const f = plugin.app.vault.getAbstractFileByPath(root);
+  if (!f) {
+    await plugin.app.vault.createFolder(root);
+  } else if (!(f instanceof import_obsidian26.TFolder)) {
+    console.warn("[custom-vault-writer] credentials path is not a folder:", root);
+  }
+}
+
 // src/services/vault-lock-service.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian27 = require("obsidian");
 var VaultLockService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -28726,12 +28655,12 @@ var VaultLockService = class {
   /** Call after loadSettings(). */
   initializeFromSettings() {
     const paths = this.plugin.settings.lockedVaultPaths ?? [];
-    this.locked = new Set(paths.map((p) => (0, import_obsidian25.normalizePath)(p)));
+    this.locked = new Set(paths.map((p) => (0, import_obsidian27.normalizePath)(p)));
   }
   isPathLocked(path) {
     if (!path)
       return false;
-    return this.locked.has((0, import_obsidian25.normalizePath)(path));
+    return this.locked.has((0, import_obsidian27.normalizePath)(path));
   }
   /**
    * Add paths to the lock set. Returns count of newly added paths.
@@ -28741,7 +28670,7 @@ var VaultLockService = class {
     for (const p of paths) {
       if (!p)
         continue;
-      const np = (0, import_obsidian25.normalizePath)(p);
+      const np = (0, import_obsidian27.normalizePath)(p);
       if (!this.locked.has(np)) {
         this.locked.add(np);
         n++;
@@ -28752,7 +28681,7 @@ var VaultLockService = class {
     return n;
   }
   unlockPath(path) {
-    const np = (0, import_obsidian25.normalizePath)(path);
+    const np = (0, import_obsidian27.normalizePath)(path);
     if (!this.locked.has(np))
       return;
     this.locked.delete(np);
@@ -28772,11 +28701,11 @@ var VaultLockService = class {
   }
   /** Migrate lock entry when a file is renamed (same as Note Locker). */
   onVaultRename(_file, oldPath) {
-    const op = (0, import_obsidian25.normalizePath)(oldPath);
+    const op = (0, import_obsidian27.normalizePath)(oldPath);
     if (!this.locked.has(op))
       return;
     this.locked.delete(op);
-    this.locked.add((0, import_obsidian25.normalizePath)(_file.path));
+    this.locked.add((0, import_obsidian27.normalizePath)(_file.path));
     this.persist();
   }
   persist() {
@@ -28786,7 +28715,7 @@ var VaultLockService = class {
 };
 
 // src/services/schema-bootstrap-service.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian28 = require("obsidian");
 
 // src/data/schema-vault-defaults.ts
 var SCHEMA_VAULT_DEFAULT_FILES = [
@@ -29094,11 +29023,11 @@ var SchemaBootstrapService = class {
     this.getEntityBasePath = getEntityBasePath;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian26.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
+    const root = (0, import_obsidian28.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
     for (const def of SCHEMA_VAULT_DEFAULT_FILES) {
-      const path = (0, import_obsidian26.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian28.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian26.TFile)
+      if (existing instanceof import_obsidian28.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -29107,7 +29036,7 @@ var SchemaBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian26.normalizePath)(path);
+    const norm = (0, import_obsidian28.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -29127,7 +29056,7 @@ var SchemaBootstrapService = class {
 };
 
 // src/services/schema-catalog-service.ts
-var import_obsidian27 = require("obsidian");
+var import_obsidian29 = require("obsidian");
 
 // src/services/schema-definition-loader.ts
 function normalizeProperties(raw) {
@@ -29283,12 +29212,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultStix2() {
-    const base = (0, import_obsidian27.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
+    const base = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "stix2");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "stix2");
   }
   async loadVaultMitre() {
-    const base = (0, import_obsidian27.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
+    const base = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "mitre");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "mitre");
   }
@@ -29329,12 +29258,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultUser() {
-    const dir = (0, import_obsidian27.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
+    const dir = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
     const folder = this.app.vault.getAbstractFileByPath(dir);
-    if (!folder || !(folder instanceof import_obsidian27.TFolder))
+    if (!folder || !(folder instanceof import_obsidian29.TFolder))
       return;
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian27.TFile))
+      if (!(child instanceof import_obsidian29.TFile))
         continue;
       const lower = child.name.toLowerCase();
       if (!lower.endsWith(".yaml") && !lower.endsWith(".yml"))
@@ -29483,7 +29412,7 @@ function mergeEnabledFamilies(partial) {
 }
 
 // src/services/enrichers/enricher-registry.ts
-var import_obsidian28 = require("obsidian");
+var import_obsidian30 = require("obsidian");
 var EnricherRegistry = class {
   constructor(app, getFolder) {
     this.app = app;
@@ -29492,7 +29421,7 @@ var EnricherRegistry = class {
     this.registered = false;
   }
   root() {
-    return (0, import_obsidian28.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
+    return (0, import_obsidian30.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
   }
   registerVaultEvents(plugin) {
     if (this.registered)
@@ -29502,7 +29431,7 @@ var EnricherRegistry = class {
       if (!file)
         return;
       const root = this.root();
-      const p = (0, import_obsidian28.normalizePath)(file.path);
+      const p = (0, import_obsidian30.normalizePath)(file.path);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     };
@@ -29514,7 +29443,7 @@ var EnricherRegistry = class {
       if (!oldPath)
         return;
       const root = this.root();
-      const p = (0, import_obsidian28.normalizePath)(oldPath);
+      const p = (0, import_obsidian30.normalizePath)(oldPath);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     }));
@@ -29526,13 +29455,13 @@ var EnricherRegistry = class {
     if (this.cache)
       return this.cache;
     const folder = this.app.vault.getAbstractFileByPath(this.root());
-    if (!(folder instanceof import_obsidian28.TFolder)) {
+    if (!(folder instanceof import_obsidian30.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian28.TFile) || child.extension !== "json")
+      if (!(child instanceof import_obsidian30.TFile) || child.extension !== "json")
         continue;
       try {
         const raw = await this.app.vault.read(child);
@@ -29579,11 +29508,10 @@ var DEFAULT_SETTINGS = {
   taskAgentOverrides: {},
   skillsFolder: DEFAULT_SKILLS_FOLDER,
   enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
-  skillToggles: {},
+  credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
-  unifiedAgentOrchestration: true,
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: "hermes",
   hermesAgentExtraArgs: "",
@@ -29601,7 +29529,7 @@ var DEFAULT_SETTINGS = {
   oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS }
 };
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var VaultAIPlugin = class extends import_obsidian29.Plugin {
+var VaultAIPlugin = class extends import_obsidian31.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -29702,6 +29630,11 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
     } catch (e) {
       console.warn("OSINTCopilot: enricher folder bootstrap failed:", e);
     }
+    try {
+      await ensureCredentialsFolder(this);
+    } catch (e) {
+      console.warn("OSINTCopilot: credentials folder bootstrap failed:", e);
+    }
     this.enricherRegistry = new EnricherRegistry(this.app, () => this.settings.enrichersFolder);
     this.enricherRegistry.registerVaultEvents(this);
     this.taskAgentRunner = new TaskAgentRunner(
@@ -29792,21 +29725,21 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian29.TFile) {
+        if (file instanceof import_obsidian31.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian29.TFile) {
+        if (file instanceof import_obsidian31.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian29.TFile) {
+        if (file instanceof import_obsidian31.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -29820,21 +29753,21 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path) => {
-      const base = (0, import_obsidian29.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
-      const prefix = (0, import_obsidian29.normalizePath)(`${base}/schemas`);
-      const p = (0, import_obsidian29.normalizePath)(path);
+      const base = (0, import_obsidian31.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const prefix = (0, import_obsidian31.normalizePath)(`${base}/schemas`);
+      const p = (0, import_obsidian31.normalizePath)(path);
       return p === prefix || p.startsWith(`${prefix}/`);
     };
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian29.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian31.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian29.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian31.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
@@ -29909,10 +29842,10 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
           a.download = `osint-investigation-${timestamp2}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian29.Notice("Investigation exported successfully");
+          new import_obsidian31.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian29.Notice("Failed to export investigation");
+          new import_obsidian31.Notice("Failed to export investigation");
         }
       }
     });
@@ -29928,7 +29861,7 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
       name: "Reindex vault",
       callback: () => {
         void this.buildIndex().then(() => {
-          new import_obsidian29.Notice("Vault reindexed successfully.");
+          new import_obsidian31.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -29937,7 +29870,7 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian29.Notice("Entities reloaded from notes.");
+          new import_obsidian31.Notice("Entities reloaded from notes.");
         });
       }
     });
@@ -29955,14 +29888,14 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
         void (async () => {
           try {
             const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
-            new import_obsidian29.Notice(
+            new import_obsidian31.Notice(
               `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
               9e3
             );
             await this.entityManager.loadEntitiesFromNotes();
             await this.refreshOrOpenGraphView();
           } catch (e) {
-            new import_obsidian29.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
+            new import_obsidian31.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
           }
         })();
       }
@@ -29976,7 +29909,7 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
         this.skillRegistry?.invalidate();
         this.enricherRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new import_obsidian29.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
+        new import_obsidian31.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
       }
     });
     this.addCommand({
@@ -29992,14 +29925,15 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
             if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
               await this.app.vault.createFolder(enricherRoot);
             }
+            await ensureCredentialsFolder(this);
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
             this.enricherRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new import_obsidian29.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
+            new import_obsidian31.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
           } catch (e) {
-            new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+            new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
           }
         })();
       }
@@ -30042,7 +29976,7 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
     const stamped = `- ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `;
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian29.TFile) {
+    if (existing instanceof import_obsidian31.TFile) {
       const prev = await this.app.vault.read(existing);
       await this.app.vault.modify(existing, prev + stamped);
       return;
@@ -30060,12 +29994,12 @@ var VaultAIPlugin = class extends import_obsidian29.Plugin {
   async draftHttpEnricherFromUserDetails() {
     const docUrl = (window.prompt("API documentation URL for this enricher:") || "").trim();
     if (!docUrl) {
-      new import_obsidian29.Notice("Cancelled: API documentation URL is required.");
+      new import_obsidian31.Notice("Cancelled: API documentation URL is required.");
       return;
     }
     const details = (window.prompt("What should this enricher search and return? Include required params.") || "").trim();
     if (!details) {
-      new import_obsidian29.Notice("Cancelled: integration details are required.");
+      new import_obsidian31.Notice("Cancelled: integration details are required.");
       return;
     }
     const system = [
@@ -30128,7 +30062,7 @@ ${details}`;
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
     if (!draft) {
-      new import_obsidian29.Notice("Failed to build enricher draft.");
+      new import_obsidian31.Notice("Failed to build enricher draft.");
       return;
     }
     const enricherPath = `${this.settings.enrichersFolder}/${draft.id}.json`;
@@ -30172,13 +30106,13 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
             await ensureFolder(enricherPath);
             await ensureFolder(skillPath);
             const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
-            if (existingSpec instanceof import_obsidian29.TFile) {
+            if (existingSpec instanceof import_obsidian31.TFile) {
               await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
             } else {
               await this.app.vault.create(enricherPath, JSON.stringify(draft, null, 2));
             }
             const existingSkill = this.app.vault.getAbstractFileByPath(skillPath);
-            if (existingSkill instanceof import_obsidian29.TFile) {
+            if (existingSkill instanceof import_obsidian31.TFile) {
               await this.app.vault.modify(existingSkill, skillMd);
             } else {
               await this.app.vault.create(skillPath, skillMd);
@@ -30186,13 +30120,13 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
             this.enricherRegistry.invalidate();
             this.skillRegistry.invalidate();
             await this.appendEnricherAuditLine(`approved create_or_update id=${draft.id} doc=${docUrl}`);
-            new import_obsidian29.Notice(`Enricher ${draft.name} saved and activated.`);
+            new import_obsidian31.Notice(`Enricher ${draft.name} saved and activated.`);
           } catch (e) {
-            new import_obsidian29.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+            new import_obsidian31.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
           }
         })();
       },
-      () => new import_obsidian29.Notice("Enricher draft cancelled."),
+      () => new import_obsidian31.Notice("Enricher draft cancelled."),
       false,
       void 0,
       "Install",
@@ -30206,19 +30140,19 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     const nextRaw = (window.prompt("Set state: active or disabled") || "").trim().toLowerCase();
     const nextStatus = nextRaw === "disabled" ? "disabled" : nextRaw === "active" ? "active" : "";
     if (!nextStatus) {
-      new import_obsidian29.Notice("Cancelled: state must be 'active' or 'disabled'.");
+      new import_obsidian31.Notice("Cancelled: state must be 'active' or 'disabled'.");
       return;
     }
     const path = `${this.settings.enrichersFolder}/${idInput}.json`;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian29.TFile)) {
-      new import_obsidian29.Notice(`Enricher not found: ${path}`);
+    if (!(file instanceof import_obsidian31.TFile)) {
+      new import_obsidian31.Notice(`Enricher not found: ${path}`);
       return;
     }
     const raw = await this.app.vault.read(file);
     const parsed = normalizeEnricherSpec(JSON.parse(raw));
     if (!parsed) {
-      new import_obsidian29.Notice("Invalid enricher spec JSON.");
+      new import_obsidian31.Notice("Invalid enricher spec JSON.");
       return;
     }
     const nextEnabled = nextStatus === "active";
@@ -30235,10 +30169,10 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
           await this.app.vault.modify(file, JSON.stringify(parsed, null, 2));
           this.enricherRegistry.invalidate();
           await this.appendEnricherAuditLine(`approved set_state id=${parsed.id} status=${nextStatus}`);
-          new import_obsidian29.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
+          new import_obsidian31.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
         })();
       },
-      () => new import_obsidian29.Notice("State change cancelled.")
+      () => new import_obsidian31.Notice("State change cancelled.")
     ).open();
   }
   onunload() {
@@ -30266,11 +30200,11 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     if (!merged.taskAgentOverrides || typeof merged.taskAgentOverrides !== "object") {
       merged.taskAgentOverrides = {};
     }
-    if (!merged.skillToggles || typeof merged.skillToggles !== "object") {
-      merged.skillToggles = {};
-    }
     if (typeof merged.enrichersFolder !== "string" || !merged.enrichersFolder.trim()) {
       merged.enrichersFolder = DEFAULT_SETTINGS.enrichersFolder;
+    }
+    if (typeof merged.credentialsFolder !== "string" || !merged.credentialsFolder.trim()) {
+      merged.credentialsFolder = DEFAULT_SETTINGS.credentialsFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -30287,9 +30221,6 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     merged.oidsfModalLayers = mergeOidsfModalLayers(
       raw.oidsfModalLayers
     );
-    if (typeof merged.unifiedAgentOrchestration !== "boolean") {
-      merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
-    }
     merged.customAgentRuntimes = normalizeCustomAgentRuntimes(raw.customAgentRuntimes);
     const validRuntimeIds = /* @__PURE__ */ new Set([
       CLAUDE_RUNTIME_ID,
@@ -30397,7 +30328,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian29.MarkdownView)
+          if (leaf.view instanceof import_obsidian31.MarkdownView)
             update(leaf);
         });
       })
@@ -30414,12 +30345,12 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
       })
     );
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (leaf.view instanceof import_obsidian29.MarkdownView)
+      if (leaf.view instanceof import_obsidian31.MarkdownView)
         update(leaf);
     });
   }
   updateVaultLockLeafMode(leaf) {
-    if (!leaf || !(leaf.view instanceof import_obsidian29.MarkdownView))
+    if (!leaf || !(leaf.view instanceof import_obsidian31.MarkdownView))
       return;
     const path = leaf.view.file?.path;
     if (!path || path.endsWith(".canvas"))
@@ -30470,12 +30401,12 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     const btn = document.createElement("div");
     btn.addClass("view-action", "clickable-icon", "osint-copilot-vault-unlock-btn");
     btn.setAttribute("aria-label", "Locked \u2014 click to unlock");
-    (0, import_obsidian29.setIcon)(btn, "lock");
+    (0, import_obsidian31.setIcon)(btn, "lock");
     btn.addEventListener("click", () => {
       new VaultUnlockModal(this.app, () => {
         this.vaultLockService.unlockPath(path);
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian29.MarkdownView && leaf.view.file?.path === path) {
+          if (leaf.view instanceof import_obsidian31.MarkdownView && leaf.view.file?.path === path) {
             this.updateVaultLockLeafMode(leaf);
           }
         });
@@ -30528,7 +30459,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault() {
-    const base = (0, import_obsidian29.normalizePath)(this.settings.entityBasePath);
+    const base = (0, import_obsidian31.normalizePath)(this.settings.entityBasePath);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + "/"));
     let updated = 0;
     for (const file of files) {
@@ -30561,7 +30492,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     if (this.schemaCatalogService) {
       await this.schemaCatalogService.rebuild();
     }
-    new import_obsidian29.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
+    new import_obsidian31.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
   }
   /**
    * Open the Graph View in the main editor area.
@@ -30570,7 +30501,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
    */
   async openGraphView(forceNew = false) {
     if (!this.settings.enableGraphFeatures) {
-      new import_obsidian29.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian31.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -30614,7 +30545,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
       if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
-        new import_obsidian29.Notice("Graph view updated with new entities");
+        new import_obsidian31.Notice("Graph view updated with new entities");
       }
     }
   }
@@ -30635,7 +30566,7 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
       if (this.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian29.Notice("Graph view opened with new entities");
+        new import_obsidian31.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -30683,15 +30614,15 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
   async showEntityOnMap(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian29.Notice("Entity not found");
+      new import_obsidian31.Notice("Entity not found");
       return;
     }
     if (entity.type !== "Location") {
-      new import_obsidian29.Notice("Only location entities can be shown on the map");
+      new import_obsidian31.Notice("Only location entities can be shown on the map");
       return;
     }
     if (!entity.properties.latitude || !entity.properties.longitude) {
-      new import_obsidian29.Notice("Location has no coordinates. Please add latitude and longitude.");
+      new import_obsidian31.Notice("Location has no coordinates. Please add latitude and longitude.");
       return;
     }
     await this.openMapView();
@@ -31085,7 +31016,7 @@ ${additionalContext}
     }
   }
 };
-var AskModal = class extends import_obsidian29.Modal {
+var AskModal = class extends import_obsidian31.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -31113,7 +31044,7 @@ var AskModal = class extends import_obsidian29.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian29.Notice("Please enter a question.");
+      new import_obsidian31.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -31129,7 +31060,7 @@ var AskModal = class extends import_obsidian29.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian29.Notice("Answer copied to clipboard.");
+        new import_obsidian31.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -31140,7 +31071,7 @@ var AskModal = class extends import_obsidian29.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian29.TFile) {
+              if (file instanceof import_obsidian31.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -31160,7 +31091,7 @@ var AskModal = class extends import_obsidian29.Modal {
     contentEl.empty();
   }
 };
-var RenameConversationModal = class extends import_obsidian29.Modal {
+var RenameConversationModal = class extends import_obsidian31.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -31226,7 +31157,7 @@ function runtimeSettingsVisibility(selectedRuntimeId) {
     showSelectedCustomSettings: isCustom
   };
 }
-var _ChatView = class _ChatView extends import_obsidian29.ItemView {
+var _ChatView = class _ChatView extends import_obsidian31.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -31310,7 +31241,7 @@ ${ev.details}`;
     if (fallback && fallback !== cur) {
       this.plugin.settings.agentRuntimeProvider = fallback;
       await this.plugin.saveSettings();
-      new import_obsidian29.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
+      new import_obsidian31.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
   buildRuntimeHeaderRow(buttonGroup, av) {
@@ -31335,7 +31266,7 @@ ${ev.details}`;
       });
       return;
     }
-    new import_obsidian29.Setting(wrap).setName("Runtime").addDropdown((dd) => {
+    new import_obsidian31.Setting(wrap).setName("Runtime").addDropdown((dd) => {
       for (const rt of available) {
         dd.addOption(rt.id, rt.displayName);
       }
@@ -31376,6 +31307,7 @@ ${ev.details}`;
       reportFilePath: m.reportFilePath,
       usedEntities: m.usedEntities,
       proposedModifications: m.proposedModifications,
+      proposedCustomVaultOps: Array.isArray(m.proposedCustomVaultOps) && m.proposedCustomVaultOps.length > 0 ? normalizeCustomVaultOperations(m.proposedCustomVaultOps) : void 0,
       proposedPlan: m.proposedPlan
     }));
   }
@@ -31391,6 +31323,7 @@ ${ev.details}`;
       reportFilePath: h.reportFilePath,
       usedEntities: h.usedEntities,
       proposedModifications: h.proposedModifications,
+      proposedCustomVaultOps: h.proposedCustomVaultOps,
       proposedPlan: h.proposedPlan
     }));
   }
@@ -31588,18 +31521,18 @@ ${ev.details}`;
           "files =",
           draggable.files?.length
         );
-        if (draggable.file instanceof import_obsidian29.TFolder) {
+        if (draggable.file instanceof import_obsidian31.TFolder) {
           await this.handleDroppedFolder(draggable.file);
           handled = true;
-        } else if (draggable.file instanceof import_obsidian29.TFile) {
+        } else if (draggable.file instanceof import_obsidian31.TFile) {
           await this.handleDroppedAbstractFile(draggable.file);
           handled = true;
         }
         if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian29.TFolder)
+            if (f instanceof import_obsidian31.TFolder)
               await this.handleDroppedFolder(f);
-            else if (f instanceof import_obsidian29.TFile)
+            else if (f instanceof import_obsidian31.TFile)
               await this.handleDroppedAbstractFile(f);
           }
           handled = true;
@@ -31608,10 +31541,10 @@ ${ev.details}`;
           const info = draggable.info;
           if (typeof info === "string") {
             const resolved = this.app.vault.getAbstractFileByPath(info);
-            if (resolved instanceof import_obsidian29.TFolder) {
+            if (resolved instanceof import_obsidian31.TFolder) {
               await this.handleDroppedFolder(resolved);
               handled = true;
-            } else if (resolved instanceof import_obsidian29.TFile) {
+            } else if (resolved instanceof import_obsidian31.TFile) {
               await this.handleDroppedAbstractFile(resolved);
               handled = true;
             }
@@ -31622,10 +31555,10 @@ ${ev.details}`;
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian29.TFolder) {
+          if (abstractFile instanceof import_obsidian31.TFolder) {
             await this.handleDroppedFolder(abstractFile);
             handled = true;
-          } else if (abstractFile instanceof import_obsidian29.TFile) {
+          } else if (abstractFile instanceof import_obsidian31.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             handled = true;
           }
@@ -31661,18 +31594,11 @@ ${ev.details}`;
    * Returns object with content parts or null if no disclaimer needed.
    */
   getModeDisclaimer() {
-    if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-      const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
-      return {
-        icon: "\u{1F916}",
-        title: "Unified agent:",
-        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments. Turn off unified mode in Settings \u2192 Legacy orchestration only if you need the classic planner.`
-      };
-    }
+    const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
     return {
       icon: "\u{1F916}",
-      title: "Orchestration:",
-      text: "Classic planner + built-in tools. Enable or disable specific tools via Plugin Settings (skill toggles); chat no longer exposes a Skills menu."
+      title: "Unified agent:",
+      text: `One local ${p} turn per message. Search vs graph work follows your message and attachments; vault prompts under OSINTCopilot/custom still augment the agent.`
     };
   }
   updateUploadButtonVisibility() {
@@ -31775,7 +31701,7 @@ ${ev.details}`;
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian29.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian31.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -31813,12 +31739,12 @@ ${ev.details}`;
     target.value = "";
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian29.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian31.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian29.Notice(`Attached: ${file.name}`);
+    new import_obsidian31.Notice(`Attached: ${file.name}`);
   }
   static isImageFile(name) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -31829,12 +31755,12 @@ ${ev.details}`;
       return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian29.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
+      new import_obsidian31.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian29.Notice(`Attached: ${file.name}`);
+    new import_obsidian31.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
@@ -31848,12 +31774,12 @@ ${ev.details}`;
       return;
     const ext = (file.extension || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian29.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian31.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian29.Notice(`Attached: ${file.name}`);
+    new import_obsidian31.Notice(`Attached: ${file.name}`);
   }
   /**
    * Handle a dropped folder — recursively collect all allowed files and attach them.
@@ -31863,24 +31789,24 @@ ${ev.details}`;
       return;
     const files = this.collectFilesFromFolder(folder);
     if (files.length === 0) {
-      new import_obsidian29.Notice(`No supported files found in folder "${folder.name}"`);
+      new import_obsidian31.Notice(`No supported files found in folder "${folder.name}"`);
       return;
     }
     for (const file of files) {
       this.attachedFiles.push({ file, extracted: false });
     }
     this.renderAttachments();
-    new import_obsidian29.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+    new import_obsidian31.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
   }
   collectFilesFromFolder(folder) {
     const results = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian29.TFile) {
+      if (child instanceof import_obsidian31.TFile) {
         const ext = (child.extension || "").toLowerCase();
         if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
           results.push(child);
         }
-      } else if (child instanceof import_obsidian29.TFolder) {
+      } else if (child instanceof import_obsidian31.TFolder) {
         results.push(...this.collectFilesFromFolder(child));
       }
     }
@@ -31944,14 +31870,14 @@ ${ev.details}`;
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian29.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian31.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian29.Notice(`Text extracted from URL`);
+      new import_obsidian31.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       console.error("URL extraction error:", error);
-      new import_obsidian29.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian31.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
       this.inputEl.disabled = false;
@@ -31965,7 +31891,7 @@ ${ev.details}`;
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian29.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian31.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -32137,7 +32063,7 @@ ${ev.details}`;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian29.Notice("Failed to load conversation");
+      new import_obsidian31.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -32150,7 +32076,7 @@ ${ev.details}`;
     this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian29.Notice("Started new conversation");
+    new import_obsidian31.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -32166,9 +32092,9 @@ ${ev.details}`;
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian29.Notice("Conversation deleted");
+          new import_obsidian31.Notice("Conversation deleted");
         } else {
-          new import_obsidian29.Notice("Failed to delete conversation");
+          new import_obsidian31.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -32186,7 +32112,7 @@ ${ev.details}`;
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian29.Notice("Conversation renamed");
+          new import_obsidian31.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -32210,7 +32136,7 @@ ${ev.details}`;
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian29.MarkdownRenderer.render(
+      await import_obsidian31.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -32337,7 +32263,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian29.TFile) {
+              if (file instanceof import_obsidian31.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -32387,10 +32313,10 @@ ${ev.details}`;
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian29.TFile) {
+                if (file instanceof import_obsidian31.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian29.Notice("Linked note file not found");
+                  new import_obsidian31.Notice("Linked note file not found");
                 }
               })();
             }
@@ -32453,7 +32379,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian29.TFile) {
+              if (file instanceof import_obsidian31.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -32487,9 +32413,6 @@ ${ev.details}`;
           color: var(--text-muted);
           font-style: italic;
         `;
-      }
-      if (item.role === "assistant" && item.proposedPlan && item.proposedPlan.isProposal) {
-        this.renderProposedPlan(item, i, messageDiv);
       }
       if (item.role === "assistant" && item.toolResults && Object.keys(item.toolResults).length > 0) {
         this.renderToolResults(item, i, messageDiv);
@@ -32587,6 +32510,60 @@ ${ev.details}`;
           this.renderMessages();
         });
       }
+      if (item.role === "assistant" && item.proposedCustomVaultOps && item.proposedCustomVaultOps.length > 0) {
+        const vaultOpsDiv = messageDiv.createDiv("vault-ai-proposed-custom-vault");
+        vaultOpsDiv.style.cssText = `
+          margin-top: 12px;
+          padding: 12px;
+          background: var(--background-secondary-alt);
+          border: 1px solid var(--background-modifier-border-hover);
+          border-radius: 8px;
+          border-left: 4px solid var(--text-accent);
+        `;
+        vaultOpsDiv.createEl("h4", { text: "\u{1F4C1} Proposed vault changes (skills / credentials)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("p", {
+          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here."
+        }).style.fontSize = "small";
+        const listEl = vaultOpsDiv.createDiv();
+        listEl.style.marginBottom = "12px";
+        const selectedVaultOpIndices = new Set(item.proposedCustomVaultOps.map((_, idx) => idx));
+        item.proposedCustomVaultOps.forEach((op, idx) => {
+          const row = listEl.createDiv();
+          row.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 6px;
+            padding: 4px;
+            border-bottom: 1px solid var(--background-modifier-border);
+          `;
+          const cb = row.createEl("input");
+          cb.type = "checkbox";
+          cb.checked = true;
+          cb.style.marginTop = "4px";
+          const label = row.createEl("span", { text: summarizeCustomVaultOperation(op) });
+          label.style.fontSize = "13px";
+          cb.addEventListener("change", () => {
+            if (cb.checked)
+              selectedVaultOpIndices.add(idx);
+            else
+              selectedVaultOpIndices.delete(idx);
+          });
+        });
+        const vaultActionRow = vaultOpsDiv.createDiv();
+        vaultActionRow.style.display = "flex";
+        vaultActionRow.style.gap = "10px";
+        const applyVaultBtn = vaultActionRow.createEl("button", { text: "Apply selected", cls: "mod-cta" });
+        applyVaultBtn.addEventListener("click", () => {
+          void this.applyProposedCustomVaultOps(i, Array.from(selectedVaultOpIndices));
+        });
+        const dismissVaultBtn = vaultActionRow.createEl("button", { text: "Dismiss" });
+        dismissVaultBtn.addEventListener("click", () => {
+          this.chatHistory[i].proposedCustomVaultOps = void 0;
+          void this.renderMessages();
+          void this.saveCurrentConversation();
+        });
+      }
       if (item.role === "assistant" && item.reportFilePath) {
         const reportButtonContainer = messageDiv.createDiv("vault-ai-report-button-container");
         reportButtonContainer.setCssProps({
@@ -32622,11 +32599,11 @@ ${ev.details}`;
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian29.TFile) {
+            if (file instanceof import_obsidian31.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian29.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian31.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian29.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian31.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -32728,7 +32705,7 @@ ${ev.details}`;
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian29.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian31.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -32946,7 +32923,7 @@ ${ev.details}`;
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian29.Notice("Task cancelled");
+        new import_obsidian31.Notice("Task cancelled");
       },
       () => {
       },
@@ -32977,7 +32954,7 @@ ${ev.details}`;
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian29.Notice("Operation cancelled");
+        new import_obsidian31.Notice("Operation cancelled");
       },
       () => {
       },
@@ -32999,7 +32976,7 @@ ${ev.details}`;
     }
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
     if (sendRuntimeAvailability.availableIds.length === 0) {
-      new import_obsidian29.Notice(
+      new import_obsidian31.Notice(
         "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8e3
       );
@@ -33074,21 +33051,21 @@ ${ev.details}`;
             text = attachment.content;
           } else if (isImage) {
             let absolutePath;
-            if (attachment.file instanceof import_obsidian29.TFile) {
+            if (attachment.file instanceof import_obsidian31.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
-              const evidencePath = (0, import_obsidian29.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const evidencePath = (0, import_obsidian31.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
               const folder = this.app.vault.getAbstractFileByPath(evidencePath);
               if (!folder) {
                 await this.app.vault.createFolder(evidencePath);
               }
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
-              const destPath = (0, import_obsidian29.normalizePath)(`${evidencePath}/${safeName}`);
+              const destPath = (0, import_obsidian31.normalizePath)(`${evidencePath}/${safeName}`);
               const buffer = await attachment.file.arrayBuffer();
               const existing = this.app.vault.getAbstractFileByPath(destPath);
               let tFile;
-              if (existing instanceof import_obsidian29.TFile) {
+              if (existing instanceof import_obsidian31.TFile) {
                 tFile = existing;
               } else {
                 tFile = await this.app.vault.createBinary(destPath, buffer);
@@ -33104,7 +33081,7 @@ ${ev.details}`;
                 rawCli: this.plugin.settings.extractionDebugRawCli
               }
             );
-          } else if (attachment.file instanceof import_obsidian29.TFile) {
+          } else if (attachment.file instanceof import_obsidian31.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
@@ -33138,7 +33115,7 @@ ${text}`);
           } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian29.Notice(userMessage, 8e3);
+          new import_obsidian31.Notice(userMessage, 8e3);
         }
       }
       this.activeAbortControllers.delete(extractionMsgIndex);
@@ -33178,9 +33155,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian29.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian31.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian29.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian31.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -33305,7 +33282,7 @@ ${fileList}` : fileList;
       }
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
-      this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
+      this.chatHistory[assistantIndex].proposedCustomVaultOps = result.proposedCustomVaultOps;
       this.chatHistory[assistantIndex].savedQuery = query;
       this.chatHistory[assistantIndex].progress = void 0;
       this.chatHistory[assistantIndex].multiProgress = void 0;
@@ -33544,13 +33521,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian29.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian31.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian29.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian31.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -33600,201 +33577,26 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     await this.renderMessages();
     await this.saveCurrentConversation();
   }
-  renderProposedPlan(item, index, messageDiv) {
-    if (!item.proposedPlan)
-      return;
-    const plan = item.proposedPlan;
-    const planDiv = messageDiv.createDiv("vault-ai-proposed-plan");
-    planDiv.style.cssText = `
-      margin-top: 15px;
-      padding: 15px;
-      background: var(--background-secondary-alt);
-      border: 1px solid var(--interactive-accent);
-      border-radius: 8px;
-      border-left: 5px solid var(--interactive-accent);
-    `;
-    planDiv.createEl("h4", {
-      text: "\u26A1 Review Investigation Plan",
-      cls: "vault-ai-plan-title"
-    }).style.marginTop = "0";
-    if (plan.planSummary) {
-      const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
-      import_obsidian29.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
-    }
-    const allTools = [
-      { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "EXTRACT_TO_GRAPH", icon: "\u{1F3F7}\uFE0F", label: "Extract to Graph", desc: "Extract entities from text into the knowledge graph" }
-    ];
-    const proposedTools = new Set(plan.toolsToCall || []);
-    const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
-    toolSection.style.marginTop = "12px";
-    toolSection.createEl("strong", { text: "Select investigation modules:" }).style.cssText = `
-      display: block;
-      margin-bottom: 8px;
-      font-size: 13px;
-    `;
-    const checkboxes = /* @__PURE__ */ new Map();
-    for (const tool of allTools) {
-      const row = toolSection.createDiv();
-      row.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 6px;
-        margin-bottom: 4px;
-        cursor: pointer;
-        transition: background 0.15s;
-      `;
-      row.addEventListener("mouseenter", () => {
-        row.style.background = "var(--background-modifier-hover)";
-      });
-      row.addEventListener("mouseleave", () => {
-        row.style.background = "transparent";
-      });
-      const cb = row.createEl("input", { type: "checkbox" });
-      cb.checked = proposedTools.has(tool.id);
-      cb.style.cssText = "margin: 0; cursor: pointer;";
-      checkboxes.set(tool.id, cb);
-      const labelDiv = row.createDiv();
-      labelDiv.style.cssText = "flex: 1; cursor: pointer;";
-      labelDiv.createEl("span", { text: `${tool.icon} ${tool.label}` }).style.cssText = "font-weight: 600; font-size: 13px;";
-      labelDiv.createEl("span", { text: ` \u2014 ${tool.desc}` }).style.cssText = "font-size: 12px; color: var(--text-muted);";
-      row.addEventListener("click", (e) => {
-        if (e.target !== cb) {
-          cb.checked = !cb.checked;
-        }
-      });
-    }
-    const actionRow = planDiv.createDiv();
-    actionRow.style.cssText = `
-      display: flex;
-      gap: 12px;
-      margin-top: 15px;
-      align-items: center;
-    `;
-    const executeBtn = actionRow.createEl("button", {
-      text: "\u{1F680} Run Investigation",
-      cls: "mod-cta"
-    });
-    executeBtn.addEventListener("click", () => {
-      const selectedTools = [];
-      checkboxes.forEach((cb, toolId) => {
-        if (cb.checked)
-          selectedTools.push(toolId);
-      });
-      if (selectedTools.length === 0) {
-        new import_obsidian29.Notice("Please select at least one investigation module.");
-        return;
-      }
-      executeBtn.disabled = true;
-      executeBtn.textContent = "\u23F3 Executing...";
-      void this.executeProposedPlan(index, selectedTools);
-    });
-    const hint = planDiv.createEl("small", {
-      text: "Check the modules you want to use, then click Run. Reply to refine the plan.",
-      cls: "vault-ai-plan-hint"
-    });
-    hint.style.cssText = `
-      display: block;
-      margin-top: 10px;
-      color: var(--text-muted);
-      font-style: italic;
-    `;
-  }
-  async executeProposedPlan(index, selectedTools) {
+  async applyProposedCustomVaultOps(index, selectedIndices) {
     const item = this.chatHistory[index];
-    if (!item.proposedPlan)
+    if (!item.proposedCustomVaultOps?.length)
       return;
-    const plan = { ...item.proposedPlan };
-    plan.toolsToCall = selectedTools;
-    plan.isProposal = false;
-    item.proposedPlan.isProposal = false;
-    item.content = `\u{1F680} *Executing investigation with: ${selectedTools.join(", ")}...*`;
-    item.progress = { message: "Launching investigative modules...", percent: 20 };
-    await this.renderMessages();
-    const assistantIndex = this.chatHistory.length;
-    this.chatHistory.push({
-      role: "assistant",
-      content: "",
-      multiProgress: {}
-    });
-    let parallelAbortSignals;
-    if (selectedTools.length > 1) {
-      parallelAbortSignals = this.setupOrchestrationParallelToolsUI(assistantIndex, selectedTools);
-    } else {
-      selectedTools.forEach((tool) => {
-        const displayName = ORCHESTRATION_TOOL_DISPLAY_NAMES[tool] || tool;
-        this.chatHistory[assistantIndex].multiProgress[displayName] = {
-          message: "Initializing\u2026",
-          percent: 5
-        };
-      });
-    }
-    await this.renderMessages();
-    const updateProgress = (tool, message, percent) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        if (!this.chatHistory[assistantIndex].multiProgress) {
-          this.chatHistory[assistantIndex].multiProgress = {};
-        }
-        this.chatHistory[assistantIndex].multiProgress[tool] = { message, percent };
-        this.updateMultiProgressBar(assistantIndex, tool, { message, percent });
-      }
-    };
+    const ops = item.proposedCustomVaultOps.filter((_, idx) => selectedIndices.includes(idx));
+    if (ops.length === 0)
+      return;
     try {
-      const controller = new AbortController();
-      this.activeAbortControllers.set(assistantIndex, controller);
-      const queryForTools = item.savedQuery || this.getLastUserQuery();
-      console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
-      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
-        selectedTools,
-        queryForTools,
-        "",
-        this.currentConversation,
-        updateProgress,
-        {
-          abortSignals: parallelAbortSignals,
-          globalAbort: controller.signal
-        }
-      );
-      this.activeAbortControllers.delete(assistantIndex);
-      this.chatHistory[assistantIndex].orchestrationAbortByToolId = void 0;
-      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = void 0;
-      console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
-      for (const [key, val] of Object.entries(toolResults)) {
-        const preview = typeof val === "string" ? val.substring(0, 200) : JSON.stringify(val).substring(0, 200);
-        console.log(`[executeProposedPlan] Tool '${key}':`, preview);
+      const { applied, errors } = await applyCustomVaultOperations(this.plugin, ops);
+      if (errors.length) {
+        new import_obsidian31.Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8e3);
+      } else {
+        new import_obsidian31.Notice(`Applied ${applied} vault change(s).`);
       }
-      this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **\u{1F4CA} Generate Analysis & Graph** to proceed.";
-      this.chatHistory[assistantIndex].toolResults = toolResults;
-      this.chatHistory[assistantIndex].savedPlan = plan;
-      this.chatHistory[assistantIndex].savedQuery = queryForTools;
-      this.chatHistory[assistantIndex].progress = void 0;
-      this.chatHistory[assistantIndex].multiProgress = void 0;
-      this._awaitingToolReview = true;
-      console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
-      await this.renderMessages();
-      await this.saveCurrentConversation();
     } catch (e) {
-      this.activeAbortControllers.delete(assistantIndex);
-      const hist = this.chatHistory[assistantIndex];
-      hist.orchestrationAbortByToolId = void 0;
-      hist.orchestrationDisplayToToolId = void 0;
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
-        return;
-      this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
-      this.chatHistory[assistantIndex].progress = void 0;
-      this.chatHistory[assistantIndex].multiProgress = void 0;
-      await this.renderMessages();
+      new import_obsidian31.Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8e3);
     }
-  }
-  getLastUserQuery() {
-    for (let i = this.chatHistory.length - 1; i >= 0; i--) {
-      if (this.chatHistory[i].role === "user")
-        return this.chatHistory[i].content;
-    }
-    return "";
+    item.proposedCustomVaultOps = void 0;
+    await this.renderMessages();
+    await this.saveCurrentConversation();
   }
   /**
    * Handle Graph only Mode: Extract entities from user input text without sending to AI.
@@ -33948,7 +33750,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian29.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian31.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -34065,7 +33867,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian29.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian31.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -34477,7 +34279,7 @@ _ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
   "ico"
 ]);
 var ChatView = _ChatView;
-var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /**
@@ -34525,47 +34327,47 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian29.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian29.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian29.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian31.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian29.Notice("Update successful! Reloading plugin...");
+            new import_obsidian31.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian29.Notice("Failed to download update. Check console for details.");
+            new import_obsidian31.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian29.Notice("An error occurred during update.");
+          new import_obsidian31.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Graph note lock").setHeading();
-    new import_obsidian29.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
+    new import_obsidian31.Setting(containerEl).setName("Graph note lock").setHeading();
+    new import_obsidian31.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
       "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths."
     ).addButton(
       (btn) => btn.setButtonText("Unlock all").onClick(async () => {
         if (!confirm("Unlock all notes locked from the graph?"))
           return;
         this.plugin.vaultLockService.unlockAll();
-        new import_obsidian29.Notice("All graph locks cleared.");
+        new import_obsidian31.Notice("All graph locks cleared.");
         this.display();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian31.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -34574,7 +34376,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
         }
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian31.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -34582,20 +34384,20 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
       text.inputEl.rows = 4;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian29.Setting(containerEl).setName("Vault prompts").setHeading();
-    new import_obsidian29.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
+    new import_obsidian31.Setting(containerEl).setName("Vault prompts").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
       (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
         this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
+    new import_obsidian31.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
       (text) => text.setPlaceholder("default").setValue(this.plugin.settings.activeAgentId).onChange(async (value) => {
         this.plugin.settings.activeAgentId = value.trim() || "default";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
@@ -34605,20 +34407,21 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
           if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
             await this.plugin.app.vault.createFolder(enricherRoot);
           }
+          await ensureCredentialsFolder(this.plugin);
           this.plugin.vaultPromptLoader?.invalidateAll();
           this.plugin.taskAgentRegistry?.invalidate();
           this.plugin.skillRegistry?.invalidate();
           this.plugin.enricherRegistry?.invalidate();
           this.plugin.attachVaultSkillFromVault();
-          new import_obsidian29.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
+          new import_obsidian31.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
         } catch (e) {
-          new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Skills (orchestration)").setHeading();
-    new import_obsidian29.Setting(containerEl).setName("Skills folder").setDesc(
-      "Markdown skills the legacy planner may invoke (SKILL_*). With unified chat, the chosen runtime handles tools; legacy flow still uses skill toggles from settings defaults."
+    new import_obsidian31.Setting(containerEl).setName("Skills (vault)").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Skills folder").setDesc(
+      "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (and enricher HTTP tools use companion skills here)."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
         this.plugin.settings.skillsFolder = value.trim() || DEFAULT_SKILLS_FOLDER;
@@ -34626,28 +34429,36 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
+    new import_obsidian31.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
       (text) => text.setPlaceholder(DEFAULT_ENRICHERS_FOLDER).setValue(this.plugin.settings.enrichersFolder).onChange(async (value) => {
         this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
         this.plugin.enricherRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Task agents (vault)").setHeading();
-    new import_obsidian29.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
+    new import_obsidian31.Setting(containerEl).setName("Credentials folder").setDesc(
+      "Plain-text secrets the unified agent may propose storing (e.g. API keys). Paths must stay under OSINTCopilot/custom/. Use bearer_vault / header_vault / query_vault in enricher JSON to read a file here."
+    ).addText(
+      (text) => text.setPlaceholder(DEFAULT_CREDENTIALS_FOLDER).setValue(this.plugin.settings.credentialsFolder).onChange(async (value) => {
+        this.plugin.settings.credentialsFolder = value.trim() || DEFAULT_CREDENTIALS_FOLDER;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian31.Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
       (t) => t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
         this.plugin.settings.taskAgentsEnabled = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
+    new import_obsidian31.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
       (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
         this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
+    new import_obsidian31.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
       text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
@@ -34655,21 +34466,21 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
       text.inputEl.rows = 3;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian29.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           this.plugin.taskAgentRegistry?.invalidate();
-          new import_obsidian29.Notice("Task-agent defaults installed where missing.");
+          new import_obsidian31.Notice("Task-agent defaults installed where missing.");
           this.display();
         } catch (e) {
-          new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
-    new import_obsidian29.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian31.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
         this.plugin.settings.conversationFolder = folder;
@@ -34678,7 +34489,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Unified chat agent").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
       text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description"
@@ -34688,7 +34499,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
       (rt) => rt.id === selectedRuntimeId
     );
     const visibility = runtimeSettingsVisibility(selectedRuntimeId);
-    new import_obsidian29.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
+    new import_obsidian31.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
       (dd) => {
         const options = getConfiguredRuntimeOptions(this.plugin);
         for (const option of options)
@@ -34702,33 +34513,27 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
         });
       }
     );
-    new import_obsidian29.Setting(containerEl).setName("Unified agent orchestration").setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.").addToggle(
-      (t) => t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
-        this.plugin.settings.unifiedAgentOrchestration = v;
-        await this.plugin.saveSettings();
-      })
-    );
     if (visibility.showHermesSettings) {
-      new import_obsidian29.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
+      new import_obsidian31.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
         (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
           this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
+      new import_obsidian31.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
         (text) => text.setPlaceholder("").setValue(this.plugin.settings.hermesAgentExtraArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentExtraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
+      new import_obsidian31.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
         (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs)).setValue(String(this.plugin.settings.hermesAgentTimeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           this.plugin.settings.hermesAgentTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
+      new import_obsidian31.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
         (text) => text.setPlaceholder("--version").setValue(this.plugin.settings.hermesAgentHealthCheckArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
@@ -34740,34 +34545,34 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
         text: "Claude runtime selected. Claude CLI/model and extraction diagnostics are configured in the \u201CGraph extraction (Claude Code)\u201D section below.",
         cls: "setting-item-description"
       });
-      new import_obsidian29.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
+      new import_obsidian31.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
     }
-    new import_obsidian29.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
-          new import_obsidian29.Notice(
+          new import_obsidian31.Notice(
             ok ? `${this.runtimeLabel(provider.id)} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
           );
         } catch (e) {
-          new import_obsidian29.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+          new import_obsidian31.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Custom runtimes").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Custom runtimes").setHeading();
     containerEl.createEl("p", {
       text: "Manage Hermes-compatible local CLIs. Edit fields appear only when a custom runtime is selected as Agent runtime.",
       cls: "setting-item-description"
     });
-    new import_obsidian29.Setting(containerEl).setName("Configured custom runtimes").setDesc(
+    new import_obsidian31.Setting(containerEl).setName("Configured custom runtimes").setDesc(
       this.plugin.settings.customAgentRuntimes.length > 0 ? this.plugin.settings.customAgentRuntimes.map((rt) => `${rt.displayName} (${rt.id})`).join(", ") : "No custom runtime configured yet."
     );
-    new import_obsidian29.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
       (btn) => btn.setButtonText("Add runtime").onClick(async () => {
         const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
         this.plugin.settings.customAgentRuntimes.push(next);
@@ -34778,7 +34583,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
     if (visibility.showSelectedCustomSettings && selectedCustomRuntime) {
       const i = this.plugin.settings.customAgentRuntimes.findIndex((rt2) => rt2.id === selectedCustomRuntime.id);
       const rt = selectedCustomRuntime;
-      new import_obsidian29.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
+      new import_obsidian31.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
         (btn) => btn.setButtonText("Remove selected").setWarning().onClick(async () => {
           if (i < 0)
             return;
@@ -34791,13 +34596,13 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Display name").addText(
+      new import_obsidian31.Setting(containerEl).setName("Display name").addText(
         (text) => text.setValue(rt.displayName).onChange(async (value) => {
           rt.displayName = value.trim() || `Custom ${i + 1}`;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
+      new import_obsidian31.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
         (text) => text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
           const nextId = this.uniqueCustomRuntimeId(value, rt.id);
           const prevId = rt.id;
@@ -34809,7 +34614,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Enabled").addToggle(
+      new import_obsidian31.Setting(containerEl).setName("Enabled").addToggle(
         (toggle) => toggle.setValue(rt.enabled).onChange(async (value) => {
           rt.enabled = value;
           if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
@@ -34819,62 +34624,62 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("CLI path").addText(
+      new import_obsidian31.Setting(containerEl).setName("CLI path").addText(
         (text) => text.setValue(rt.cliPath).onChange(async (value) => {
           rt.cliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Extra CLI args").addText(
+      new import_obsidian31.Setting(containerEl).setName("Extra CLI args").addText(
         (text) => text.setValue(rt.extraArgs).onChange(async (value) => {
           rt.extraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Request timeout (ms)").addText(
+      new import_obsidian31.Setting(containerEl).setName("Request timeout (ms)").addText(
         (text) => text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           rt.timeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 12e4;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian29.Setting(containerEl).setName("Health-check args").addText(
+      new import_obsidian31.Setting(containerEl).setName("Health-check args").addText(
         (text) => text.setValue(rt.healthCheckArgs).onChange(async (value) => {
           rt.healthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian29.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
       text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description"
     });
-    new import_obsidian29.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+    new import_obsidian31.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
       (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
         this.plugin.settings.claudeCodeCliPath = value || "claude";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+    new import_obsidian31.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
+    new import_obsidian31.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
       (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
         this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
+    new import_obsidian31.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.extractionDebugRawCli).onChange(async (value) => {
         this.plugin.settings.extractionDebugRawCli = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
+    new import_obsidian31.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
       (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
@@ -34889,28 +34694,28 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
           });
           const ok = await svc.isAvailable();
           if (!ok) {
-            new import_obsidian29.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
+            new import_obsidian31.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
             btn.setButtonText("Test Claude binary");
             btn.setDisabled(false);
             return;
           }
           await svc.chat("", "Reply with exactly the single word: OK");
-          new import_obsidian29.Notice("Claude CLI is available and responded to a test request.", 6e3);
+          new import_obsidian31.Notice("Claude CLI is available and responded to a test request.", 6e3);
         } catch (e) {
           const msg = e?.message || String(e);
-          new import_obsidian29.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
+          new import_obsidian31.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
         }
         btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian29.Setting(containerEl).setName("Schema families in type pickers").setDesc(
+    new import_obsidian31.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian31.Setting(containerEl).setName("Schema families in type pickers").setDesc(
       "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/."
     );
     const fam = this.plugin.settings.enabledSchemaFamilies;
     const addFamToggle = (key, name) => {
-      new import_obsidian29.Setting(containerEl).setName(name).addToggle(
+      new import_obsidian31.Setting(containerEl).setName(name).addToggle(
         (toggle) => toggle.setValue(fam[key]).onChange(async (value) => {
           fam[key] = value;
           await this.plugin.saveSettings();
@@ -34921,12 +34726,12 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
     addFamToggle("stix2", "STIX 2 (vault YAML)");
     addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
     addFamToggle("user", "User YAML (schemas/user)");
-    new import_obsidian29.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
+    new import_obsidian31.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
       "Filter the bundled ontology (OIDSF) in FTM pickers: World (default entities), Links (relationship/interval types), Cyber (STIX-aligned), Analysis (claims/ACH/etc.). Graph still resolves any type already in the vault."
     );
     const layers = this.plugin.settings.oidsfModalLayers;
     const addLayerToggle = (key, caption) => {
-      new import_obsidian29.Setting(containerEl).setName(caption).addToggle(
+      new import_obsidian31.Setting(containerEl).setName(caption).addToggle(
         (toggle) => toggle.setValue(layers[key]).onChange(async (value) => {
           layers[key] = value;
           await this.plugin.saveSettings();
@@ -34937,13 +34742,13 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
     addLayerToggle("links", "Links (relationship / interval types)");
     addLayerToggle("cyber", "Cyber (STIX / CTI-aligned entities)");
     addLayerToggle("analysis", "Analysis (claims, ACH, evidence chains, \u2026)");
-    new import_obsidian29.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian31.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian29.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian31.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
@@ -34968,7 +34773,7 @@ var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
       }
       for (const a of list) {
         const runnable = isTaskAgentRunnable(a, this.plugin.settings);
-        new import_obsidian29.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
+        new import_obsidian31.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
           t.setValue(runnable);
           t.onChange(async (v) => {
             if (v) {

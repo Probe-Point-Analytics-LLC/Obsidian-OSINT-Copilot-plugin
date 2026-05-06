@@ -17,7 +17,7 @@ description: Short line for the planner tool list
 Body: instructions used when this skill runs (local Claude).
 \`\`\`
 
-With **legacy** orchestration (unified mode off), built-in **Local search** and **Graph generation** follow **Settings** / saved **skill toggles**. Unified chat uses the **Claude** or **Hermes** runtime from the chat header instead.
+Chat uses a **unified agent** (Claude Code, Hermes, or a custom runtime from settings). Custom skills here complement **HTTP enrichers** and can be created or updated when the agent proposes **custom_vault_operations**.
 
 `,
 	},
@@ -27,10 +27,10 @@ With **legacy** orchestration (unified mode off), built-in **Local search** and 
 skill_kind: vault
 id: example_skill
 name: Example skill
-description: Template — customize or duplicate this file to add planner-invokable skills (SKILL_example_skill).
+description: Template — customize or duplicate this file for vault-defined skills.
 ---
 
-You are a specialized sub-agent invoked when the orchestration planner selects this skill.
+You are a specialized sub-agent invoked when a workflow runs this skill file.
 
 Given the user request and any attachment context, produce a concise, actionable result for the main agent to synthesize.
 `,

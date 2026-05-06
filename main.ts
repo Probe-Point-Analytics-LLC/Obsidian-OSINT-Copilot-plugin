@@ -82,12 +82,16 @@ import {
 } from './src/services/agent-runtime/runtime-registry';
 import {
   DEFAULT_CONVERSATION_FOLDER,
+  DEFAULT_CREDENTIALS_FOLDER,
   DEFAULT_ENRICHERS_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
   DEFAULT_SKILLS_FOLDER,
   DEFAULT_TASK_AGENTS_FOLDER,
   DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
 } from './src/constants/vault-layout';
+import type { CustomVaultOperation } from './src/services/custom-vault-operations';
+import { normalizeCustomVaultOperations, summarizeCustomVaultOperation } from './src/services/custom-vault-operations';
+import { applyCustomVaultOperations, ensureCredentialsFolder } from './src/services/custom-vault-writer';
 import { VaultLockService } from './src/services/vault-lock-service';
 import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
 import { SchemaBootstrapService } from './src/services/schema-bootstrap-service';
@@ -135,14 +139,12 @@ interface VaultAISettings {
   skillsFolder: string;
   /** Vault folder for user-created enricher specs (JSON). */
   enrichersFolder: string;
-  /** Per-skill id (built-in or vault): enabled. Undefined defaults to true. */
-  skillToggles: Record<string, boolean>;
+  /** Vault folder for credential files (API keys, etc.); must stay under OSINTCopilot/custom/. */
+  credentialsFolder: string;
   // Custom API settings
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
   claudeCodeModel: string;
-  /** When true (default), chat uses one local agent turn (Claude Code or Hermes) instead of planner + LOCAL_VAULT / EXTRACT tools. */
-  unifiedAgentOrchestration: boolean;
   /** Which local CLI backs unified chat + JSON agent turns. */
   agentRuntimeProvider: string;
   /** Hermes (or compatible) agent CLI — see USER_GUIDE. */
@@ -227,11 +229,10 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   taskAgentOverrides: {},
   skillsFolder: DEFAULT_SKILLS_FOLDER,
   enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
-  skillToggles: {},
+  credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
-  unifiedAgentOrchestration: true,
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: 'hermes',
   hermesAgentExtraArgs: '',
@@ -387,6 +388,11 @@ export default class VaultAIPlugin extends Plugin {
       }
     } catch (e) {
       console.warn('OSINTCopilot: enricher folder bootstrap failed:', e);
+    }
+    try {
+      await ensureCredentialsFolder(this);
+    } catch (e) {
+      console.warn('OSINTCopilot: credentials folder bootstrap failed:', e);
     }
     this.enricherRegistry = new EnricherRegistry(this.app, () => this.settings.enrichersFolder);
     this.enricherRegistry.registerVaultEvents(this);
@@ -715,6 +721,7 @@ export default class VaultAIPlugin extends Plugin {
             if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
               await this.app.vault.createFolder(enricherRoot);
             }
+            await ensureCredentialsFolder(this);
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
@@ -996,11 +1003,11 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     if (!merged.taskAgentOverrides || typeof merged.taskAgentOverrides !== 'object') {
       merged.taskAgentOverrides = {};
     }
-    if (!merged.skillToggles || typeof merged.skillToggles !== 'object') {
-      merged.skillToggles = {};
-    }
     if (typeof merged.enrichersFolder !== 'string' || !merged.enrichersFolder.trim()) {
       merged.enrichersFolder = DEFAULT_SETTINGS.enrichersFolder;
+    }
+    if (typeof merged.credentialsFolder !== 'string' || !merged.credentialsFolder.trim()) {
+      merged.credentialsFolder = DEFAULT_SETTINGS.credentialsFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -1017,9 +1024,6 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
     merged.oidsfModalLayers = mergeOidsfModalLayers(
       raw.oidsfModalLayers as Partial<OIDSFModalLayers> | undefined,
     );
-    if (typeof merged.unifiedAgentOrchestration !== 'boolean') {
-      merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
-    }
     merged.customAgentRuntimes = normalizeCustomAgentRuntimes(raw.customAgentRuntimes);
     const validRuntimeIds = new Set<string>([
       CLAUDE_RUNTIME_ID,
@@ -2161,6 +2165,7 @@ export interface ChatHistoryItem {
   reportFilePath?: string;
   usedEntities?: { id: string, label: string, type: string }[];
   proposedModifications?: string[];
+  proposedCustomVaultOps?: CustomVaultOperation[];
   proposedPlan?: OrchestrationPlan;
   toolResults?: Record<string, any>;
   savedPlan?: OrchestrationPlan;
@@ -2367,6 +2372,10 @@ export class ChatView extends ItemView {
       reportFilePath: m.reportFilePath,
       usedEntities: m.usedEntities,
       proposedModifications: m.proposedModifications,
+      proposedCustomVaultOps:
+        Array.isArray(m.proposedCustomVaultOps) && m.proposedCustomVaultOps.length > 0
+          ? normalizeCustomVaultOperations(m.proposedCustomVaultOps)
+          : undefined,
       proposedPlan: m.proposedPlan as OrchestrationPlan
     }));
   }
@@ -2383,6 +2392,7 @@ export class ChatView extends ItemView {
       reportFilePath: h.reportFilePath,
       usedEntities: h.usedEntities,
       proposedModifications: h.proposedModifications,
+      proposedCustomVaultOps: h.proposedCustomVaultOps as Record<string, unknown>[] | undefined,
       proposedPlan: h.proposedPlan
     }));
   }
@@ -2718,18 +2728,11 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
-    if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-      const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
-      return {
-        icon: "🤖",
-        title: "Unified agent:",
-        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments. Turn off unified mode in Settings → Legacy orchestration only if you need the classic planner.`,
-      };
-    }
+    const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
     return {
       icon: "🤖",
-      title: "Orchestration:",
-      text: "Classic planner + built-in tools. Enable or disable specific tools via Plugin Settings (skill toggles); chat no longer exposes a Skills menu.",
+      title: "Unified agent:",
+      text: `One local ${p} turn per message. Search vs graph work follows your message and attachments; vault prompts under OSINTCopilot/custom still augment the agent.`,
     };
   }
 
@@ -3729,11 +3732,6 @@ export class ChatView extends ItemView {
         `;
       }
 
-      // Round 8: Show Proposed Investigation Plan (HITL)
-      if (item.role === "assistant" && item.proposedPlan && item.proposedPlan.isProposal) {
-        this.renderProposedPlan(item, i, messageDiv);
-      }
-
       // Step-by-step: Show tool results for review with continue button
       if (item.role === "assistant" && item.toolResults && Object.keys(item.toolResults).length > 0) {
         this.renderToolResults(item, i, messageDiv);
@@ -3840,6 +3838,62 @@ export class ChatView extends ItemView {
         dismissBtn.addEventListener("click", () => {
           this.chatHistory[i].proposedModifications = undefined;
           this.renderMessages();
+        });
+      }
+
+      if (item.role === "assistant" && item.proposedCustomVaultOps && item.proposedCustomVaultOps.length > 0) {
+        const vaultOpsDiv = messageDiv.createDiv("vault-ai-proposed-custom-vault");
+        vaultOpsDiv.style.cssText = `
+          margin-top: 12px;
+          padding: 12px;
+          background: var(--background-secondary-alt);
+          border: 1px solid var(--background-modifier-border-hover);
+          border-radius: 8px;
+          border-left: 4px solid var(--text-accent);
+        `;
+        vaultOpsDiv.createEl("h4", { text: "📁 Proposed vault changes (skills / credentials)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("p", {
+          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here.",
+        }).style.fontSize = "small";
+
+        const listEl = vaultOpsDiv.createDiv();
+        listEl.style.marginBottom = "12px";
+        const selectedVaultOpIndices = new Set<number>(item.proposedCustomVaultOps.map((_, idx) => idx));
+
+        item.proposedCustomVaultOps.forEach((op, idx) => {
+          const row = listEl.createDiv();
+          row.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 6px;
+            padding: 4px;
+            border-bottom: 1px solid var(--background-modifier-border);
+          `;
+          const cb = row.createEl("input");
+          cb.type = "checkbox";
+          cb.checked = true;
+          cb.style.marginTop = "4px";
+          const label = row.createEl("span", { text: summarizeCustomVaultOperation(op) });
+          label.style.fontSize = "13px";
+          cb.addEventListener("change", () => {
+            if (cb.checked) selectedVaultOpIndices.add(idx);
+            else selectedVaultOpIndices.delete(idx);
+          });
+        });
+
+        const vaultActionRow = vaultOpsDiv.createDiv();
+        vaultActionRow.style.display = "flex";
+        vaultActionRow.style.gap = "10px";
+        const applyVaultBtn = vaultActionRow.createEl("button", { text: "Apply selected", cls: "mod-cta" });
+        applyVaultBtn.addEventListener("click", () => {
+          void this.applyProposedCustomVaultOps(i, Array.from(selectedVaultOpIndices));
+        });
+        const dismissVaultBtn = vaultActionRow.createEl("button", { text: "Dismiss" });
+        dismissVaultBtn.addEventListener("click", () => {
+          this.chatHistory[i].proposedCustomVaultOps = undefined;
+          void this.renderMessages();
+          void this.saveCurrentConversation();
         });
       }
 
@@ -4691,7 +4745,7 @@ export class ChatView extends ItemView {
 
       this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
       this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
-      this.chatHistory[assistantIndex].proposedPlan = result.proposedPlan;
+      this.chatHistory[assistantIndex].proposedCustomVaultOps = result.proposedCustomVaultOps;
       this.chatHistory[assistantIndex].savedQuery = query; // Save query for tool execution
       this.chatHistory[assistantIndex].progress = undefined;
       this.chatHistory[assistantIndex].multiProgress = undefined;
@@ -5038,234 +5092,26 @@ export class ChatView extends ItemView {
     await this.saveCurrentConversation();
   }
 
-  private renderProposedPlan(item: ChatHistoryItem, index: number, messageDiv: HTMLElement) {
-    if (!item.proposedPlan) return;
-
-    const plan = item.proposedPlan;
-    const planDiv = messageDiv.createDiv("vault-ai-proposed-plan");
-    planDiv.style.cssText = `
-      margin-top: 15px;
-      padding: 15px;
-      background: var(--background-secondary-alt);
-      border: 1px solid var(--interactive-accent);
-      border-radius: 8px;
-      border-left: 5px solid var(--interactive-accent);
-    `;
-
-    planDiv.createEl("h4", {
-      text: "⚡ Review Investigation Plan",
-      cls: "vault-ai-plan-title"
-    }).style.marginTop = "0";
-
-    if (plan.planSummary) {
-      const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
-      MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
-    }
-
-    // All available tools with icons and descriptions
-    const allTools: { id: string; icon: string; label: string; desc: string }[] = [
-      { id: "LOCAL_VAULT", icon: "📁", label: "Local Vault", desc: "Search your existing Obsidian notes" },
-      { id: "EXTRACT_TO_GRAPH", icon: "🏷️", label: "Extract to Graph", desc: "Extract entities from text into the knowledge graph" },
-    ];
-
-    const proposedTools = new Set(plan.toolsToCall || []);
-
-    // Tool selection section
-    const toolSection = planDiv.createDiv("vault-ai-plan-tool-section");
-    toolSection.style.marginTop = "12px";
-    toolSection.createEl("strong", { text: "Select investigation modules:" }).style.cssText = `
-      display: block;
-      margin-bottom: 8px;
-      font-size: 13px;
-    `;
-
-    const checkboxes: Map<string, HTMLInputElement> = new Map();
-
-    for (const tool of allTools) {
-      const row = toolSection.createDiv();
-      row.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 6px;
-        margin-bottom: 4px;
-        cursor: pointer;
-        transition: background 0.15s;
-      `;
-      row.addEventListener("mouseenter", () => { row.style.background = "var(--background-modifier-hover)"; });
-      row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
-
-      const cb = row.createEl("input", { type: "checkbox" }) as HTMLInputElement;
-      cb.checked = proposedTools.has(tool.id);
-      cb.style.cssText = "margin: 0; cursor: pointer;";
-      checkboxes.set(tool.id, cb);
-
-      const labelDiv = row.createDiv();
-      labelDiv.style.cssText = "flex: 1; cursor: pointer;";
-      labelDiv.createEl("span", { text: `${tool.icon} ${tool.label}` }).style.cssText = "font-weight: 600; font-size: 13px;";
-      labelDiv.createEl("span", { text: ` — ${tool.desc}` }).style.cssText = "font-size: 12px; color: var(--text-muted);";
-
-      // Toggle checkbox on row click
-      row.addEventListener("click", (e) => {
-        if (e.target !== cb) {
-          cb.checked = !cb.checked;
-        }
-      });
-    }
-
-    const actionRow = planDiv.createDiv();
-    actionRow.style.cssText = `
-      display: flex;
-      gap: 12px;
-      margin-top: 15px;
-      align-items: center;
-    `;
-
-    const executeBtn = actionRow.createEl("button", {
-      text: "🚀 Run Investigation",
-      cls: "mod-cta"
-    });
-    executeBtn.addEventListener("click", () => {
-      // Collect selected tools
-      const selectedTools: string[] = [];
-      checkboxes.forEach((cb, toolId) => {
-        if (cb.checked) selectedTools.push(toolId);
-      });
-
-      if (selectedTools.length === 0) {
-        new Notice("Please select at least one investigation module.");
-        return;
-      }
-
-      executeBtn.disabled = true;
-      executeBtn.textContent = "⏳ Executing...";
-      void this.executeProposedPlan(index, selectedTools);
-    });
-
-    const hint = planDiv.createEl("small", {
-      text: "Check the modules you want to use, then click Run. Reply to refine the plan.",
-      cls: "vault-ai-plan-hint"
-    });
-    hint.style.cssText = `
-      display: block;
-      margin-top: 10px;
-      color: var(--text-muted);
-      font-style: italic;
-    `;
-  }
-
-  private async executeProposedPlan(index: number, selectedTools: string[]) {
+  async applyProposedCustomVaultOps(index: number, selectedIndices: number[]) {
     const item = this.chatHistory[index];
-    if (!item.proposedPlan) return;
-
-    // Store the plan and selected tools for direct execution
-    const plan = { ...item.proposedPlan };
-    plan.toolsToCall = selectedTools;
-    plan.isProposal = false;
-
-    // Update the UI
-    item.proposedPlan.isProposal = false;
-    item.content = `🚀 *Executing investigation with: ${selectedTools.join(', ')}...*`;
-    item.progress = { message: "Launching investigative modules...", percent: 20 };
-    await this.renderMessages();
-
-    // Execute the tools directly using the orchestration service
-    const assistantIndex = this.chatHistory.length;
-    this.chatHistory.push({
-      role: "assistant",
-      content: "",
-      multiProgress: {}
-    });
-
-    let parallelAbortSignals: Record<string, AbortSignal> | undefined;
-    if (selectedTools.length > 1) {
-      parallelAbortSignals = this.setupOrchestrationParallelToolsUI(assistantIndex, selectedTools);
-    } else {
-      selectedTools.forEach((tool) => {
-        const displayName = ORCHESTRATION_TOOL_DISPLAY_NAMES[tool] || tool;
-        this.chatHistory[assistantIndex].multiProgress![displayName] = {
-          message: "Initializing…",
-          percent: 5,
-        };
-      });
-    }
-
-    await this.renderMessages();
-
-    const updateProgress = (tool: string, message: string, percent: number) => {
-      if (this.activeAbortControllers.has(assistantIndex)) {
-        if (!this.chatHistory[assistantIndex].multiProgress) {
-          this.chatHistory[assistantIndex].multiProgress = {};
-        }
-        this.chatHistory[assistantIndex].multiProgress![tool] = { message, percent };
-        this.updateMultiProgressBar(assistantIndex, tool, { message, percent });
-      }
-    };
-
+    if (!item.proposedCustomVaultOps?.length) return;
+    const ops = item.proposedCustomVaultOps.filter((_, idx) => selectedIndices.includes(idx));
+    if (ops.length === 0) return;
     try {
-      const controller = new AbortController();
-      this.activeAbortControllers.set(assistantIndex, controller);
-
-      // Execute tools in parallel directly
-      const queryForTools = item.savedQuery || this.getLastUserQuery();
-      console.log("[executeProposedPlan] Starting tools:", selectedTools, "query:", queryForTools.substring(0, 100));
-
-      const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
-        selectedTools,
-        queryForTools,
-        "",
-        this.currentConversation,
-        updateProgress,
-        {
-          abortSignals: parallelAbortSignals,
-          globalAbort: controller.signal,
-        }
-      );
-
-      this.activeAbortControllers.delete(assistantIndex);
-      this.chatHistory[assistantIndex].orchestrationAbortByToolId = undefined;
-      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = undefined;
-
-      console.log("[executeProposedPlan] Tools completed. Results keys:", Object.keys(toolResults));
-      for (const [key, val] of Object.entries(toolResults)) {
-        const preview = typeof val === 'string' ? val.substring(0, 200) : JSON.stringify(val).substring(0, 200);
-        console.log(`[executeProposedPlan] Tool '${key}':`, preview);
+      const { applied, errors } = await applyCustomVaultOperations(this.plugin, ops);
+      if (errors.length) {
+        new Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8000);
+      } else {
+        new Notice(`Applied ${applied} vault change(s).`);
       }
-
-      // Show tool results for review
-      this.chatHistory[assistantIndex].content = "Investigation modules complete. Review the results below, then click **📊 Generate Analysis & Graph** to proceed.";
-      this.chatHistory[assistantIndex].toolResults = toolResults;
-      this.chatHistory[assistantIndex].savedPlan = plan;
-      this.chatHistory[assistantIndex].savedQuery = queryForTools;
-      this.chatHistory[assistantIndex].progress = undefined;
-      this.chatHistory[assistantIndex].multiProgress = undefined;
-      this._awaitingToolReview = true; // Enable the guard: user must click Generate to proceed
-      console.log("[executeProposedPlan] Set _awaitingToolReview = true. Tool results stored at index:", assistantIndex);
-      await this.renderMessages();
-      await this.saveCurrentConversation();
-
     } catch (e) {
-      this.activeAbortControllers.delete(assistantIndex);
-      const hist = this.chatHistory[assistantIndex];
-      hist.orchestrationAbortByToolId = undefined;
-      hist.orchestrationDisplayToToolId = undefined;
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
-
-      this.chatHistory[assistantIndex].content = `Execution Error: ${errorMsg}`;
-      this.chatHistory[assistantIndex].progress = undefined;
-      this.chatHistory[assistantIndex].multiProgress = undefined;
-      await this.renderMessages();
+      new Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8000);
     }
+    item.proposedCustomVaultOps = undefined;
+    await this.renderMessages();
+    await this.saveCurrentConversation();
   }
 
-  private getLastUserQuery(): string {
-    for (let i = this.chatHistory.length - 1; i >= 0; i--) {
-      if (this.chatHistory[i].role === "user") return this.chatHistory[i].content;
-    }
-    return "";
-  }
   /**
    * Handle Graph only Mode: Extract entities from user input text without sending to AI.
    * This mode is active when graphGenerationMode is ON and all main modes are OFF.
@@ -6281,6 +6127,7 @@ class VaultAISettingTab extends PluginSettingTab {
             if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
               await this.plugin.app.vault.createFolder(enricherRoot);
             }
+            await ensureCredentialsFolder(this.plugin);
             this.plugin.vaultPromptLoader?.invalidateAll();
             this.plugin.taskAgentRegistry?.invalidate();
             this.plugin.skillRegistry?.invalidate();
@@ -6293,11 +6140,11 @@ class VaultAISettingTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl).setName("Skills (orchestration)").setHeading();
+    new Setting(containerEl).setName("Skills (vault)").setHeading();
     new Setting(containerEl)
       .setName("Skills folder")
       .setDesc(
-        "Markdown skills the legacy planner may invoke (SKILL_*). With unified chat, the chosen runtime handles tools; legacy flow still uses skill toggles from settings defaults.",
+        "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (and enricher HTTP tools use companion skills here).",
       )
       .addText((text) =>
         text
@@ -6319,6 +6166,20 @@ class VaultAISettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
             this.plugin.enricherRegistry?.invalidate();
+            await this.plugin.saveSettings();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Credentials folder")
+      .setDesc(
+        "Plain-text secrets the unified agent may propose storing (e.g. API keys). Paths must stay under OSINTCopilot/custom/. Use bearer_vault / header_vault / query_vault in enricher JSON to read a file here.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_CREDENTIALS_FOLDER)
+          .setValue(this.plugin.settings.credentialsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.credentialsFolder = value.trim() || DEFAULT_CREDENTIALS_FOLDER;
             await this.plugin.saveSettings();
           }),
       );
@@ -6424,16 +6285,6 @@ class VaultAISettingTab extends PluginSettingTab {
             this.display();
           });
         },
-      );
-
-    new Setting(containerEl)
-      .setName("Unified agent orchestration")
-      .setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.")
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
-          this.plugin.settings.unifiedAgentOrchestration = v;
-          await this.plugin.saveSettings();
-        }),
       );
 
     if (visibility.showHermesSettings) {

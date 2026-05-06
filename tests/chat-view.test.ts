@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import VaultAIPlugin, { ChatView, CHAT_VIEW_TYPE } from '../main';
 import { App, WorkspaceLeaf } from 'obsidian';
 import {
+	DEFAULT_CREDENTIALS_FOLDER,
 	DEFAULT_PROMPTS_FOLDER,
 	DEFAULT_SKILLS_FOLDER,
 	DEFAULT_TASK_AGENTS_FOLDER,
@@ -36,11 +37,10 @@ describe('ChatView', () => {
             taskAgentOverrides: {},
             skillsFolder: DEFAULT_SKILLS_FOLDER,
             enrichersFolder: "OSINTCopilot/custom/enrichers",
-            skillToggles: {},
+            credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
-            unifiedAgentOrchestration: true,
             agentRuntimeProvider: 'claude-code',
             hermesAgentCliPath: 'hermes',
             hermesAgentExtraArgs: '',

@@ -1,4 +1,5 @@
 import type { AIOperation, OsintSourceInput } from '../../entities/types';
+import { normalizeCustomVaultOperations } from '../custom-vault-operations';
 import {
     AGENT_TURN_SCHEMA_VERSION,
     type AgentRetrievalHit,
@@ -130,6 +131,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
                 `**Agent response could not be parsed as JSON.**\n\nShow raw output (truncated):\n\n\`\`\`\n${excerpt}\n\`\`\``,
             retrieval_hits: [],
             graph_operations: [],
+            custom_vault_operations: [],
             diagnostics: { provider, raw_excerpt: excerpt, notes: 'no_json_object' },
         };
     }
@@ -147,6 +149,9 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
                     : '';
         const hits = normalizeHits(data.retrieval_hits ?? data.retrievalHits ?? data.hits);
         const graphOps = normalizeGraphOperations(data.graph_operations ?? data.graphOperations ?? data.operations);
+        const customVaultOps = normalizeCustomVaultOperations(
+            data.custom_vault_operations ?? data.customVaultOperations,
+        );
         const diag: AgentTurnDiagnostics = {
             provider,
             raw_excerpt: excerpt,
@@ -159,6 +164,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
             answer_markdown: answer || '_Empty answer from model._',
             retrieval_hits: hits,
             graph_operations: graphOps,
+            custom_vault_operations: customVaultOps,
             diagnostics: diag,
         };
     } catch (e) {
@@ -168,6 +174,7 @@ export function parseAgentTurnResult(raw: string, provider: AgentRuntimeId): Age
             answer_markdown: `**Invalid agent JSON:** ${msg}\n\nRaw (truncated):\n\n\`\`\`\n${excerpt}\n\`\`\``,
             retrieval_hits: [],
             graph_operations: [],
+            custom_vault_operations: [],
             diagnostics: { provider, raw_excerpt: excerpt, notes: 'json_parse_error' },
         };
     }

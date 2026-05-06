@@ -48,5 +48,12 @@ export async function executeEnricherTool(
 	if (!id) return `Invalid enricher tool id: ${toolId}`;
 	const spec = await plugin.enricherRegistry.getById(id);
 	if (!spec) return `Unknown enricher \`${id}\`.`;
-	return executeEnricherHttp(spec, query, attachmentsContext, signal);
+	return executeEnricherHttp(
+		spec,
+		query,
+		attachmentsContext,
+		signal,
+		plugin.app.vault,
+		plugin.settings.credentialsFolder,
+	);
 }

@@ -12,18 +12,13 @@ import {
 } from '../entities/types';
 import { buildInferredOsintSources } from './osint-confidence-engine';
 import { ConfirmModal } from '../modals/confirm-modal';
-import { detectOrchestrationIntent, type OrchestrationIntent } from './intent-router';
-import {
-	buildPlannerTooling,
-	filterToolsToCall,
-	parseVaultSkillPlannerTool,
-} from '../skills/skill-runtime';
-import type { PlannerTooling } from '../skills/skill-types';
+import { parseVaultSkillPlannerTool } from '../skills/skill-runtime';
 import { executeEnricherTool, executeVaultSkillTool } from '../skills/skill-executor';
 import { parseEnrichToolId } from './enrichers/enricher-schema';
 import { createAgentProvider } from './agent-runtime/create-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
+import type { CustomVaultOperation } from './custom-vault-operations';
 
 export interface OrchestrationPlan {
     reasoning: string;
@@ -37,10 +32,11 @@ export interface OrchestrationPlan {
 export interface OrchestrationResult {
     finalResponse: string;
     proposedCommands?: string[];
-    proposedPlan?: OrchestrationPlan;
+    /** Unified agent: proposed skill/credential file ops (applied only after user confirms in chat). */
+    proposedCustomVaultOps?: CustomVaultOperation[];
     toolResults?: Record<string, any>;
     plan?: OrchestrationPlan;
-    phase?: "PLAN_PROPOSED" | "TOOLS_COMPLETE" | "SYNTHESIS_COMPLETE";
+    phase?: "TOOLS_COMPLETE" | "SYNTHESIS_COMPLETE";
 }
 
 /** Display names for orchestration tool ids (UI + progress rows). */
@@ -108,116 +104,15 @@ export class OrchestrationService {
         onProgress: (msg: string, percent: number, meta?: OrchestrationProgressMeta) => void,
         options?: ProcessRequestOptions
     ): Promise<OrchestrationResult> {
-        const checkAborted = () => {
-            if (options?.abortSignal?.aborted) {
-                throw new DOMException("Aborted", "AbortError");
-            }
-        };
-
         try {
-            // Product default: unified path. Legacy planner remains for power users via
-            // Settings → Legacy orchestration (chat no longer exposes per-turn skill toggles).
-            if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-                return await this.processRequestUnified(
-                    query,
-                    attachmentsContext,
-                    currentGraphState,
-                    conversationMemory,
-                    onProgress,
-                    options,
-                );
-            }
-
-            onProgress("Preparing local tools...", 10);
-            await this.verifyProviderAndCredits();
-            checkAborted();
-
-            // Implicit URL Extraction (Phase 3)
-            const urlRegex = /(https?:\/\/[^\s]+)/g;
-            const urls = query.match(urlRegex);
-            if (urls && urls.length > 0) {
-                onProgress(`Extracting content from ${urls.length} link(s)...`, 15);
-                for (const url of urls) {
-                    checkAborted();
-                    try {
-                        const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
-                        attachmentsContext += `\n\n=== Content from ${url} ===\n${extractedText}`;
-                    } catch (e) {
-                        console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
-                        attachmentsContext += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
-                    }
-                }
-            }
-
-            onProgress("Classifying intent and formulating plan...", 20);
-            checkAborted();
-            const routedIntent = detectOrchestrationIntent(query);
-            console.log("[OrchestrationService] Routed intent:", routedIntent);
-            const plan = await this.classifyIntent(
+            return await this.processRequestUnified(
                 query,
                 attachmentsContext,
                 currentGraphState,
                 conversationMemory,
-                routedIntent
+                onProgress,
+                options,
             );
-            checkAborted();
-
-            // HITL: If the plan is a proposal, return immediately for user review
-            if (plan.isProposal && plan.toolsToCall.length > 0) {
-                onProgress("Investigation plan proposed for review.", 100);
-                return {
-                    finalResponse: plan.directResponse || `I have formulated an investigation plan. ${plan.planSummary}`,
-                    proposedPlan: plan,
-                    phase: "PLAN_PROPOSED"
-                };
-            }
-
-            // If no tools needed, generate direct response
-            if (plan.toolsToCall.length === 0) {
-                onProgress("Generating response...", 90);
-                checkAborted();
-                const finalResponse = await this.generateFinalResponse(plan, {}, query, currentGraphState, conversationMemory);
-                onProgress("Complete", 100);
-                return { finalResponse, phase: "SYNTHESIS_COMPLETE" };
-            }
-
-            let toolAbortSignals: Record<string, AbortSignal> | undefined;
-            if (plan.toolsToCall.length > 1 && options?.onToolsStarting) {
-                const sigs = options.onToolsStarting(plan.toolsToCall);
-                toolAbortSignals = sigs || undefined;
-            }
-
-            onProgress(
-                plan.toolsToCall.length > 1
-                    ? `Running ${plan.toolsToCall.length} tools in parallel...`
-                    : `Executing tools: ${plan.toolsToCall.join(", ")}...`,
-                40
-            );
-            checkAborted();
-
-            const toolResults = await this.executeToolsInParallel(
-                plan.toolsToCall,
-                query,
-                attachmentsContext,
-                currentConversation,
-                (toolDisplay, msg, percent, _detail) => {
-                    onProgress(msg, percent, { orchestrationTool: toolDisplay });
-                },
-                {
-                    abortSignals: toolAbortSignals,
-                    globalAbort: options?.abortSignal,
-                }
-            );
-
-            // Return tool results for user review BEFORE synthesis
-            onProgress("Tools complete. Awaiting review...", 60);
-            return {
-                finalResponse: "Investigation tools have completed. Review the results below, then click **📊 Generate Analysis & Graph** to proceed.",
-                toolResults: toolResults,
-                plan: plan,
-                phase: "TOOLS_COMPLETE"
-            };
-
         } catch (error) {
             console.error("[OrchestrationService] Error:", error);
             this.handleError(error);
@@ -366,10 +261,14 @@ export class OrchestrationService {
                 proposedCommands = aiOperationsToGraphCommands(turn.graph_operations);
             }
 
+            const proposedCustomVaultOps =
+                turn.custom_vault_operations?.length ? turn.custom_vault_operations : undefined;
+
             onProgress("Complete", 100);
             return {
                 finalResponse: answer,
                 proposedCommands,
+                proposedCustomVaultOps,
                 phase: "SYNTHESIS_COMPLETE",
             };
         } catch (e) {
@@ -386,196 +285,12 @@ export class OrchestrationService {
         }
     }
 
-    private describeRoutedIntentLine(intent: OrchestrationIntent): string {
-        switch (intent) {
-            case "VAULT_GRAPH_BUILD":
-            case "VAULT_QA":
-                return `${intent} — User wants answers or graph data from their vault.`;
-            default:
-                return `${intent} — User request (investigation / OSINT workflow).`;
-        }
-    }
-
-    /** When the LLM returns no tools, default to first enabled tool from skills. */
-    private fallbackProposalForEmptyTools(query: string, tooling: PlannerTooling): {
-        toolsToCall: string[];
-        planSummary: string;
-        directResponse: string;
-    } {
-        const first =
-            tooling.defaultToolsExample[0] ?? [...tooling.enabledPlannerToolIds][0];
-        if (!first) {
-            return {
-                toolsToCall: [],
-                planSummary: `### No tools available\nEnable at least one planner tool in **Settings → OSINT Copilot** (legacy orchestration skill toggles / defaults).`,
-                directResponse: `No skills are enabled for the legacy planner. Open plugin Settings and turn on the built-in tools you need (e.g. Local search), or switch back to unified chat.`,
-            };
-        }
-        const label = first === "LOCAL_VAULT" ? "Local vault" : first === "EXTRACT_TO_GRAPH" ? "Graph extraction" : first;
-        return {
-            toolsToCall: [first],
-            planSummary: `### Investigation Plan\n1. **${label}** — Run for: "${query}"\n\n*Adjust modules before running.*`,
-            directResponse: `I'll run **${label}** for your request.`,
-        };
-    }
-
     private async getVaultPromptAugmentation(): Promise<string> {
         try {
             return (await this.plugin.vaultPromptLoader?.getOrchestrationAugmentation()) ?? "";
         } catch (e) {
             console.warn("[OrchestrationService] vault prompts:", e);
             return "";
-        }
-    }
-
-    private async classifyIntent(
-        query: string,
-        attachmentsContext: string,
-        graphState: any,
-        conversationMemory: { role: string; content: string }[],
-        routedIntent: OrchestrationIntent
-    ): Promise<OrchestrationPlan> {
-        const systemPrompt = "You are the Orchestration Agent. Based on the user query, determine tools and graph commands to run.";
-        const vaultAug = await this.getVaultPromptAugmentation();
-
-        const memoryContext =
-            conversationMemory && conversationMemory.length > 0
-                ? conversationMemory.map((msg) => `${msg.role.toUpperCase()}:\n${msg.content}`).join("\n\n")
-                : "No previous conversation.";
-
-        const isApproval = /^\s*(proceed|go|approved|yes|ok|run|execute|do it|start|launch|confirm)/i.test(query);
-
-        const hasAttachments = !!(attachmentsContext && attachmentsContext.trim().length > 0);
-        const tooling = await buildPlannerTooling(
-            this.plugin.skillRegistry,
-            this.plugin.settings.skillToggles ?? {},
-            hasAttachments,
-            this.plugin.enricherRegistry,
-        );
-
-        if (tooling.enabledPlannerToolIds.size === 0) {
-            return {
-                reasoning: "No skills are enabled for this session.",
-                toolsToCall: [],
-                graphCommands: [],
-                isProposal: true,
-                planSummary:
-                    "### No tools available\nEnable at least one planner tool in **Settings → OSINT Copilot** (legacy skill toggles; the chat header no longer has a Skills menu).",
-                directResponse:
-                    "No skills are enabled for the legacy planner. Open plugin Settings, adjust skill toggles under legacy orchestration, then send your message again.",
-            };
-        }
-
-        const routedIntentBlock = tooling.buildRoutedIntentBlock(
-            this.describeRoutedIntentLine(routedIntent),
-            hasAttachments,
-        );
-
-        const skillHints =
-            tooling.criticalRulesLines.length > 0
-                ? `\n   Hints:\n${tooling.criticalRulesLines.map((l) => `   - ${l}`).join("\n")}`
-                : "";
-
-        const availableToolsBlock = tooling.availableToolsLines.join("\n");
-        const defaultToolsExample =
-            tooling.defaultToolsExample.length > 0 ? tooling.defaultToolsExample : [...tooling.enabledPlannerToolIds].slice(0, 2);
-
-        const prompt = `You are an OSINT investigation planner. You MUST respond with a JSON object ONLY. No other text.
-
-=== ROUTED INTENT (heuristic, trust this for tool choice) ===
-${routedIntentBlock}
-${vaultAug ? `\n=== VAULT-DEFINED RULES AND AGENT (user-editable markdown) ===\n${vaultAug}\n` : ""}
-
-=== CRITICAL RULES ===
-1. You are a PLANNER, not a responder. You NEVER answer the user's question directly.
-2. Propose ONLY tools listed under AVAILABLE TOOLS below. Do not invent tool ids.${skillHints}
-3. Set "isProposal" to true and list the tools you recommend (for new requests).
-4. The ONLY time you set "isProposal" to false with empty "toolsToCall" is when the user says "Proceed", "Go", "Approved", or similar confirmation words.
-5. Your "directResponse" should describe your PLAN, never the answer to the question.
-6. NEVER put factual answers in "directResponse". That field is for describing what tools you will use and why.
-
-=== AVAILABLE TOOLS ===
-${availableToolsBlock}
-
-=== USER'S ORCHESTRATION CONTEXT ===
-${systemPrompt}
-
-=== CURRENT GRAPH STATE (existing entities) ===
-Entities: ${Array.isArray(graphState?.entities) ? graphState.entities.length : 0} nodes
-${Array.isArray(graphState?.entities) ? graphState.entities.slice(0, 20).map((e: any) => `- ${e.type}: ${e.label}`).join("\n") : "Empty graph"}
-
-=== CONVERSATION HISTORY ===
-${memoryContext}
-
-=== USER REQUEST ===
-${query}
-
-${isApproval ? '>>> THE USER IS APPROVING A PREVIOUS PLAN. Set "isProposal": false and list the final tools from the previous plan.' : '>>> THIS IS A NEW REQUEST. You MUST set "isProposal": true and propose tools.'}
-
-Respond with this exact JSON structure:
-{
-  "reasoning": "Your analysis of the query and why you chose these tools",
-  "planSummary": "### Investigation Plan\\n1. Step 1...\\n2. Step 2...",
-  "isProposal": ${isApproval ? "false" : "true"},
-  "toolsToCall": ${JSON.stringify(defaultToolsExample)},
-  "graphCommands": [],
-  "directResponse": "Describe your investigation plan here (NOT the answer to the question)"
-}`;
-
-        try {
-            const responseText = await this.plugin.graphApiService.callRemoteModel(
-                [{ role: "user", content: prompt }],
-                true
-            );
-
-            console.log("[OrchestrationService] Raw LLM classification response:", responseText.substring(0, 2000));
-
-            const match = responseText.match(/\{[\s\S]*\}/);
-            if (match) {
-                const rawPlan = JSON.parse(match[0]);
-                console.log("[OrchestrationService] Parsed plan:", JSON.stringify(rawPlan, null, 2).substring(0, 1000));
-
-                let toolsToCall = rawPlan.toolsToCall || rawPlan.tools_to_call || [];
-                toolsToCall = filterToolsToCall(toolsToCall, tooling.enabledPlannerToolIds, hasAttachments);
-
-                const plan: OrchestrationPlan = {
-                    reasoning: rawPlan.reasoning || "No reasoning provided.",
-                    toolsToCall,
-                    graphCommands: rawPlan.graphCommands || rawPlan.graph_commands || [],
-                    directResponse: rawPlan.directResponse || rawPlan.direct_response,
-                    isProposal: rawPlan.isProposal ?? rawPlan.is_proposal ?? false,
-                    planSummary: rawPlan.planSummary || rawPlan.plan_summary
-                };
-
-                if (!isApproval && plan.toolsToCall.length === 0) {
-                    const fb = this.fallbackProposalForEmptyTools(query, tooling);
-                    console.warn(
-                        "[OrchestrationService] LLM returned no tools for a non-approval query. Forcing fallback proposal:",
-                        routedIntent,
-                        fb.toolsToCall
-                    );
-                    plan.isProposal = true;
-                    plan.toolsToCall = fb.toolsToCall;
-                    plan.planSummary = plan.planSummary || fb.planSummary;
-                    plan.directResponse = plan.directResponse || fb.directResponse;
-                }
-
-                console.log("[OrchestrationService] Final plan - isProposal:", plan.isProposal, "tools:", plan.toolsToCall);
-                return plan;
-            } else {
-                throw new Error("Could not parse JSON from LLM response.");
-            }
-        } catch (error) {
-            console.error("[OrchestrationService] Failed to classify intent:", error);
-            const fb = this.fallbackProposalForEmptyTools(query, tooling);
-            return {
-                reasoning: "Fallback due to classification error.",
-                toolsToCall: fb.toolsToCall,
-                graphCommands: [],
-                isProposal: true,
-                planSummary: `### Investigation Plan\n1. Fallback — ${fb.toolsToCall.length ? fb.toolsToCall.join(", ") : "none"}\n\n*The planner request failed; adjust modules and click Run.*`,
-                directResponse: fb.directResponse,
-            };
         }
     }
 

@@ -14,6 +14,7 @@ import { App } from 'obsidian';
 import { legacyFlagsForChatMode } from '../src/services/conversation-service';
 import {
   DEFAULT_CONVERSATION_FOLDER,
+  DEFAULT_CREDENTIALS_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
   DEFAULT_SKILLS_FOLDER,
   DEFAULT_TASK_AGENTS_FOLDER,
@@ -65,11 +66,10 @@ describe('ChatView send routing', () => {
       taskAgentOverrides: {},
       skillsFolder: DEFAULT_SKILLS_FOLDER,
       enrichersFolder: "OSINTCopilot/custom/enrichers",
-      skillToggles: {},
+      credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
       apiProvider: 'claude-code' as const,
       claudeCodeCliPath: 'claude',
       claudeCodeModel: 'sonnet',
-      unifiedAgentOrchestration: true,
       agentRuntimeProvider: 'claude-code' as const,
       hermesAgentCliPath: 'hermes',
       hermesAgentExtraArgs: '',

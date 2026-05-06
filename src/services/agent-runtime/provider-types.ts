@@ -1,4 +1,5 @@
 import type { AIOperation } from '../../entities/types';
+import type { CustomVaultOperation } from '../custom-vault-operations';
 
 export const AGENT_TURN_SCHEMA_VERSION = 'osint_copilot_agent_turn_v1' as const;
 
@@ -25,6 +26,11 @@ export interface AgentTurnResult {
     retrieval_hits: AgentRetrievalHit[];
     /** Same shape as graph extraction `operations[]` entries (create entities + connections). */
     graph_operations: AIOperation[];
+    /**
+     * Proposed skill/credential file changes under OSINTCopilot/custom/.
+     * The UI applies these only after explicit user confirmation (never auto-written).
+     */
+    custom_vault_operations: CustomVaultOperation[];
     diagnostics?: AgentTurnDiagnostics;
 }
 

@@ -188,7 +188,6 @@ See full setup and mapping example in [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_S
 | Graph, timeline, map, entity notes, connections | Local vault + Obsidian only |
 | Default chat | Unified local runtime (**Agent runtime** = Claude by default, or Hermes/custom runtime) |
 | Attachment/image extraction | Claude Code CLI (Graph extraction settings) |
-| Legacy planner + tools | Only when **Unified agent orchestration** is OFF |
 
 The plugin no longer relies on hosted vendor investigation/report pipelines. Core investigation data remains local Markdown in the vault.
 
@@ -214,12 +213,9 @@ Once installed, you'll see the OSINT Copilot tools in the left sidebar:
 
 ![OSINT Copilot Tools](screenshots/Copilot%20tools%20pallete%20left%20bar.png)
 
-Chat **send** uses a **unified local agent** by default (Settings → **Unified chat agent**):
+Chat **send** uses a **unified local agent** (Settings → **Unified chat agent**): **Claude Code** (default), **Hermes Agent**, or a **custom runtime** runs **one JSON turn** per message — Markdown answer, optional `graph_operations` (same shape as graph extraction), optional `retrieval_hits`, and optional `custom_vault_operations` for vault skill/credential proposals. Proposed graph and vault file changes go through the plugin **confirm / apply** flow.
 
-- **Claude Code** (default), **Hermes Agent**, or a **custom runtime** runs **one JSON turn** per message: Markdown answer + optional `graph_operations` (same shape as graph extraction) + `retrieval_hits`. The external agent is instructed to use **its own installed skills/tools** for vault search and entity work. Proposed graph changes still go through the plugin’s **confirm / apply** flow.
-- Turn off **Unified agent orchestration** in Settings to restore the **legacy** flow: planner + built-in **LOCAL_VAULT** / **EXTRACT_TO_GRAPH** tools, with tool enablement from **saved skill toggles** / defaults (not from a chat Skills menu).
-
-The chat header shows a runtime dropdown with all reachable runtimes (Claude/Hermes/custom). Routing always calls orchestration unless **Vault graph ingest** mode is selected.
+The chat header shows a runtime dropdown with all reachable runtimes (Claude/Hermes/custom). Routing uses the unified agent unless **Vault graph ingest** mode is selected.
 
 Optional **custom chat checkpoints** (OpenAI-compatible URLs) in **Settings** are legacy; they are not used by the unified agent path.
 
@@ -860,7 +856,7 @@ For issues, feature requests, or questions:
 
 ### Documentation (current)
 
-- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), **unified agent runtime** (Claude vs Hermes in the chat header when both CLIs are healthy, legacy planner toggle), and **legacy planner tools** (skill toggles in settings-backed data) with no remote investigation API.
+- README and USER_GUIDE updated for **BRAT install**, **Claude Code CLI** (local AI), **vault prompts** (`OSINTCopilot/custom/prompts/`), and **unified agent runtime** (Claude vs Hermes/custom in the chat header) with no remote investigation API.
 
 ### Recent Improvements
 

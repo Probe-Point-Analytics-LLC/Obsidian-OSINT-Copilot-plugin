@@ -13,6 +13,8 @@ export const DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
 export const DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 export const DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
 export const DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`;
+/** API keys and other secrets the user approves storing as vault files (plain text). */
+export const DEFAULT_CREDENTIALS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/credentials`;
 
 /** Global allowlist prefixes for task-agent vault writes (newline-separated). */
 export const DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/\nResearch/`;
