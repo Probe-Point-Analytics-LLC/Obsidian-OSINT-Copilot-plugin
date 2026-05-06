@@ -16618,8 +16618,6 @@ Error: ${stderr || error.message}`
     if (jsonResponse) {
       systemPrompt += "\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.";
     }
-    fetch("http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9b4ad8" }, body: JSON.stringify({ sessionId: "9b4ad8", location: "api-service.ts:callRemoteModel", message: "routing to claudeCodeService.chat", data: { hypothesisId: "H2", jsonResponse, systemLen: systemPrompt.length, userLen: userContent.length }, timestamp: Date.now(), runId: "post-fix" }) }).catch(() => {
-    });
     return this.claudeCodeService.chat(systemPrompt, userContent, signal);
   }
   /**
@@ -16952,8 +16950,6 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
     }
   }
   invokeCLI(prompt, signal, maxTurns = 1, logOptions) {
-    fetch("http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9b4ad8" }, body: JSON.stringify({ sessionId: "9b4ad8", location: "claude-code-service.ts:invokeCLI", message: "invokeCLI start", data: { hypothesisId: "H1", maxTurns, promptLen: prompt?.length ?? 0 }, timestamp: Date.now(), runId: "post-fix" }) }).catch(() => {
-    });
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
         logOptions?.emit?.({
@@ -17015,8 +17011,6 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                 timestamp: Date.now()
               });
               console.error("[ClaudeCodeService] CLI failed", { code: error.code, stderr: errOut, stdout: stdOut });
-              fetch("http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9b4ad8" }, body: JSON.stringify({ sessionId: "9b4ad8", location: "claude-code-service.ts:invokeCLI:error", message: "CLI process error", data: { hypothesisId: "H1", maxTurns, code: error?.code, stdoutTail: sanitizeCliOutput(stdOut, 200), stderrTail: sanitizeCliOutput(errOut, 200) }, timestamp: Date.now(), runId: "post-fix" }) }).catch(() => {
-              });
               reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
             }
             return;
@@ -26098,8 +26092,6 @@ var ClaudeAgentProvider = class {
     onProgress?.("Running Claude Code agent (JSON turn)...", 25);
     const system = buildUnifiedAgentSystemPrompt("Claude Code");
     const user = buildUnifiedAgentUserPrompt(ctx);
-    fetch("http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9b4ad8" }, body: JSON.stringify({ sessionId: "9b4ad8", location: "claude-agent-provider.ts:runTurn", message: "unified turn before callRemoteModel", data: { hypothesisId: "H4", systemLen: system.length, userLen: user.length }, timestamp: Date.now(), runId: "post-fix" }) }).catch(() => {
-    });
     const raw = await this.graphApi.callRemoteModel(
       [
         { role: "system", content: system },

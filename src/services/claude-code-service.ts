@@ -189,9 +189,6 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
     }
 
     private invokeCLI(prompt: string, signal?: AbortSignal, maxTurns: number = 1, logOptions?: ExtractionLogOptions): Promise<string> {
-        // #region agent log
-        fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9b4ad8'},body:JSON.stringify({sessionId:'9b4ad8',location:'claude-code-service.ts:invokeCLI',message:'invokeCLI start',data:{hypothesisId:'H1',maxTurns,promptLen:prompt?.length??0},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
-        // #endregion
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
                 logOptions?.emit?.({
@@ -256,9 +253,6 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                                 timestamp: Date.now(),
                             });
                             console.error('[ClaudeCodeService] CLI failed', { code: error.code, stderr: errOut, stdout: stdOut });
-                            // #region agent log
-                            fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9b4ad8'},body:JSON.stringify({sessionId:'9b4ad8',location:'claude-code-service.ts:invokeCLI:error',message:'CLI process error',data:{hypothesisId:'H1',maxTurns,code:error?.code,stdoutTail:sanitizeCliOutput(stdOut,200),stderrTail:sanitizeCliOutput(errOut,200)},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
-                            // #endregion
                             reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
                         }
                         return;
