@@ -25921,7 +25921,8 @@ Important:
 - Prefer concise, investigative Markdown in answer_markdown.
 - Cite vault paths inline where useful.
 - Do not fabricate retrieval_hits; only list sources you actually used.
-- Proposed vault file edits require user confirmation in the UI before anything is written.`;
+- Proposed vault file edits require user confirmation in the UI before anything is written.
+- Do not claim curl/Bash was "blocked at the permission gate" unless you are certain shell was invoked; for HTTP APIs use enricher_invocations with ids listed under REGISTERED HTTP ENRICHERS in the user prompt (never instruct raw curl when enrichers apply).`;
 }
 function buildUnifiedAgentUserPrompt(ctx) {
   const memory = ctx.conversationMemory && ctx.conversationMemory.length > 0 ? ctx.conversationMemory.map((m) => `${m.role.toUpperCase()}:
@@ -25941,6 +25942,21 @@ ${m.content}`).join("\n\n---\n\n") : "(no prior messages)";
   ];
   if (ctx.vaultAugmentation?.trim()) {
     parts.push("", "=== VAULT RULES / AGENT AUGMENTATION (user-editable) ===", ctx.vaultAugmentation.trim());
+  }
+  const folder = ctx.enrichersFolderDisplay?.trim() || "OSINTCopilot/custom/enrichers";
+  const ids = ctx.availableEnricherIds?.filter(Boolean) ?? [];
+  if (ids.length > 0) {
+    parts.push(
+      "",
+      "=== REGISTERED HTTP ENRICHERS (vault JSON \u2014 prefer enricher_invocations; plugin runs these without Bash/curl) ===",
+      `Active enricher ids (use enricher_id exactly): ${ids.join(", ")}`
+    );
+  } else {
+    parts.push(
+      "",
+      "=== REGISTERED HTTP ENRICHERS (vault JSON) ===",
+      `None loaded. Add active *.json specs under \`${folder}\` for API calls via enricher_invocations (no shell). Do not instruct curl/Bash for APIs that should use enrichers once defined.`
+    );
   }
   parts.push("", "Produce the JSON object now.");
   return parts.join("\n");
@@ -26547,12 +26563,23 @@ ${extractedText}`;
     } catch (e) {
       console.warn("[OrchestrationService] vault prompts:", e);
     }
+    let availableEnricherIds = [];
+    try {
+      const runnable = await this.plugin.enricherRegistry.listRunnable();
+      availableEnricherIds = runnable.map((e) => e.id);
+      fetch("http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9b4ad8" }, body: JSON.stringify({ sessionId: "9b4ad8", location: "orchestration-service.ts:processRequestUnified", message: "listRunnable for agent ctx", data: { hypothesisId: "H1", count: availableEnricherIds.length, idsSample: availableEnricherIds.slice(0, 15) }, timestamp: Date.now(), runId: "enricher-prompt-v1" }) }).catch(() => {
+      });
+    } catch (e) {
+      console.warn("[OrchestrationService] enricher registry:", e);
+    }
     const agentCtx = {
       query,
       attachmentsContext: ctx,
       graphEntitiesSummary: this.buildGraphEntitiesSummary(currentGraphState),
       conversationMemory,
-      vaultAugmentation: vaultAug
+      vaultAugmentation: vaultAug,
+      availableEnricherIds,
+      enrichersFolderDisplay: this.plugin.settings.enrichersFolder
     };
     const provider = createAgentProvider(this.plugin);
     try {

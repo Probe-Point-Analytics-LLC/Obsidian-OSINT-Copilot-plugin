@@ -48,6 +48,9 @@ export interface AgentTurnContext {
     graphEntitiesSummary: string;
     conversationMemory: { role: string; content: string }[];
     vaultAugmentation?: string;
+    /** Active enricher spec ids from vault JSON at prompt build time. */
+    availableEnricherIds?: string[];
+    enrichersFolderDisplay?: string;
 }
 
 export interface AgentProvider {

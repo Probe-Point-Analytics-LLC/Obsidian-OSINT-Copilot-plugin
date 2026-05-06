@@ -232,12 +232,25 @@ export class OrchestrationService {
             console.warn("[OrchestrationService] vault prompts:", e);
         }
 
+        let availableEnricherIds: string[] = [];
+        try {
+            const runnable = await this.plugin.enricherRegistry.listRunnable();
+            availableEnricherIds = runnable.map((e) => e.id);
+            // #region agent log
+            fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9b4ad8'},body:JSON.stringify({sessionId:'9b4ad8',location:'orchestration-service.ts:processRequestUnified',message:'listRunnable for agent ctx',data:{hypothesisId:'H1',count:availableEnricherIds.length,idsSample:availableEnricherIds.slice(0,15)},timestamp:Date.now(),runId:'enricher-prompt-v1'})}).catch(()=>{});
+            // #endregion
+        } catch (e) {
+            console.warn("[OrchestrationService] enricher registry:", e);
+        }
+
         const agentCtx: AgentTurnContext = {
             query,
             attachmentsContext: ctx,
             graphEntitiesSummary: this.buildGraphEntitiesSummary(currentGraphState),
             conversationMemory,
             vaultAugmentation: vaultAug,
+            availableEnricherIds,
+            enrichersFolderDisplay: this.plugin.settings.enrichersFolder,
         };
 
         const provider = createAgentProvider(this.plugin);

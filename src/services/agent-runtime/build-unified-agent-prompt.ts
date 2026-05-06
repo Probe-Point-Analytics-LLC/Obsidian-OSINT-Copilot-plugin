@@ -42,7 +42,8 @@ Important:
 - Prefer concise, investigative Markdown in answer_markdown.
 - Cite vault paths inline where useful.
 - Do not fabricate retrieval_hits; only list sources you actually used.
-- Proposed vault file edits require user confirmation in the UI before anything is written.`;
+- Proposed vault file edits require user confirmation in the UI before anything is written.
+- Do not claim curl/Bash was "blocked at the permission gate" unless you are certain shell was invoked; for HTTP APIs use enricher_invocations with ids listed under REGISTERED HTTP ENRICHERS in the user prompt (never instruct raw curl when enrichers apply).`;
 }
 
 export function buildUnifiedAgentUserPrompt(ctx: AgentTurnContext): string {
@@ -66,6 +67,21 @@ export function buildUnifiedAgentUserPrompt(ctx: AgentTurnContext): string {
     ];
     if (ctx.vaultAugmentation?.trim()) {
         parts.push('', '=== VAULT RULES / AGENT AUGMENTATION (user-editable) ===', ctx.vaultAugmentation.trim());
+    }
+    const folder = ctx.enrichersFolderDisplay?.trim() || 'OSINTCopilot/custom/enrichers';
+    const ids = ctx.availableEnricherIds?.filter(Boolean) ?? [];
+    if (ids.length > 0) {
+        parts.push(
+            '',
+            '=== REGISTERED HTTP ENRICHERS (vault JSON — prefer enricher_invocations; plugin runs these without Bash/curl) ===',
+            `Active enricher ids (use enricher_id exactly): ${ids.join(', ')}`,
+        );
+    } else {
+        parts.push(
+            '',
+            '=== REGISTERED HTTP ENRICHERS (vault JSON) ===',
+            `None loaded. Add active *.json specs under \`${folder}\` for API calls via enricher_invocations (no shell). Do not instruct curl/Bash for APIs that should use enrichers once defined.`,
+        );
     }
     parts.push('', 'Produce the JSON object now.');
     return parts.join('\n');

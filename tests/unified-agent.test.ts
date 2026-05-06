@@ -139,6 +139,9 @@ describe('OrchestrationService unified path', () => {
             vaultPromptLoader: {
                 getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),
             },
+            enricherRegistry: {
+                listRunnable: vi.fn().mockResolvedValue([]),
+            },
         };
 
         const orch = new OrchestrationService(plugin);
@@ -194,6 +197,9 @@ describe('OrchestrationService unified path', () => {
             },
             vaultPromptLoader: {
                 getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),
+            },
+            enricherRegistry: {
+                listRunnable: vi.fn().mockResolvedValue([{ id: 'leakcheck' }]),
             },
             app: { vault: {} },
         };
