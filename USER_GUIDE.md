@@ -41,6 +41,13 @@
 4. **Settings → Community plugins** — enable **OSINT Copilot**.  
 5. BRAT stores files under `.obsidian/plugins/` (folder name may be `osint-copilot` or similar). Ensure `main.js`, `manifest.json`, and `styles.css` are present, then restart if the plugin does not load.
 
+**If BRAT install fails:**
+- Re-add the exact repo URL in BRAT:
+  `https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
+- Ensure only one active OSINT Copilot folder is enabled under `.obsidian/plugins/`
+- Verify `main.js`, `manifest.json`, `styles.css` exist directly in that folder
+- Reload/restart Obsidian
+
 ### Method 2: Manual install
 
 1. Download **`main.js`**, **`manifest.json`**, and **`styles.css`** from [GitHub Releases](https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases).  
@@ -143,6 +150,16 @@ Default text for vault-oriented answers; combine with **vault rules/agents** for
 ---
 
 ## Core Features
+
+### First Investigation Workflow (recommended)
+
+1. Open **OSINT Copilot: Open Chat**.
+2. Attach source files/images and send a focused prompt.
+3. Watch progress and expand **Extraction logs** for diagnostics.
+4. Review/confirm proposed graph changes.
+5. Open Graph/Timeline/Map views to validate entities and links.
+
+If extraction fails with Claude access messages, fix CLI auth first (see Troubleshooting), then retry the same workflow.
 
 ### Opening the OSINT Copilot Interface
 
@@ -258,6 +275,13 @@ What TTPs are associated with Lazarus Group?
 **Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in **`OSINTCopilot/custom/prompts/skills/graph-extraction.md`**.
 
 **How to use**
+**Extraction logs panel**
+- During attachment processing, open **Extraction logs** on the assistant message.
+- `minimal` verbosity: milestones only.
+- `detailed` verbosity: stage-level log events + sanitized snippets.
+- Optional debug: **Extraction debug: raw CLI output** (use only for troubleshooting; may expose sensitive content).
+
+Settings path: **Settings → OSINT Copilot → Graph extraction (Claude Code)**.
 1. **Unified (default):** attach files, paste a URL (or text); say clearly if you want entities extracted. **Legacy:** ensure **Graph generation** is allowed for the planner, then attach or paste so `EXTRACT_TO_GRAPH` can run.
 2. Attach files, paste a URL (or text), or include content so the run has attachment/context for extraction.
 3. The plugin runs **local** `claude` with the graph-extraction skill when that legacy tool is executed; unified mode uses your selected **Claude** or **Hermes** runtime instead.
@@ -422,6 +446,8 @@ owns, operates, communicates_with, targets, and more...
 3. Complete Anthropic’s login / API setup for Claude Code.  
 4. Restart Obsidian after changing PATH or installing the CLI.
 
+If you see `organization does not have access`, this is an account/org entitlement issue in Claude CLI, not a vault path issue.
+
 **Problem:** Old behavior cached after editing vault prompts.
 
 **Solutions:** Run command **OSINT Copilot: Reload vault prompts** or restart Obsidian.
@@ -441,6 +467,17 @@ owns, operates, communicates_with, targets, and more...
 2. Check that the entity type is valid (Person, Company, Event, etc.)
 3. Review the console (Ctrl+Shift+I) for detailed error messages
 4. Verify you have write permissions to the vault folder
+
+### YAML duplicate-key parse warnings (graph skipping entities/connections)
+
+**Problem:** warnings like `YAML parse failed` from duplicate frontmatter keys (often `type`).
+
+**Fix:**
+1. Run command: **OSINT Copilot: Normalize entity frontmatter reserved keys (props namespace)**.
+2. Then run **Reload entities from notes**.
+3. Re-open Graph view.
+
+**What changed:** colliding properties are now stored under `props.<key>` so top-level reserved keys remain unique.
 
 ---
 

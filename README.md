@@ -14,6 +14,7 @@
 - [Claude Code CLI (local AI)](#claude-code-cli-local-ai)
 - [Vault prompts (editable rules & agents)](#vault-prompts-editable-rules--agents)
 - [Getting Started](#getting-started)
+- [Runtime Logic (What Runs Where)](#runtime-logic-what-runs-where)
 - [User Guide](#user-guide)
   - [Entity Management](#entity-management)
   - [Relationship Mapping](#relationship-mapping)
@@ -88,6 +89,14 @@ BRAT (**Beta Reviewers Auto-update Tool**) installs plugins directly from GitHub
 
 BRAT can keep the plugin updated from the default branch of the repo (per BRAT’s options).
 
+**If BRAT installation fails:**
+
+1. Re-open **Settings → BRAT** and re-add:
+   `https://github.com/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin`
+2. Verify one active plugin folder under `.obsidian/plugins/` contains `main.js`, `manifest.json`, and `styles.css`.
+3. Remove duplicate stale OSINT Copilot plugin folders, then re-enable the remaining one.
+4. Use **Reload app without saving** (or restart Obsidian).
+
 ### Option B — Pre-configured Template (Best for New Users)
 
 Download our template vault which comes with the plugin pre-installed and an example investigation:
@@ -157,6 +166,17 @@ The first time the plugin runs (and whenever files are still missing), it create
 ---
 
 ## Getting Started
+
+## Runtime Logic (What Runs Where)
+
+| Capability | Runtime path |
+|---|---|
+| Graph, timeline, map, entity notes, connections | Local vault + Obsidian only |
+| Default chat | Unified local runtime (**Agent runtime** = Claude or Hermes) |
+| Attachment/image extraction | Claude Code CLI (Graph extraction settings) |
+| Legacy planner + tools | Only when **Unified agent orchestration** is OFF |
+
+The plugin no longer relies on hosted vendor investigation/report pipelines. Core investigation data remains local Markdown in the vault.
 
 ### New to Obsidian? (2-minute orientation)
 
@@ -321,7 +341,7 @@ All AI features in this build use **Claude Code CLI** on your machine (plus opti
 #### Local AI setup (entity extraction, vault Q&A, orchestration)
 
 1. **Settings → OSINT Copilot** — set **Claude Code CLI path** and model.
-2. Use **Test Claude Code** to confirm the CLI is reachable.
+2. Use **Test Claude binary** to confirm the CLI is reachable.
 3. Optionally edit **vault prompts** under `OSINTCopilot/custom/prompts/` (see [Vault prompts](#vault-prompts-editable-rules--agents)).
 
 #### Entity extraction (local Claude)
@@ -636,10 +656,31 @@ label: "Lukoil"
 **Problem:** Entity extraction or vault Q&A fails.
 
 **Solution:**
-1. **Test Claude Code** — Settings → OSINT Copilot → **Test Claude Code**
+1. **Test Claude CLI** — Settings → OSINT Copilot → **Test Claude binary**
 2. **Fix PATH or CLI path** — ensure `claude` runs in a terminal
 3. **Review error message** — chat and developer console for details
 4. **Retry** — long documents are processed in chunks; try a shorter excerpt if timeouts occur
+
+**Known auth/org error:**
+- If logs show `organization does not have access` or a re-login prompt, fix Claude CLI auth/account access outside Obsidian (`claude auth login` or org-admin flow), then re-run **Test Claude binary**.
+
+#### Attachment Extraction Logs
+
+During attachment extraction, the assistant message includes an expandable **Extraction logs** panel:
+
+- `minimal`: start/exit/error milestones
+- `detailed`: stage-by-stage events + sanitized CLI snippets
+- optional debug mode: **Extraction debug: raw CLI output** (may expose sensitive content)
+
+Configure these in **Settings → OSINT Copilot → Graph extraction (Claude Code)**.
+
+#### Frontmatter `props` migration (duplicate-key fix)
+
+If your vault has duplicate YAML keys (for example top-level `type` used both as entity kind and as a property), run:
+
+- **OSINT Copilot: Normalize entity frontmatter reserved keys (props namespace)**
+
+This rewrites colliding properties under `props.<key>` and keeps graph loading stable.
 
 ---
 
