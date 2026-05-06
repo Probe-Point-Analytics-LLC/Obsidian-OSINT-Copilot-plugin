@@ -90,6 +90,8 @@ Under **Settings → OSINT Copilot → Unified chat agent**:
 | **Custom runtimes** | Add/remove custom CLI runtimes in Settings. Each runtime has display name, id, path, args, timeout, health-check args, and enabled toggle. Enabled + reachable runtimes appear in the chat header dropdown. |
 | **Test agent runtime** | Health check for the **selected** runtime. |
 
+Runtime-specific controls are now conditional: Hermes fields show only when **Hermes** is selected, custom runtime fields show only when that **custom runtime** is selected, and Claude selection shows a pointer to Claude CLI/model controls.
+
 Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
 
 **Graph extraction (Claude Code)** settings still configure the `claude` binary used for **bulk** extraction (vault ingest, attachment pipeline, task agents). Those flows are unchanged; only the **default chat** path uses the unified agent unless you disable it.
