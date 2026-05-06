@@ -199,13 +199,14 @@ describe('OrchestrationService unified path', () => {
         };
 
         const orch = new OrchestrationService(plugin);
+        const onProgress = vi.fn();
         const result = await orch.processRequest(
             'run check',
             '',
             { entities: [], connections: [] },
             [],
             {},
-            vi.fn(),
+            onProgress,
             {},
         );
 
@@ -218,6 +219,9 @@ describe('OrchestrationService unified path', () => {
             undefined,
         );
         expect(result.finalResponse).toContain('## Enricher results');
+        expect(result.finalResponse).toContain('**Plugin status:** 1 enricher call(s) completed.');
+        expect(result.finalResponse).toContain('`scammer@dom.test`');
         expect(result.finalResponse).toContain('enricher-mock-result');
+        expect(onProgress).toHaveBeenCalledWith('Enricher 1/1 (leakcheck)…', expect.any(Number));
     });
 });

@@ -128,6 +128,10 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 
 **Unified chat — calling enrichers without Bash:** The agent’s JSON response can include `enricher_invocations`, e.g. `[{ "enricher_id": "leakcheck", "query": "user@domain.com" }]`. The plugin then runs those HTTP requests **inside Obsidian** (Node), so you do not need `curl` or shell approval. Prefer this for APIs like LeakCheck instead of vault skills that tell Claude Code to run terminal commands.
 
+**Id must match the spec:** `enricher_id` is resolved with the same rules as the `id` field inside each `OSINTCopilot/custom/enrichers/*.json` file (normalized to lowercase and hyphenated). The model’s guessed name is not enough — e.g. `leakcheck_v2` in the agent JSON will not resolve if your file only has `"id": "leakcheck"`. If you see **Unknown enricher**, check the message’s **Available enricher ids** line or copy `id` exactly from the JSON. The chat progress bar shows **Enricher i/n** while enrichers run.
+
+**Truthfulness:** The markdown answer is produced before enrichers run. Read **Plugin status** and **Enricher results** at the bottom for what actually happened.
+
 **If you see “Shell execution blocked” / Bash approval:** Claude Code is trying to run `curl` or other shell from a skill. Obsidian has no terminal to click **Allow**. Fix by (1) using an enricher JSON + `enricher_invocations`, or (2) only if you accept the risk: **Settings → OSINT Copilot → Graph extraction (Claude Code) → Claude Code extra CLI args** — for example `--permission-mode bypassPermissions` (see [Anthropic permission modes](https://docs.anthropic.com/en/docs/claude-code/permission-modes)). That disables interactive gating and allows unattended shell; use only in environments you trust.
 
 Detailed setup + example spec mapping: `docs/ENRICHERS_SETUP.md`.

@@ -257,11 +257,19 @@ export class OrchestrationService {
             }
 
             if (turn.enricher_invocations?.length) {
-                onProgress("Running vault enricher calls...", 55);
+                const n = turn.enricher_invocations.length;
                 const blocks: string[] = [];
-                for (const inv of turn.enricher_invocations) {
+                let enricherOk = 0;
+                let enricherFail = 0;
+                for (let i = 0; i < n; i++) {
+                    const inv = turn.enricher_invocations[i];
+                    const pct = 55 + Math.round(((i + 0.5) / n) * 38);
+                    onProgress(`Enricher ${i + 1}/${n} (${inv.enricher_id})…`, Math.min(93, pct));
                     checkAborted();
                     const toolId = enrichToolId(inv.enricher_id);
+                    const querySnippet =
+                        inv.query.length > 120 ? `${inv.query.slice(0, 117)}…` : inv.query;
+                    const heading = `### Enricher \`${inv.enricher_id}\` — \`${querySnippet.replace(/`/g, "'")}\``;
                     try {
                         const out = await executeEnricherTool(
                             this.plugin,
@@ -270,14 +278,25 @@ export class OrchestrationService {
                             ctx,
                             options?.abortSignal,
                         );
-                        blocks.push(`### Enricher \`${inv.enricher_id}\`\n\n${out}`);
+                        if (out.includes("Unknown enricher")) enricherFail++;
+                        else enricherOk++;
+                        blocks.push(`${heading}\n\n${out}`);
                     } catch (err) {
+                        enricherFail++;
                         const msg = err instanceof Error ? err.message : String(err);
-                        blocks.push(`### Enricher \`${inv.enricher_id}\`\n\n**Error:** ${msg}`);
+                        blocks.push(`${heading}\n\n**Error:** ${msg}`);
                     }
                 }
                 if (blocks.length) {
-                    answer += `\n\n---\n\n## Enricher results\n\n${blocks.join("\n\n---\n\n")}`;
+                    let statusLine = "";
+                    if (enricherOk > 0 && enricherFail === 0) {
+                        statusLine = `\n\n**Plugin status:** ${enricherOk} enricher call(s) completed.\n\n`;
+                    } else if (enricherFail > 0 && enricherOk === 0) {
+                        statusLine = `\n\n**Plugin status:** No enricher HTTP requests succeeded (${enricherFail} failed). The assistant text above may still describe success — rely on this section.\n\n`;
+                    } else if (enricherOk > 0 && enricherFail > 0) {
+                        statusLine = `\n\n**Plugin status:** ${enricherOk} succeeded, ${enricherFail} failed — verify \`enricher_id\` matches each JSON \`id\`.\n\n`;
+                    }
+                    answer += `\n\n---\n\n## Enricher results${statusLine}${blocks.join("\n\n---\n\n")}`;
                 }
             }
 

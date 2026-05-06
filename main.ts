@@ -4680,7 +4680,7 @@ export class ChatView extends ItemView {
     this.chatHistory.push({
       role: "assistant",
       content: "",
-      progress: { message: "Orchestrating tools...", percent: 10 }
+      progress: { message: "Starting unified agent…", percent: 10 }
     });
     await this.renderMessages();
 

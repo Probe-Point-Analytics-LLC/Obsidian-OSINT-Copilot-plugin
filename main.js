@@ -25855,8 +25855,17 @@ async function executeEnricherTool(plugin, toolId, query, attachmentsContext, si
   if (!id)
     return `Invalid enricher tool id: ${toolId}`;
   const spec = await plugin.enricherRegistry.getById(id);
-  if (!spec)
-    return `Unknown enricher \`${id}\`.`;
+  if (!spec) {
+    const runnable = await plugin.enricherRegistry.listRunnable();
+    const ids = runnable.map((e) => e.id).join(", ");
+    const folder = plugin.settings.enrichersFolder?.trim() || "OSINTCopilot/custom/enrichers";
+    const hint = ids ? `
+
+**Available enricher ids** (use \`enricher_id\` exactly as in JSON \u2014 lowercase, hyphens): ${ids}` : `
+
+No **active** enricher specs found under \`${folder}\`. Add or enable a JSON file; \`id\` must match \`enricher_id\`.`;
+    return `Unknown enricher \`${id}\`.${hint}`;
+  }
   return executeEnricherHttp(
     spec,
     query,
@@ -25902,7 +25911,7 @@ Rules for custom_vault_operations:
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
 - Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs \u2014 use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
-- enricher_id must match the enricher spec id (slug). query is substituted into the enricher templates as {query} / attachments_context as documented in each spec.`;
+- enricher_id must match each enricher JSON file's **id** field exactly after normalization (lowercase, hyphens). Example: if the file id is leakcheck, use "enricher_id": "leakcheck", not "leakcheck_v2" unless the file id is leakcheck-v2. query maps to URL/body templates as {query}.`;
 function buildUnifiedAgentSystemPrompt(providerLabel) {
   return `You are the OSINT Copilot unified agent (${providerLabel}).
 
@@ -26561,11 +26570,18 @@ ${extractedText}`;
 ${srcLines}`;
       }
       if (turn.enricher_invocations?.length) {
-        onProgress("Running vault enricher calls...", 55);
+        const n = turn.enricher_invocations.length;
         const blocks = [];
-        for (const inv of turn.enricher_invocations) {
+        let enricherOk = 0;
+        let enricherFail = 0;
+        for (let i = 0; i < n; i++) {
+          const inv = turn.enricher_invocations[i];
+          const pct = 55 + Math.round((i + 0.5) / n * 38);
+          onProgress(`Enricher ${i + 1}/${n} (${inv.enricher_id})\u2026`, Math.min(93, pct));
           checkAborted();
           const toolId = enrichToolId(inv.enricher_id);
+          const querySnippet = inv.query.length > 120 ? `${inv.query.slice(0, 117)}\u2026` : inv.query;
+          const heading = `### Enricher \`${inv.enricher_id}\` \u2014 \`${querySnippet.replace(/`/g, "'")}\``;
           try {
             const out = await executeEnricherTool(
               this.plugin,
@@ -26574,24 +26590,47 @@ ${srcLines}`;
               ctx,
               options?.abortSignal
             );
-            blocks.push(`### Enricher \`${inv.enricher_id}\`
+            if (out.includes("Unknown enricher"))
+              enricherFail++;
+            else
+              enricherOk++;
+            blocks.push(`${heading}
 
 ${out}`);
           } catch (err) {
+            enricherFail++;
             const msg = err instanceof Error ? err.message : String(err);
-            blocks.push(`### Enricher \`${inv.enricher_id}\`
+            blocks.push(`${heading}
 
 **Error:** ${msg}`);
           }
         }
         if (blocks.length) {
+          let statusLine = "";
+          if (enricherOk > 0 && enricherFail === 0) {
+            statusLine = `
+
+**Plugin status:** ${enricherOk} enricher call(s) completed.
+
+`;
+          } else if (enricherFail > 0 && enricherOk === 0) {
+            statusLine = `
+
+**Plugin status:** No enricher HTTP requests succeeded (${enricherFail} failed). The assistant text above may still describe success \u2014 rely on this section.
+
+`;
+          } else if (enricherOk > 0 && enricherFail > 0) {
+            statusLine = `
+
+**Plugin status:** ${enricherOk} succeeded, ${enricherFail} failed \u2014 verify \`enricher_id\` matches each JSON \`id\`.
+
+`;
+          }
           answer += `
 
 ---
 
-## Enricher results
-
-${blocks.join("\n\n---\n\n")}`;
+## Enricher results${statusLine}${blocks.join("\n\n---\n\n")}`;
         }
       }
       let proposedCommands;
@@ -33305,7 +33344,7 @@ ${fileList}` : fileList;
     this.chatHistory.push({
       role: "assistant",
       content: "",
-      progress: { message: "Orchestrating tools...", percent: 10 }
+      progress: { message: "Starting unified agent\u2026", percent: 10 }
     });
     await this.renderMessages();
     const updateProgress = (message, percent, meta) => {

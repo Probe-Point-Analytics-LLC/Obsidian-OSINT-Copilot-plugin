@@ -31,7 +31,7 @@ Rules for custom_vault_operations:
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
 - Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs — use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
-- enricher_id must match the enricher spec id (slug). query is substituted into the enricher templates as {query} / attachments_context as documented in each spec.`;
+- enricher_id must match each enricher JSON file's **id** field exactly after normalization (lowercase, hyphens). Example: if the file id is leakcheck, use "enricher_id": "leakcheck", not "leakcheck_v2" unless the file id is leakcheck-v2. query maps to URL/body templates as {query}.`;
 
 export function buildUnifiedAgentSystemPrompt(providerLabel: string): string {
     return `You are the OSINT Copilot unified agent (${providerLabel}).
