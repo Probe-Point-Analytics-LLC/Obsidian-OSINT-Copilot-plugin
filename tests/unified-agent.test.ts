@@ -55,6 +55,7 @@ describe('createAgentProvider', () => {
                 hermesAgentExtraArgs: '',
                 hermesAgentTimeoutMs: 120_000,
                 hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
             },
             graphApiService: {},
         } as any;
@@ -70,6 +71,7 @@ describe('createAgentProvider', () => {
                 hermesAgentExtraArgs: '',
                 hermesAgentTimeoutMs: 120_000,
                 hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
             },
             graphApiService: {},
         } as any;
@@ -100,6 +102,7 @@ describe('OrchestrationService unified path', () => {
                 hermesAgentExtraArgs: '',
                 hermesAgentTimeoutMs: 120_000,
                 hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
             },
             graphApiService: {
                 extractTextFromUrl: vi.fn(),
@@ -140,6 +143,7 @@ describe('OrchestrationService unified path', () => {
                 hermesAgentExtraArgs: '',
                 hermesAgentTimeoutMs: 120_000,
                 hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
             },
             graphApiService: {
                 extractTextFromUrl: vi.fn(),

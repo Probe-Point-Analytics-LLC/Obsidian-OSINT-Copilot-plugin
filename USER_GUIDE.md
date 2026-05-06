@@ -17,7 +17,7 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — By default, chat uses a **unified agent turn** via **Claude Code** or **Hermes Agent**. When **both** CLIs respond to health checks, the **chat header** lets you pick **Claude** vs **Hermes** (saved as **Agent runtime** in Settings). If only one CLI works, the plugin picks it automatically. That agent uses **its own CLI-installed skills** for vault search and graph-oriented extraction; the plugin applies graph writes through the usual confirmation UI. Turn off **Unified agent orchestration** to restore the older **planner + LOCAL_VAULT / EXTRACT_TO_GRAPH** flow; legacy tool enablement uses **Settings** / saved **skill toggles** (there is no Skills menu in chat). **Vault prompts** under **`OSINTCopilot/custom/`** still augment the agent. **Chat history** defaults to **`OSINTCopilot/conversations/`**.
+2. **Local AI** — By default, chat uses a **unified agent turn** via **Claude Code**. Users can switch to **Hermes Agent** or add one or more **custom runtimes** in settings. The **chat header** shows a runtime dropdown with all currently reachable runtimes (saved as **Agent runtime** in Settings). That agent uses **its own CLI-installed skills** for vault search and graph-oriented extraction; the plugin applies graph writes through the usual confirmation UI. Turn off **Unified agent orchestration** to restore the older **planner + LOCAL_VAULT / EXTRACT_TO_GRAPH** flow; legacy tool enablement uses **Settings** / saved **skill toggles** (there is no Skills menu in chat). **Vault prompts** under **`OSINTCopilot/custom/`** still augment the agent. **Chat history** defaults to **`OSINTCopilot/conversations/`**.
 3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. AI calls go through your selected **local** CLI (Claude Code and/or Hermes as configured).
 
 ### Who is this for?
@@ -78,15 +78,16 @@ Copy `main.js`, `manifest.json`, and `styles.css` from the repo root into your v
 
 Open **Settings → OSINT Copilot**.
 
-### 1. Unified chat agent (Claude Code or Hermes)
+### 1. Unified chat agent (Claude default, Hermes/custom optional)
 
 Under **Settings → OSINT Copilot → Unified chat agent**:
 
 | Setting | Purpose |
 |--------|---------|
-| **Agent runtime** | **Claude Code** (default) or **Hermes Agent** — which CLI receives the unified JSON prompt on stdin. |
+| **Agent runtime** | **Claude Code** (default), **Hermes Agent**, or any enabled **custom runtime** — which CLI receives the unified JSON prompt on stdin. |
 | **Unified agent orchestration** | When **on** (default), chat skips the legacy planner and built-in search/extract tools. When **off**, the old planner + planner tools (`LOCAL_VAULT`, `EXTRACT_TO_GRAPH`, `SKILL_*`) runs again, driven by **Settings** / **skill toggles** — not from chat. |
 | **Hermes CLI path** / **extra args** / **timeout** / **health-check args** | Used only when Agent runtime is **Hermes**. Extra args are split on whitespace and prepended before stdin is sent (your Hermes build may require a subcommand — set it here). |
+| **Custom runtimes** | Add/remove custom CLI runtimes in Settings. Each runtime has display name, id, path, args, timeout, health-check args, and enabled toggle. Enabled + reachable runtimes appear in the chat header dropdown. |
 | **Test agent runtime** | Health check for the **selected** runtime. |
 
 Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
@@ -149,7 +150,7 @@ Default text for vault-oriented answers; combine with **vault rules/agents** for
 | Capability | Local AI |
 |------------|----------|
 | Graph / timeline / map | No (pure Obsidian) |
-| Default chat (unified agent) | **Claude Code** or **Hermes** (Settings → Agent runtime) |
+| Default chat (unified agent) | **Claude Code** by default; can switch to **Hermes** or enabled **custom runtime** (Settings → Agent runtime) |
 | Legacy planner + built-in tools | **Claude Code** for planner + tools (disable unified orchestration) |
 | Bulk graph extraction / vault ingest / task agents | **Claude Code** CLI (Graph extraction settings) |
 

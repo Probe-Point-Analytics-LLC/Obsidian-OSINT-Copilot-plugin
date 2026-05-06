@@ -2,7 +2,7 @@ import type { AIOperation } from '../../entities/types';
 
 export const AGENT_TURN_SCHEMA_VERSION = 'osint_copilot_agent_turn_v1' as const;
 
-export type AgentRuntimeId = 'claude-code' | 'hermes-agent';
+export type AgentRuntimeId = string;
 
 export interface AgentRetrievalHit {
     path: string;

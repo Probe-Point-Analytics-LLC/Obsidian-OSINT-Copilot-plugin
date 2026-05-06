@@ -1,9 +1,10 @@
 import type VaultAIPlugin from '../../../main';
-import { HermesAgentProvider } from './hermes-agent-provider';
+import { createAgentProvider } from './create-agent-provider';
+import { CLAUDE_RUNTIME_ID, getConfiguredRuntimeOptions } from './runtime-registry';
 
 export interface ChatRuntimeAvailability {
-    claude: boolean;
-    hermes: boolean;
+    byId: Record<string, boolean>;
+    availableIds: string[];
 }
 
 const TTL_MS = 30_000;
@@ -24,21 +25,6 @@ async function probeClaude(plugin: VaultAIPlugin): Promise<boolean> {
     }
 }
 
-async function probeHermes(plugin: VaultAIPlugin): Promise<boolean> {
-    const s = plugin.settings;
-    const p = new HermesAgentProvider({
-        cliPath: s.hermesAgentCliPath || 'hermes',
-        extraArgs: s.hermesAgentExtraArgs || '',
-        timeoutMs: s.hermesAgentTimeoutMs ?? 120_000,
-        healthCheckArgs: s.hermesAgentHealthCheckArgs || '--version',
-    });
-    try {
-        return await p.healthCheck();
-    } catch {
-        return false;
-    }
-}
-
 /**
  * Probe which local agent CLIs are reachable. Cached briefly to avoid exec spam on ChatView re-renders.
  */
@@ -49,8 +35,25 @@ export async function getChatRuntimeAvailability(
     if (!forceRefresh && cache && Date.now() - cache.at < TTL_MS) {
         return { ...cache.value };
     }
-    const [claude, hermes] = await Promise.all([probeClaude(plugin), probeHermes(plugin)]);
-    const value = { claude, hermes };
+    const byId: Record<string, boolean> = {};
+    byId[CLAUDE_RUNTIME_ID] = await probeClaude(plugin);
+
+    const options = getConfiguredRuntimeOptions(plugin).filter((r) => r.id !== CLAUDE_RUNTIME_ID);
+    const probes = await Promise.all(
+        options.map(async (runtime) => {
+            try {
+                const provider = createAgentProvider(plugin, runtime.id);
+                const ok = await provider.healthCheck();
+                return [runtime.id, ok] as const;
+            } catch {
+                return [runtime.id, false] as const;
+            }
+        }),
+    );
+    for (const [id, ok] of probes) byId[id] = ok;
+
+    const availableIds = Object.keys(byId).filter((id) => byId[id]);
+    const value = { byId, availableIds };
     cache = { at: Date.now(), value };
-    return { ...value };
+    return { byId: { ...value.byId }, availableIds: [...value.availableIds] };
 }

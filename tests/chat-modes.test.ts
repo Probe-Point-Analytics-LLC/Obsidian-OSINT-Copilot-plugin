@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../src/services/agent-runtime/chat-runtime-availability', () => ({
-  getChatRuntimeAvailability: vi.fn().mockResolvedValue({ claude: true, hermes: false }),
+  getChatRuntimeAvailability: vi.fn().mockResolvedValue({
+    byId: { 'claude-code': true, 'hermes-agent': false },
+    availableIds: ['claude-code'],
+  }),
   invalidateChatRuntimeAvailabilityCache: vi.fn(),
 }));
 
@@ -71,6 +74,7 @@ describe('ChatView send routing', () => {
       hermesAgentExtraArgs: '',
       hermesAgentTimeoutMs: 120_000,
       hermesAgentHealthCheckArgs: '--version',
+      customAgentRuntimes: [],
       extractionLogVerbosity: 'detailed',
       extractionDebugRawCli: false,
       themeMode: 'system',

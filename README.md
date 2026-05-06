@@ -173,7 +173,7 @@ The first time the plugin runs (and whenever files are still missing), it create
 | Capability | Runtime path |
 |---|---|
 | Graph, timeline, map, entity notes, connections | Local vault + Obsidian only |
-| Default chat | Unified local runtime (**Agent runtime** = Claude or Hermes) |
+| Default chat | Unified local runtime (**Agent runtime** = Claude by default, or Hermes/custom runtime) |
 | Attachment/image extraction | Claude Code CLI (Graph extraction settings) |
 | Legacy planner + tools | Only when **Unified agent orchestration** is OFF |
 
@@ -203,10 +203,10 @@ Once installed, you'll see the OSINT Copilot tools in the left sidebar:
 
 Chat **send** uses a **unified local agent** by default (Settings → **Unified chat agent**):
 
-- **Claude Code** or **Hermes Agent** (user-selectable) runs **one JSON turn** per message: Markdown answer + optional `graph_operations` (same shape as graph extraction) + `retrieval_hits`. The external agent is instructed to use **its own installed skills/tools** for vault search and entity work. Proposed graph changes still go through the plugin’s **confirm / apply** flow.
+- **Claude Code** (default), **Hermes Agent**, or a **custom runtime** runs **one JSON turn** per message: Markdown answer + optional `graph_operations` (same shape as graph extraction) + `retrieval_hits`. The external agent is instructed to use **its own installed skills/tools** for vault search and entity work. Proposed graph changes still go through the plugin’s **confirm / apply** flow.
 - Turn off **Unified agent orchestration** in Settings to restore the **legacy** flow: planner + built-in **LOCAL_VAULT** / **EXTRACT_TO_GRAPH** tools, with tool enablement from **saved skill toggles** / defaults (not from a chat Skills menu).
 
-The chat header shows **Claude** vs **Hermes** when both CLIs pass a health probe; routing always calls orchestration unless **Vault graph ingest** mode is selected.
+The chat header shows a runtime dropdown with all reachable runtimes (Claude/Hermes/custom). Routing always calls orchestration unless **Vault graph ingest** mode is selected.
 
 Optional **custom chat checkpoints** (OpenAI-compatible URLs) in **Settings** are legacy; they are not used by the unified agent path.
 

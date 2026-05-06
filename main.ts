@@ -73,6 +73,14 @@ import {
   type ChatRuntimeAvailability,
 } from './src/services/agent-runtime/chat-runtime-availability';
 import {
+  CLAUDE_RUNTIME_ID,
+  HERMES_RUNTIME_ID,
+  getConfiguredRuntimeOptions,
+  normalizeCustomAgentRuntimes,
+  normalizeCustomRuntimeId,
+  type CustomAgentRuntime,
+} from './src/services/agent-runtime/runtime-registry';
+import {
   DEFAULT_CONVERSATION_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
   DEFAULT_SKILLS_FOLDER,
@@ -131,7 +139,7 @@ interface VaultAISettings {
   /** When true (default), chat uses one local agent turn (Claude Code or Hermes) instead of planner + LOCAL_VAULT / EXTRACT tools. */
   unifiedAgentOrchestration: boolean;
   /** Which local CLI backs unified chat + JSON agent turns. */
-  agentRuntimeProvider: 'claude-code' | 'hermes-agent';
+  agentRuntimeProvider: string;
   /** Hermes (or compatible) agent CLI — see USER_GUIDE. */
   hermesAgentCliPath: string;
   /** Extra argv after the executable, whitespace-separated (e.g. "run --json"). */
@@ -139,6 +147,8 @@ interface VaultAISettings {
   hermesAgentTimeoutMs: number;
   /** argv used only for Settings → Test (e.g. "--version"). */
   hermesAgentHealthCheckArgs: string;
+  /** User-defined runtimes shown in chat runtime selector. */
+  customAgentRuntimes: CustomAgentRuntime[];
   /** Chat attachment extraction logs: minimal = milestones only, detailed = include CLI snippets. */
   extractionLogVerbosity: 'minimal' | 'detailed';
   /** Include full raw stdout/stderr in extraction logs (debug only; may expose sensitive output). */
@@ -216,11 +226,12 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
   unifiedAgentOrchestration: true,
-  agentRuntimeProvider: 'claude-code',
+  agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: 'hermes',
   hermesAgentExtraArgs: '',
   hermesAgentTimeoutMs: 120_000,
   hermesAgentHealthCheckArgs: '--version',
+  customAgentRuntimes: [],
   extractionLogVerbosity: 'detailed',
   extractionDebugRawCli: false,
   customCheckpoints: [],
@@ -754,8 +765,14 @@ export default class VaultAIPlugin extends Plugin {
     if (typeof merged.unifiedAgentOrchestration !== 'boolean') {
       merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
     }
-    const arp = merged.agentRuntimeProvider;
-    if (arp !== 'claude-code' && arp !== 'hermes-agent') {
+    merged.customAgentRuntimes = normalizeCustomAgentRuntimes(raw.customAgentRuntimes);
+    const validRuntimeIds = new Set<string>([
+      CLAUDE_RUNTIME_ID,
+      HERMES_RUNTIME_ID,
+      ...((merged.customAgentRuntimes as CustomAgentRuntime[]).map((rt) => rt.id)),
+    ]);
+    const arp = typeof merged.agentRuntimeProvider === 'string' ? merged.agentRuntimeProvider : '';
+    if (!validRuntimeIds.has(arp)) {
       merged.agentRuntimeProvider = DEFAULT_SETTINGS.agentRuntimeProvider;
     }
     if (typeof merged.hermesAgentCliPath !== 'string' || !merged.hermesAgentCliPath.trim()) {
@@ -1980,23 +1997,31 @@ export class ChatView extends ItemView {
     this.applyChatMode("general");
   }
 
-  /** If only one CLI works, force `agentRuntimeProvider` (avoids sending to a dead binary). */
+  private runtimeDisplayName(runtimeId: string): string {
+    const opt = getConfiguredRuntimeOptions(this.plugin).find((r) => r.id === runtimeId);
+    return opt?.displayName || "Claude Code";
+  }
+
+  /** Keep selected runtime valid and available. */
   private async syncRuntimeSelectionToAvailability(av: ChatRuntimeAvailability): Promise<void> {
+    const configured = getConfiguredRuntimeOptions(this.plugin).map((r) => r.id);
     const cur = this.plugin.settings.agentRuntimeProvider;
-    if (av.claude && !av.hermes) {
-      if (cur !== "claude-code") {
-        this.plugin.settings.agentRuntimeProvider = "claude-code";
-        await this.plugin.saveSettings();
-        new Notice("Using Claude Code (Hermes CLI not available).");
-      }
+    if (!configured.includes(cur)) {
+      this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+      await this.plugin.saveSettings();
       return;
     }
-    if (!av.claude && av.hermes) {
-      if (cur !== "hermes-agent") {
-        this.plugin.settings.agentRuntimeProvider = "hermes-agent";
-        await this.plugin.saveSettings();
-        new Notice("Using Hermes Agent (Claude CLI not available).");
-      }
+    if (av.availableIds.length === 0) {
+      return;
+    }
+    if (av.byId[cur]) {
+      return;
+    }
+    const fallback = av.byId[CLAUDE_RUNTIME_ID] ? CLAUDE_RUNTIME_ID : av.availableIds[0];
+    if (fallback && fallback !== cur) {
+      this.plugin.settings.agentRuntimeProvider = fallback;
+      await this.plugin.saveSettings();
+      new Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
 
@@ -2007,38 +2032,38 @@ export class ChatView extends ItemView {
     wrap.style.gap = "8px";
     wrap.style.flexWrap = "wrap";
 
-    if (!av.claude && !av.hermes) {
+    const configured = getConfiguredRuntimeOptions(this.plugin);
+    const available = configured.filter((r) => av.byId[r.id]);
+    if (available.length === 0) {
       wrap.createEl("span", {
-        text: "No agent CLI detected. Configure Claude Code or Hermes Agent under Settings → OSINT Copilot.",
+        text: "No agent CLI detected. Configure Claude, Hermes, or a custom runtime under Settings → OSINT Copilot.",
         cls: "setting-item-description",
       });
       return;
     }
-
-    if (av.claude && av.hermes) {
-      wrap.createEl("span", { text: "Runtime:", cls: "vault-ai-mode-select-label" });
-      const mkBtn = (id: "claude-code" | "hermes-agent", label: string) => {
-        const b = wrap.createEl("button", { text: label, cls: "clickable-icon" });
-        const active = this.plugin.settings.agentRuntimeProvider === id;
-        b.style.opacity = active ? "1" : "0.65";
-        b.style.fontWeight = active ? "700" : "400";
-        b.title = id === "claude-code" ? "Use Claude Code for chat" : "Use Hermes Agent for chat";
-        b.addEventListener("click", async () => {
-          if (this.plugin.settings.agentRuntimeProvider === id) return;
-          this.plugin.settings.agentRuntimeProvider = id;
-          await this.plugin.saveSettings();
-        });
-      };
-      mkBtn("claude-code", "Claude");
-      mkBtn("hermes-agent", "Hermes");
+    if (available.length === 1) {
+      wrap.createEl("span", {
+        text: `Runtime: ${available[0].displayName} (only CLI available)`,
+        cls: "setting-item-description",
+      });
       return;
     }
-
-    const only = av.claude ? "Claude Code" : "Hermes Agent";
-    wrap.createEl("span", {
-      text: `Runtime: ${only} (only CLI available)`,
-      cls: "setting-item-description",
-    });
+    new Setting(wrap)
+      .setName("Runtime")
+      .addDropdown((dd) => {
+        for (const rt of available) {
+          dd.addOption(rt.id, rt.displayName);
+        }
+        const current = av.byId[this.plugin.settings.agentRuntimeProvider]
+          ? this.plugin.settings.agentRuntimeProvider
+          : available[0].id;
+        dd.setValue(current);
+        dd.onChange(async (v) => {
+          if (this.plugin.settings.agentRuntimeProvider === v) return;
+          this.plugin.settings.agentRuntimeProvider = v;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 
   async onOpen() {
@@ -2278,9 +2303,9 @@ export class ChatView extends ItemView {
       cls: "vault-ai-send-btn"
     });
     this.sendButtonEl = sendBtn;
-    if (!runtimeAvailability.claude && !runtimeAvailability.hermes) {
+    if (runtimeAvailability.availableIds.length === 0) {
       sendBtn.disabled = true;
-      sendBtn.title = "Install and configure Claude Code or Hermes Agent in Settings → OSINT Copilot.";
+      sendBtn.title = "Install and configure Claude, Hermes, or a custom runtime in Settings → OSINT Copilot.";
     } else {
       sendBtn.disabled = false;
       sendBtn.title = "";
@@ -2423,11 +2448,11 @@ export class ChatView extends ItemView {
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
     if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-      const p = this.plugin.settings.agentRuntimeProvider === 'hermes-agent' ? 'Hermes Agent' : 'Claude Code';
+      const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
       return {
         icon: "🤖",
         title: "Unified agent:",
-        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments (header: Claude vs Hermes when both CLIs are available). Turn off unified mode in Settings → Legacy orchestration only if you need the classic planner.`,
+        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments. Turn off unified mode in Settings → Legacy orchestration only if you need the classic planner.`,
       };
     }
     return {
@@ -2809,7 +2834,7 @@ export class ChatView extends ItemView {
 
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder(): string {
-    return "Ask for an investigation (search vs graph follows from your wording and attachments). Pick Claude or Hermes in the header when both runtimes are available…";
+    return "Ask for an investigation (search vs graph follows from your wording and attachments). Pick the runtime in the header when multiple agents are available…";
   }
 
   // Update the input placeholder text
@@ -4045,9 +4070,9 @@ export class ChatView extends ItemView {
     }
 
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
-    if (!sendRuntimeAvailability.claude && !sendRuntimeAvailability.hermes) {
+    if (sendRuntimeAvailability.availableIds.length === 0) {
       new Notice(
-        "No agent runtime is available. Install Claude Code or Hermes Agent and confirm paths under Settings → OSINT Copilot.",
+        "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8000,
       );
       return;
@@ -5823,6 +5848,34 @@ class VaultAISettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  private runtimeLabel(runtimeId: string): string {
+    const option = getConfiguredRuntimeOptions(this.plugin).find((r) => r.id === runtimeId);
+    return option?.displayName || "Claude Code";
+  }
+
+  private uniqueCustomRuntimeId(raw: string, currentId?: string): string {
+    const candidate = normalizeCustomRuntimeId(raw);
+    const ids = new Set((this.plugin.settings.customAgentRuntimes || []).map((r) => r.id));
+    if (currentId) ids.delete(currentId);
+    if (!ids.has(candidate)) return candidate;
+    let i = 2;
+    while (ids.has(`${candidate}-${i}`)) i++;
+    return `${candidate}-${i}`;
+  }
+
+  private createDefaultCustomRuntime(index: number): CustomAgentRuntime {
+    const id = this.uniqueCustomRuntimeId(`runtime-${index}`);
+    return {
+      id,
+      displayName: `Custom ${index}`,
+      cliPath: "hermes",
+      extraArgs: "",
+      timeoutMs: 120_000,
+      healthCheckArgs: "--version",
+      enabled: true,
+    };
+  }
+
   display(): void {
     if (this._settingsDisplayDepth > 0) {
       this._settingsDisplayQueued = true;
@@ -6053,25 +6106,29 @@ class VaultAISettingTab extends PluginSettingTab {
           })
       );
 
-    // ── Unified chat agent (Claude Code or Hermes) ─────────────────────────
+    // ── Unified chat agent (Claude default + custom runtimes) ──────────────
     new Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
-      text: "Chat uses one local agent turn (JSON contract). Pick Claude Code or Hermes; the agent uses its own installed skills for vault search and graph-oriented extraction. Graph writes still go through the plugin confirmation flow when proposed.",
+      text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description",
     });
 
     new Setting(containerEl)
       .setName("Agent runtime")
-      .setDesc("Which CLI handles unified chat turns.")
+      .setDesc("Default runtime for unified chat turns.")
       .addDropdown((dd) =>
-        dd
-          .addOption("claude-code", "Claude Code")
-          .addOption("hermes-agent", "Hermes Agent")
-          .setValue(this.plugin.settings.agentRuntimeProvider)
-          .onChange(async (v) => {
-            this.plugin.settings.agentRuntimeProvider = v === "hermes-agent" ? "hermes-agent" : "claude-code";
+        {
+          const options = getConfiguredRuntimeOptions(this.plugin);
+          for (const option of options) dd.addOption(option.id, option.displayName);
+          const selected = options.some((o) => o.id === this.plugin.settings.agentRuntimeProvider)
+            ? this.plugin.settings.agentRuntimeProvider
+            : CLAUDE_RUNTIME_ID;
+          dd.setValue(selected);
+          dd.onChange(async (v) => {
+            this.plugin.settings.agentRuntimeProvider = v;
             await this.plugin.saveSettings();
-          }),
+          });
+        },
       );
 
     new Setting(containerEl)
@@ -6086,7 +6143,7 @@ class VaultAISettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Hermes CLI path")
-      .setDesc("Executable for Hermes Agent (only used when Agent runtime is Hermes).")
+      .setDesc("Executable for Hermes Agent (built-in runtime).")
       .addText((text) =>
         text
           .setPlaceholder("hermes")
@@ -6139,7 +6196,7 @@ class VaultAISettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Test agent runtime")
-      .setDesc("Checks reachability for the selected Agent runtime (Claude or Hermes).")
+      .setDesc("Checks reachability for the currently selected runtime.")
       .addButton((btn) =>
         btn.setButtonText("Test connection").onClick(async () => {
           btn.setButtonText("Testing...");
@@ -6149,7 +6206,7 @@ class VaultAISettingTab extends PluginSettingTab {
             const ok = await provider.healthCheck();
             new Notice(
               ok
-                ? `${provider.id === "hermes-agent" ? "Hermes" : "Claude Code"} CLI is reachable.`
+                ? `${this.runtimeLabel(provider.id)} CLI is reachable.`
                 : "CLI not reachable. Check path and health-check args.",
             );
           } catch (e: unknown) {
@@ -6157,6 +6214,106 @@ class VaultAISettingTab extends PluginSettingTab {
           }
           btn.setButtonText("Test connection");
           btn.setDisabled(false);
+        }),
+      );
+
+    new Setting(containerEl).setName("Custom runtimes").setHeading();
+    containerEl.createEl("p", {
+      text: "Add Hermes-compatible local CLIs. They will appear in the chat header runtime dropdown when enabled and reachable.",
+      cls: "setting-item-description",
+    });
+    for (let i = 0; i < this.plugin.settings.customAgentRuntimes.length; i++) {
+      const rt = this.plugin.settings.customAgentRuntimes[i];
+      new Setting(containerEl)
+        .setName(`Runtime ${i + 1}: ${rt.displayName}`)
+        .setDesc(rt.id)
+        .addButton((btn) =>
+          btn.setButtonText("Remove").setWarning().onClick(async () => {
+            const removedId = rt.id;
+            this.plugin.settings.customAgentRuntimes.splice(i, 1);
+            if (this.plugin.settings.agentRuntimeProvider === removedId) {
+              this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+            }
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Display name")
+        .addText((text) =>
+          text.setValue(rt.displayName).onChange(async (value) => {
+            rt.displayName = value.trim() || `Custom ${i + 1}`;
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Runtime id")
+        .setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.")
+        .addText((text) =>
+          text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
+            const nextId = this.uniqueCustomRuntimeId(value, rt.id);
+            const prevId = rt.id;
+            rt.id = nextId;
+            if (this.plugin.settings.agentRuntimeProvider === prevId) {
+              this.plugin.settings.agentRuntimeProvider = nextId;
+            }
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Enabled")
+        .addToggle((toggle) =>
+          toggle.setValue(rt.enabled).onChange(async (value) => {
+            rt.enabled = value;
+            if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
+              this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+            }
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("CLI path")
+        .addText((text) =>
+          text.setValue(rt.cliPath).onChange(async (value) => {
+            rt.cliPath = value.trim() || "hermes";
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Extra CLI args")
+        .addText((text) =>
+          text.setValue(rt.extraArgs).onChange(async (value) => {
+            rt.extraArgs = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Request timeout (ms)")
+        .addText((text) =>
+          text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
+            const n = parseInt(value.trim(), 10);
+            rt.timeoutMs = Number.isFinite(n) && n >= 5000 ? n : 120000;
+            await this.plugin.saveSettings();
+          }),
+        );
+      new Setting(containerEl)
+        .setName("Health-check args")
+        .addText((text) =>
+          text.setValue(rt.healthCheckArgs).onChange(async (value) => {
+            rt.healthCheckArgs = value.trim() || "--version";
+            await this.plugin.saveSettings();
+          }),
+        );
+    }
+    new Setting(containerEl)
+      .setName("Add custom runtime")
+      .setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).")
+      .addButton((btn) =>
+        btn.setButtonText("Add runtime").onClick(async () => {
+          const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
+          this.plugin.settings.customAgentRuntimes.push(next);
+          await this.plugin.saveSettings();
+          this.display();
         }),
       );
 

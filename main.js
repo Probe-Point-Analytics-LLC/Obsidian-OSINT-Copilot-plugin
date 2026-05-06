@@ -25985,16 +25985,93 @@ ${user}`;
   }
 };
 
+// src/services/agent-runtime/runtime-registry.ts
+var CLAUDE_RUNTIME_ID = "claude-code";
+var HERMES_RUNTIME_ID = "hermes-agent";
+var CUSTOM_ID_PREFIX = "custom:";
+function normalizeCustomRuntimeId(raw) {
+  const core = (raw || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  const base = core || "runtime";
+  return `${CUSTOM_ID_PREFIX}${base}`;
+}
+function isCustomRuntimeId(id) {
+  return typeof id === "string" && id.startsWith(CUSTOM_ID_PREFIX);
+}
+function normalizeDisplayName(v, fallback) {
+  if (typeof v !== "string" || !v.trim())
+    return fallback;
+  return v.trim();
+}
+function normalizeTimeout(v, fallback) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 5e3 ? v : fallback;
+}
+function normalizeCustomAgentRuntimes(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  let autoN = 1;
+  for (const item of raw) {
+    if (!item || typeof item !== "object")
+      continue;
+    const rec = item;
+    const normalizedId = normalizeCustomRuntimeId(typeof rec.id === "string" ? rec.id : `runtime-${autoN++}`);
+    if (seen.has(normalizedId))
+      continue;
+    seen.add(normalizedId);
+    out.push({
+      id: normalizedId,
+      displayName: normalizeDisplayName(rec.displayName, `Custom ${out.length + 1}`),
+      cliPath: typeof rec.cliPath === "string" && rec.cliPath.trim() ? rec.cliPath.trim() : "hermes",
+      extraArgs: typeof rec.extraArgs === "string" ? rec.extraArgs : "",
+      timeoutMs: normalizeTimeout(rec.timeoutMs, 12e4),
+      healthCheckArgs: typeof rec.healthCheckArgs === "string" && rec.healthCheckArgs.trim() ? rec.healthCheckArgs.trim() : "--version",
+      enabled: rec.enabled !== false
+    });
+  }
+  return out;
+}
+function getConfiguredRuntimeOptions(plugin) {
+  const options = [
+    { id: CLAUDE_RUNTIME_ID, displayName: "Claude Code" },
+    { id: HERMES_RUNTIME_ID, displayName: "Hermes Agent" }
+  ];
+  for (const rt of plugin.settings.customAgentRuntimes || []) {
+    if (!rt.enabled)
+      continue;
+    options.push({ id: rt.id, displayName: rt.displayName });
+  }
+  return options;
+}
+function findCustomRuntime(plugin, id) {
+  if (!isCustomRuntimeId(id))
+    return null;
+  const list = plugin.settings.customAgentRuntimes || [];
+  return list.find((rt) => rt.id === id) || null;
+}
+
 // src/services/agent-runtime/create-agent-provider.ts
-function createAgentProvider(plugin) {
+function createAgentProvider(plugin, runtimeId) {
   const s = plugin.settings;
-  if (s.agentRuntimeProvider === "hermes-agent") {
+  const selected = runtimeId || s.agentRuntimeProvider;
+  if (selected === HERMES_RUNTIME_ID) {
     return new HermesAgentProvider({
       cliPath: s.hermesAgentCliPath || "hermes",
       extraArgs: s.hermesAgentExtraArgs || "",
       timeoutMs: s.hermesAgentTimeoutMs ?? 12e4,
       healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version"
     });
+  }
+  if (selected !== CLAUDE_RUNTIME_ID) {
+    const custom = findCustomRuntime(plugin, selected);
+    if (custom) {
+      return new HermesAgentProvider({
+        cliPath: custom.cliPath || "hermes",
+        extraArgs: custom.extraArgs || "",
+        timeoutMs: custom.timeoutMs ?? 12e4,
+        healthCheckArgs: custom.healthCheckArgs || "--version"
+      });
+    }
   }
   return new ClaudeAgentProvider(plugin.graphApiService);
 }
@@ -28369,28 +28446,30 @@ async function probeClaude(plugin) {
     return false;
   }
 }
-async function probeHermes(plugin) {
-  const s = plugin.settings;
-  const p = new HermesAgentProvider({
-    cliPath: s.hermesAgentCliPath || "hermes",
-    extraArgs: s.hermesAgentExtraArgs || "",
-    timeoutMs: s.hermesAgentTimeoutMs ?? 12e4,
-    healthCheckArgs: s.hermesAgentHealthCheckArgs || "--version"
-  });
-  try {
-    return await p.healthCheck();
-  } catch {
-    return false;
-  }
-}
 async function getChatRuntimeAvailability(plugin, forceRefresh = false) {
   if (!forceRefresh && cache && Date.now() - cache.at < TTL_MS) {
     return { ...cache.value };
   }
-  const [claude, hermes] = await Promise.all([probeClaude(plugin), probeHermes(plugin)]);
-  const value = { claude, hermes };
+  const byId = {};
+  byId[CLAUDE_RUNTIME_ID] = await probeClaude(plugin);
+  const options = getConfiguredRuntimeOptions(plugin).filter((r) => r.id !== CLAUDE_RUNTIME_ID);
+  const probes = await Promise.all(
+    options.map(async (runtime) => {
+      try {
+        const provider = createAgentProvider(plugin, runtime.id);
+        const ok = await provider.healthCheck();
+        return [runtime.id, ok];
+      } catch {
+        return [runtime.id, false];
+      }
+    })
+  );
+  for (const [id, ok] of probes)
+    byId[id] = ok;
+  const availableIds = Object.keys(byId).filter((id) => byId[id]);
+  const value = { byId, availableIds };
   cache = { at: Date.now(), value };
-  return { ...value };
+  return { byId: { ...value.byId }, availableIds: [...value.availableIds] };
 }
 
 // src/services/vault-lock-service.ts
@@ -29185,11 +29264,12 @@ var DEFAULT_SETTINGS = {
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
   unifiedAgentOrchestration: true,
-  agentRuntimeProvider: "claude-code",
+  agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: "hermes",
   hermesAgentExtraArgs: "",
   hermesAgentTimeoutMs: 12e4,
   hermesAgentHealthCheckArgs: "--version",
+  customAgentRuntimes: [],
   extractionLogVerbosity: "detailed",
   extractionDebugRawCli: false,
   customCheckpoints: [],
@@ -29637,8 +29717,14 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     if (typeof merged.unifiedAgentOrchestration !== "boolean") {
       merged.unifiedAgentOrchestration = DEFAULT_SETTINGS.unifiedAgentOrchestration;
     }
-    const arp = merged.agentRuntimeProvider;
-    if (arp !== "claude-code" && arp !== "hermes-agent") {
+    merged.customAgentRuntimes = normalizeCustomAgentRuntimes(raw.customAgentRuntimes);
+    const validRuntimeIds = /* @__PURE__ */ new Set([
+      CLAUDE_RUNTIME_ID,
+      HERMES_RUNTIME_ID,
+      ...merged.customAgentRuntimes.map((rt) => rt.id)
+    ]);
+    const arp = typeof merged.agentRuntimeProvider === "string" ? merged.agentRuntimeProvider : "";
+    if (!validRuntimeIds.has(arp)) {
       merged.agentRuntimeProvider = DEFAULT_SETTINGS.agentRuntimeProvider;
     }
     if (typeof merged.hermesAgentCliPath !== "string" || !merged.hermesAgentCliPath.trim()) {
@@ -30619,23 +30705,30 @@ ${ev.details}`;
   syncModesFromConversation(_conv) {
     this.applyChatMode("general");
   }
-  /** If only one CLI works, force `agentRuntimeProvider` (avoids sending to a dead binary). */
+  runtimeDisplayName(runtimeId) {
+    const opt = getConfiguredRuntimeOptions(this.plugin).find((r) => r.id === runtimeId);
+    return opt?.displayName || "Claude Code";
+  }
+  /** Keep selected runtime valid and available. */
   async syncRuntimeSelectionToAvailability(av) {
+    const configured = getConfiguredRuntimeOptions(this.plugin).map((r) => r.id);
     const cur = this.plugin.settings.agentRuntimeProvider;
-    if (av.claude && !av.hermes) {
-      if (cur !== "claude-code") {
-        this.plugin.settings.agentRuntimeProvider = "claude-code";
-        await this.plugin.saveSettings();
-        new import_obsidian28.Notice("Using Claude Code (Hermes CLI not available).");
-      }
+    if (!configured.includes(cur)) {
+      this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+      await this.plugin.saveSettings();
       return;
     }
-    if (!av.claude && av.hermes) {
-      if (cur !== "hermes-agent") {
-        this.plugin.settings.agentRuntimeProvider = "hermes-agent";
-        await this.plugin.saveSettings();
-        new import_obsidian28.Notice("Using Hermes Agent (Claude CLI not available).");
-      }
+    if (av.availableIds.length === 0) {
+      return;
+    }
+    if (av.byId[cur]) {
+      return;
+    }
+    const fallback = av.byId[CLAUDE_RUNTIME_ID] ? CLAUDE_RUNTIME_ID : av.availableIds[0];
+    if (fallback && fallback !== cur) {
+      this.plugin.settings.agentRuntimeProvider = fallback;
+      await this.plugin.saveSettings();
+      new import_obsidian28.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
   buildRuntimeHeaderRow(buttonGroup, av) {
@@ -30644,36 +30737,34 @@ ${ev.details}`;
     wrap.style.alignItems = "center";
     wrap.style.gap = "8px";
     wrap.style.flexWrap = "wrap";
-    if (!av.claude && !av.hermes) {
+    const configured = getConfiguredRuntimeOptions(this.plugin);
+    const available = configured.filter((r) => av.byId[r.id]);
+    if (available.length === 0) {
       wrap.createEl("span", {
-        text: "No agent CLI detected. Configure Claude Code or Hermes Agent under Settings \u2192 OSINT Copilot.",
+        text: "No agent CLI detected. Configure Claude, Hermes, or a custom runtime under Settings \u2192 OSINT Copilot.",
         cls: "setting-item-description"
       });
       return;
     }
-    if (av.claude && av.hermes) {
-      wrap.createEl("span", { text: "Runtime:", cls: "vault-ai-mode-select-label" });
-      const mkBtn = (id, label) => {
-        const b = wrap.createEl("button", { text: label, cls: "clickable-icon" });
-        const active = this.plugin.settings.agentRuntimeProvider === id;
-        b.style.opacity = active ? "1" : "0.65";
-        b.style.fontWeight = active ? "700" : "400";
-        b.title = id === "claude-code" ? "Use Claude Code for chat" : "Use Hermes Agent for chat";
-        b.addEventListener("click", async () => {
-          if (this.plugin.settings.agentRuntimeProvider === id)
-            return;
-          this.plugin.settings.agentRuntimeProvider = id;
-          await this.plugin.saveSettings();
-        });
-      };
-      mkBtn("claude-code", "Claude");
-      mkBtn("hermes-agent", "Hermes");
+    if (available.length === 1) {
+      wrap.createEl("span", {
+        text: `Runtime: ${available[0].displayName} (only CLI available)`,
+        cls: "setting-item-description"
+      });
       return;
     }
-    const only = av.claude ? "Claude Code" : "Hermes Agent";
-    wrap.createEl("span", {
-      text: `Runtime: ${only} (only CLI available)`,
-      cls: "setting-item-description"
+    new import_obsidian28.Setting(wrap).setName("Runtime").addDropdown((dd) => {
+      for (const rt of available) {
+        dd.addOption(rt.id, rt.displayName);
+      }
+      const current = av.byId[this.plugin.settings.agentRuntimeProvider] ? this.plugin.settings.agentRuntimeProvider : available[0].id;
+      dd.setValue(current);
+      dd.onChange(async (v) => {
+        if (this.plugin.settings.agentRuntimeProvider === v)
+          return;
+        this.plugin.settings.agentRuntimeProvider = v;
+        await this.plugin.saveSettings();
+      });
     });
   }
   async onOpen() {
@@ -30862,9 +30953,9 @@ ${ev.details}`;
       cls: "vault-ai-send-btn"
     });
     this.sendButtonEl = sendBtn;
-    if (!runtimeAvailability.claude && !runtimeAvailability.hermes) {
+    if (runtimeAvailability.availableIds.length === 0) {
       sendBtn.disabled = true;
-      sendBtn.title = "Install and configure Claude Code or Hermes Agent in Settings \u2192 OSINT Copilot.";
+      sendBtn.title = "Install and configure Claude, Hermes, or a custom runtime in Settings \u2192 OSINT Copilot.";
     } else {
       sendBtn.disabled = false;
       sendBtn.title = "";
@@ -30989,11 +31080,11 @@ ${ev.details}`;
    */
   getModeDisclaimer() {
     if (this.plugin.settings.unifiedAgentOrchestration !== false) {
-      const p = this.plugin.settings.agentRuntimeProvider === "hermes-agent" ? "Hermes Agent" : "Claude Code";
+      const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
       return {
         icon: "\u{1F916}",
         title: "Unified agent:",
-        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments (header: Claude vs Hermes when both CLIs are available). Turn off unified mode in Settings \u2192 Legacy orchestration only if you need the classic planner.`
+        text: `One local ${p} turn per message. Search vs graph work is decided from your message and attachments. Turn off unified mode in Settings \u2192 Legacy orchestration only if you need the classic planner.`
       };
     }
     return {
@@ -31297,7 +31388,7 @@ ${ev.details}`;
   }
   // Get the appropriate input placeholder based on current mode
   getInputPlaceholder() {
-    return "Ask for an investigation (search vs graph follows from your wording and attachments). Pick Claude or Hermes in the header when both runtimes are available\u2026";
+    return "Ask for an investigation (search vs graph follows from your wording and attachments). Pick the runtime in the header when multiple agents are available\u2026";
   }
   // Update the input placeholder text
   updateInputPlaceholder() {
@@ -32325,9 +32416,9 @@ ${ev.details}`;
       }
     }
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
-    if (!sendRuntimeAvailability.claude && !sendRuntimeAvailability.hermes) {
+    if (sendRuntimeAvailability.availableIds.length === 0) {
       new import_obsidian28.Notice(
-        "No agent runtime is available. Install Claude Code or Hermes Agent and confirm paths under Settings \u2192 OSINT Copilot.",
+        "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8e3
       );
       return;
@@ -33816,6 +33907,34 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     this._settingsDisplayQueued = false;
     this.plugin = plugin;
   }
+  runtimeLabel(runtimeId) {
+    const option = getConfiguredRuntimeOptions(this.plugin).find((r) => r.id === runtimeId);
+    return option?.displayName || "Claude Code";
+  }
+  uniqueCustomRuntimeId(raw, currentId) {
+    const candidate = normalizeCustomRuntimeId(raw);
+    const ids = new Set((this.plugin.settings.customAgentRuntimes || []).map((r) => r.id));
+    if (currentId)
+      ids.delete(currentId);
+    if (!ids.has(candidate))
+      return candidate;
+    let i = 2;
+    while (ids.has(`${candidate}-${i}`))
+      i++;
+    return `${candidate}-${i}`;
+  }
+  createDefaultCustomRuntime(index) {
+    const id = this.uniqueCustomRuntimeId(`runtime-${index}`);
+    return {
+      id,
+      displayName: `Custom ${index}`,
+      cliPath: "hermes",
+      extraArgs: "",
+      timeoutMs: 12e4,
+      healthCheckArgs: "--version",
+      enabled: true
+    };
+  }
   display() {
     if (this._settingsDisplayDepth > 0) {
       this._settingsDisplayQueued = true;
@@ -33967,14 +34086,21 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     );
     new import_obsidian28.Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
-      text: "Chat uses one local agent turn (JSON contract). Pick Claude Code or Hermes; the agent uses its own installed skills for vault search and graph-oriented extraction. Graph writes still go through the plugin confirmation flow when proposed.",
+      text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description"
     });
-    new import_obsidian28.Setting(containerEl).setName("Agent runtime").setDesc("Which CLI handles unified chat turns.").addDropdown(
-      (dd) => dd.addOption("claude-code", "Claude Code").addOption("hermes-agent", "Hermes Agent").setValue(this.plugin.settings.agentRuntimeProvider).onChange(async (v) => {
-        this.plugin.settings.agentRuntimeProvider = v === "hermes-agent" ? "hermes-agent" : "claude-code";
-        await this.plugin.saveSettings();
-      })
+    new import_obsidian28.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
+      (dd) => {
+        const options = getConfiguredRuntimeOptions(this.plugin);
+        for (const option of options)
+          dd.addOption(option.id, option.displayName);
+        const selected = options.some((o) => o.id === this.plugin.settings.agentRuntimeProvider) ? this.plugin.settings.agentRuntimeProvider : CLAUDE_RUNTIME_ID;
+        dd.setValue(selected);
+        dd.onChange(async (v) => {
+          this.plugin.settings.agentRuntimeProvider = v;
+          await this.plugin.saveSettings();
+        });
+      }
     );
     new import_obsidian28.Setting(containerEl).setName("Unified agent orchestration").setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.").addToggle(
       (t) => t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
@@ -33982,7 +34108,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (only used when Agent runtime is Hermes).").addText(
+    new import_obsidian28.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
       (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
         this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
         await this.plugin.saveSettings();
@@ -34007,7 +34133,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the selected Agent runtime (Claude or Hermes).").addButton(
+    new import_obsidian28.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
@@ -34015,13 +34141,91 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
           new import_obsidian28.Notice(
-            ok ? `${provider.id === "hermes-agent" ? "Hermes" : "Claude Code"} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
+            ok ? `${this.runtimeLabel(provider.id)} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
           );
         } catch (e) {
           new import_obsidian28.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Custom runtimes").setHeading();
+    containerEl.createEl("p", {
+      text: "Add Hermes-compatible local CLIs. They will appear in the chat header runtime dropdown when enabled and reachable.",
+      cls: "setting-item-description"
+    });
+    for (let i = 0; i < this.plugin.settings.customAgentRuntimes.length; i++) {
+      const rt = this.plugin.settings.customAgentRuntimes[i];
+      new import_obsidian28.Setting(containerEl).setName(`Runtime ${i + 1}: ${rt.displayName}`).setDesc(rt.id).addButton(
+        (btn) => btn.setButtonText("Remove").setWarning().onClick(async () => {
+          const removedId = rt.id;
+          this.plugin.settings.customAgentRuntimes.splice(i, 1);
+          if (this.plugin.settings.agentRuntimeProvider === removedId) {
+            this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+          }
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Display name").addText(
+        (text) => text.setValue(rt.displayName).onChange(async (value) => {
+          rt.displayName = value.trim() || `Custom ${i + 1}`;
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
+        (text) => text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
+          const nextId = this.uniqueCustomRuntimeId(value, rt.id);
+          const prevId = rt.id;
+          rt.id = nextId;
+          if (this.plugin.settings.agentRuntimeProvider === prevId) {
+            this.plugin.settings.agentRuntimeProvider = nextId;
+          }
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Enabled").addToggle(
+        (toggle) => toggle.setValue(rt.enabled).onChange(async (value) => {
+          rt.enabled = value;
+          if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
+            this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
+          }
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("CLI path").addText(
+        (text) => text.setValue(rt.cliPath).onChange(async (value) => {
+          rt.cliPath = value.trim() || "hermes";
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Extra CLI args").addText(
+        (text) => text.setValue(rt.extraArgs).onChange(async (value) => {
+          rt.extraArgs = value;
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Request timeout (ms)").addText(
+        (text) => text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
+          const n = parseInt(value.trim(), 10);
+          rt.timeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 12e4;
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian28.Setting(containerEl).setName("Health-check args").addText(
+        (text) => text.setValue(rt.healthCheckArgs).onChange(async (value) => {
+          rt.healthCheckArgs = value.trim() || "--version";
+          await this.plugin.saveSettings();
+        })
+      );
+    }
+    new import_obsidian28.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
+      (btn) => btn.setButtonText("Add runtime").onClick(async () => {
+        const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
+        this.plugin.settings.customAgentRuntimes.push(next);
+        await this.plugin.saveSettings();
+        this.display();
       })
     );
     new import_obsidian28.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();

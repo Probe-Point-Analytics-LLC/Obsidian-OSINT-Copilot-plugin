@@ -1,13 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mockHermesHealth = vi.fn();
+const mockCreateAgentProvider = vi.fn();
 
-vi.mock('../src/services/agent-runtime/hermes-agent-provider', () => ({
-    HermesAgentProvider: class {
-        async healthCheck() {
-            return mockHermesHealth();
-        }
-    },
+vi.mock('../src/services/agent-runtime/create-agent-provider', () => ({
+    createAgentProvider: (...args: unknown[]) => mockCreateAgentProvider(...args),
 }));
 
 import {
@@ -26,6 +22,17 @@ function makePlugin(claude: 'ok' | 'bad' | 'throw') {
             hermesAgentExtraArgs: '',
             hermesAgentTimeoutMs: 120_000,
             hermesAgentHealthCheckArgs: '--version',
+            customAgentRuntimes: [
+                {
+                    id: 'custom:my-cli',
+                    displayName: 'My CLI',
+                    cliPath: 'my-cli',
+                    extraArgs: '',
+                    timeoutMs: 120_000,
+                    healthCheckArgs: '--version',
+                    enabled: true,
+                },
+            ],
         },
         graphApiService: { checkHealth },
     } as any;
@@ -35,20 +42,28 @@ describe('chat-runtime-availability', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         invalidateChatRuntimeAvailabilityCache();
-        mockHermesHealth.mockResolvedValue(false);
+        mockCreateAgentProvider.mockImplementation((_plugin: any, runtimeId?: string) => ({
+            healthCheck: vi.fn().mockResolvedValue(runtimeId === 'hermes-agent'),
+        }));
     });
 
     it('marks Claude available when graphApiService.checkHealth is ok', async () => {
         const p = makePlugin('ok');
         const av = await getChatRuntimeAvailability(p, true);
-        expect(av).toEqual({ claude: true, hermes: false });
+        expect(av.byId['claude-code']).toBe(true);
+        expect(av.byId['hermes-agent']).toBe(true);
+        expect(av.byId['custom:my-cli']).toBe(false);
     });
 
     it('marks Claude unavailable when health is not ok', async () => {
-        mockHermesHealth.mockResolvedValue(true);
+        mockCreateAgentProvider.mockImplementation((_plugin: any, runtimeId?: string) => ({
+            healthCheck: vi.fn().mockResolvedValue(runtimeId === 'custom:my-cli'),
+        }));
         const p = makePlugin('bad');
         const av = await getChatRuntimeAvailability(p, true);
-        expect(av).toEqual({ claude: false, hermes: true });
+        expect(av.byId['claude-code']).toBe(false);
+        expect(av.byId['hermes-agent']).toBe(false);
+        expect(av.byId['custom:my-cli']).toBe(true);
     });
 
     it('caches probes until TTL unless forceRefresh', async () => {
