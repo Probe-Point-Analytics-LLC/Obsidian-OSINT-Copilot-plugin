@@ -642,6 +642,26 @@ export default class VaultAIPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "normalize-entity-frontmatter-reserved-keys",
+      name: "Normalize entity frontmatter reserved keys (props namespace)",
+      callback: () => {
+        void (async () => {
+          try {
+            const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
+            new Notice(
+              `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
+              9000,
+            );
+            await this.entityManager.loadEntitiesFromNotes();
+            await this.refreshOrOpenGraphView();
+          } catch (e) {
+            new Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9000);
+          }
+        })();
+      },
+    });
+
+    this.addCommand({
       id: "reload-vault-prompts",
       name: "Reload vault prompts",
       callback: () => {

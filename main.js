@@ -14268,6 +14268,21 @@ var CUSTOM_TYPES_FILE_NAME = "custom-types.json";
 
 // src/services/entity-manager.ts
 var SCHEMA_FAMILY_FOLDERS = ["ftm", "stix2", "mitre", "user"];
+var RESERVED_FRONTMATTER_KEYS = /* @__PURE__ */ new Set([
+  "id",
+  "type",
+  "label",
+  "schemaFamily",
+  "ftmSchema",
+  "aliases",
+  "filePath",
+  "color",
+  "created",
+  "props",
+  "osint_sources",
+  "osint_confidence",
+  "osint_contradictions"
+]);
 function isSchemaFamilyFolderName(name) {
   return SCHEMA_FAMILY_FOLDERS.includes(name);
 }
@@ -14281,6 +14296,39 @@ var EntityManager = class {
     this.app = app;
     this.basePath = basePath;
     this.vaultLockService = vaultLockService ?? null;
+  }
+  appendYamlLine(lines, key, value) {
+    if (value === void 0 || value === null || value === "")
+      return;
+    if (typeof value === "string") {
+      lines.push(`${key}: "${value.replace(/"/g, '\\"')}"`);
+      return;
+    }
+    if (typeof value === "boolean" || typeof value === "number") {
+      lines.push(`${key}: ${String(value)}`);
+      return;
+    }
+    const chunk = stringify3({ [key]: value }).trim();
+    if (!chunk)
+      return;
+    lines.push(...chunk.split("\n"));
+  }
+  appendEntityPropertyToFrontmatter(lines, propsChunk, key, value) {
+    if (value === void 0 || value === null || value === "")
+      return;
+    if (RESERVED_FRONTMATTER_KEYS.has(key)) {
+      propsChunk[key] = value;
+      return;
+    }
+    this.appendYamlLine(lines, key, value);
+  }
+  appendPropsChunk(lines, propsChunk) {
+    if (Object.keys(propsChunk).length === 0)
+      return;
+    const chunk = stringify3({ props: propsChunk }).trim();
+    if (!chunk)
+      return;
+    lines.push(...chunk.split("\n"));
   }
   /** Wired from plugin after SchemaCatalogService is constructed. */
   setSchemaCatalogService(catalog) {
@@ -14422,23 +14470,18 @@ var EntityManager = class {
       const fmFamily = frontmatter.schemaFamily;
       const schemaFamily = fmFamily ?? defaultFamily;
       const properties = {};
-      const internalKeys = [
-        "id",
-        "type",
-        "label",
-        "filePath",
-        "aliases",
-        "color",
-        "created",
-        "schemaFamily",
-        "ftmSchema",
-        "osint_sources",
-        "osint_confidence",
-        "osint_contradictions"
-      ];
+      const internalKeys = [...RESERVED_FRONTMATTER_KEYS];
       for (const [key, value] of Object.entries(frontmatter)) {
         if (!internalKeys.includes(key) && value !== void 0 && value !== null) {
           properties[key] = value;
+        }
+      }
+      const propsBlock = frontmatter.props;
+      if (propsBlock && typeof propsBlock === "object" && !Array.isArray(propsBlock)) {
+        for (const [key, value] of Object.entries(propsBlock)) {
+          if (value !== void 0 && value !== null) {
+            properties[key] = value;
+          }
         }
       }
       const bodyProps = this.parsePropertiesFromBody(content);
@@ -14950,17 +14993,11 @@ ${entity.properties.notes || ""}
       `schemaFamily: ${cat.family}`,
       `label: "${String(entity.label).replace(/"/g, '\\"')}"`
     ];
+    const propsChunk = {};
     for (const [prop, value] of Object.entries(entity.properties)) {
-      if (value !== void 0 && value !== null && value !== "") {
-        if (typeof value === "string") {
-          lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
-        } else if (typeof value === "boolean") {
-          lines.push(`${prop}: ${value}`);
-        } else {
-          lines.push(`${prop}: ${String(value)}`);
-        }
-      }
+      this.appendEntityPropertyToFrontmatter(lines, propsChunk, prop, value);
     }
+    this.appendPropsChunk(lines, propsChunk);
     this.appendOsintFrontmatter(lines, entity);
     return lines.join("\n");
   }
@@ -14992,20 +15029,14 @@ ${entity.properties.notes || ""}
       `ftmSchema: ${schemaName}`,
       `label: "${entity.label}"`
     ];
+    const propsChunk = {};
     const config = getFTMEntityConfig(schemaName);
     if (!config)
       return lines.join("\n");
     for (const [prop, value] of Object.entries(entity.properties)) {
-      if (value !== void 0 && value !== null && value !== "") {
-        if (typeof value === "string") {
-          lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
-        } else if (typeof value === "boolean") {
-          lines.push(`${prop}: ${value}`);
-        } else {
-          lines.push(`${prop}: ${String(value)}`);
-        }
-      }
+      this.appendEntityPropertyToFrontmatter(lines, propsChunk, prop, value);
     }
+    this.appendPropsChunk(lines, propsChunk);
     this.appendOsintFrontmatter(lines, entity);
     return lines.join("\n");
   }
@@ -15225,36 +15256,82 @@ ${entity.properties.notes || ""}
       `label: "${entity.label}"`,
       `aliases: ["${entity.label}"]`
     ];
+    const propsChunk = {};
     const config = ENTITY_CONFIGS[entity.type];
     if (!config) {
       for (const [prop, value] of Object.entries(entity.properties)) {
-        if (value !== void 0 && value !== null && value !== "") {
-          if (typeof value === "string") {
-            lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
-          } else if (typeof value === "boolean") {
-            lines.push(`${prop}: ${value}`);
-          } else {
-            lines.push(`${prop}: ${String(value)}`);
-          }
-        }
+        this.appendEntityPropertyToFrontmatter(lines, propsChunk, prop, value);
       }
     } else {
       const allProps = [...config.properties, ...COMMON_PROPERTIES];
       for (const prop of allProps) {
         const value = entity.properties[prop];
-        if (value !== void 0 && value !== null && value !== "") {
-          if (typeof value === "string") {
-            lines.push(`${prop}: "${value.replace(/"/g, '\\"')}"`);
-          } else if (typeof value === "boolean") {
-            lines.push(`${prop}: ${value}`);
-          } else {
-            lines.push(`${prop}: ${String(value)}`);
-          }
-        }
+        this.appendEntityPropertyToFrontmatter(lines, propsChunk, prop, value);
       }
     }
+    this.appendPropsChunk(lines, propsChunk);
     this.appendOsintFrontmatter(lines, entity);
     return lines.join("\n");
+  }
+  frontmatterBlockForEntity(entity) {
+    if (entity.ftmSchema) {
+      return this.buildFTMFrontmatter(entity, entity.ftmSchema);
+    }
+    if (entity.schemaFamily && entity.schemaFamily !== "ftm" && this.schemaCatalog) {
+      const cat = this.schemaCatalog.getEntityType(entity.schemaFamily, String(entity.type));
+      if (cat)
+        return this.buildCatalogFrontmatter(entity, cat);
+    }
+    return this.buildFrontmatter(entity);
+  }
+  /**
+   * Rewrite entity note frontmatter with reserved-key-safe serialization.
+   * Keeps body untouched; only updates frontmatter block.
+   */
+  async migrateReservedPropertyFrontmatter() {
+    await this.loadEntitiesFromNotes();
+    let scanned = 0;
+    let fixed = 0;
+    let skipped = 0;
+    let errors = 0;
+    for (const entity of this.entities.values()) {
+      scanned++;
+      if (!entity.filePath) {
+        skipped++;
+        continue;
+      }
+      try {
+        const file = this.app.vault.getAbstractFileByPath(entity.filePath);
+        if (!(file instanceof import_obsidian2.TFile)) {
+          skipped++;
+          continue;
+        }
+        const content = await this.app.vault.read(file);
+        const fmMatch = content.match(/^---\n[\s\S]*?\n---/);
+        if (!fmMatch) {
+          skipped++;
+          continue;
+        }
+        const nextFm = this.frontmatterBlockForEntity(entity);
+        const replaced = content.replace(/^---\n[\s\S]*?\n---/, `---
+${nextFm}
+---`);
+        if (replaced !== content) {
+          if (!this.assertPathWritable(entity.filePath, "migrate entity frontmatter")) {
+            skipped++;
+            continue;
+          }
+          await this.app.vault.modify(file, replaced);
+          fixed++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        errors++;
+        console.warn("[EntityManager] migrateReservedPropertyFrontmatter failed:", e);
+      }
+    }
+    return { scanned, fixed, skipped, errors };
   }
   /**
    * Build the properties section for a note.
@@ -29459,6 +29536,25 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       name: "Normalize legacy OIDSF schema names in entity notes",
       callback: () => {
         void this.normalizeLegacyOidsfSchemaNamesInVault();
+      }
+    });
+    this.addCommand({
+      id: "normalize-entity-frontmatter-reserved-keys",
+      name: "Normalize entity frontmatter reserved keys (props namespace)",
+      callback: () => {
+        void (async () => {
+          try {
+            const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
+            new import_obsidian28.Notice(
+              `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
+              9e3
+            );
+            await this.entityManager.loadEntitiesFromNotes();
+            await this.refreshOrOpenGraphView();
+          } catch (e) {
+            new import_obsidian28.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
+          }
+        })();
       }
     });
     this.addCommand({
