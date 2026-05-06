@@ -20766,7 +20766,7 @@ border - radius: 4px;
 // src/modals/confirm-modal.ts
 var import_obsidian8 = require("obsidian");
 var ConfirmModal = class extends import_obsidian8.Modal {
-  constructor(app, title, message, onConfirm, onCancel, destructive = false, checkboxItems) {
+  constructor(app, title, message, onConfirm, onCancel, destructive = false, checkboxItems, confirmText = "Confirm", cancelText = "Cancel") {
     super(app);
     this.title = title;
     this.message = message;
@@ -20774,6 +20774,8 @@ var ConfirmModal = class extends import_obsidian8.Modal {
     this.onCancel = onCancel;
     this.destructive = destructive;
     this.checkboxItems = checkboxItems;
+    this.confirmText = confirmText;
+    this.cancelText = cancelText;
   }
   onOpen() {
     const { contentEl, containerEl } = this;
@@ -20824,14 +20826,14 @@ var ConfirmModal = class extends import_obsidian8.Modal {
       }
     }
     const buttonContainer = contentEl.createDiv({ cls: "graph_copilot-confirm-buttons" });
-    const cancelButton = buttonContainer.createEl("button", { text: "Cancel" });
+    const cancelButton = buttonContainer.createEl("button", { text: this.cancelText });
     cancelButton.addEventListener("click", () => {
       if (this.onCancel)
         this.onCancel();
       this.close();
     });
     const confirmButton = buttonContainer.createEl("button", {
-      text: "Confirm",
+      text: this.confirmText,
       cls: this.destructive ? "mod-warning graph_copilot-confirm-btn--danger" : "mod-cta"
     });
     confirmButton.addEventListener("click", () => {
@@ -30143,15 +30145,16 @@ Tool id: ${enrichToolId(draft.id)}
 This skill executes the configured HTTP enricher spec in ${enricherPath}.
 `;
     const confirmMsg = [
-      `Create/update enricher "${draft.name}"?`,
-      `Spec: ${enricherPath}`,
-      `Skill: ${skillPath}`,
+      "Is it OK to install this enricher skill into your vault and create or update the files below?",
+      `Enricher: "${draft.name}"`,
+      `Spec (JSON): ${enricherPath}`,
+      `Skill (markdown): ${skillPath}`,
       `Auth mode: ${draft.auth.type}${draft.auth.envVar ? ` (env: ${draft.auth.envVar})` : ""}`,
       "No credentials will be stored; env var references only."
     ].join("\n");
     new ConfirmModal(
       this.app,
-      "Approve enricher draft",
+      "Install enricher skill?",
       confirmMsg,
       () => {
         void (async () => {
@@ -30190,7 +30193,10 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
         })();
       },
       () => new import_obsidian29.Notice("Enricher draft cancelled."),
-      false
+      false,
+      void 0,
+      "Install",
+      "Cancel"
     ).open();
   }
   async setHttpEnricherEnabledState() {

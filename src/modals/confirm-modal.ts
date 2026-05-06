@@ -13,6 +13,8 @@ export class ConfirmModal extends Modal {
     private onCancel: (() => void) | undefined;
     private destructive: boolean;
     private checkboxItems?: CheckboxItem[];
+    private confirmText: string;
+    private cancelText: string;
 
     constructor(
         app: App,
@@ -21,7 +23,9 @@ export class ConfirmModal extends Modal {
         onConfirm: (selectedValues?: string[]) => void,
         onCancel?: () => void,
         destructive: boolean = false,
-        checkboxItems?: CheckboxItem[]
+        checkboxItems?: CheckboxItem[],
+        confirmText: string = 'Confirm',
+        cancelText: string = 'Cancel'
     ) {
         super(app);
         this.title = title;
@@ -30,6 +34,8 @@ export class ConfirmModal extends Modal {
         this.onCancel = onCancel;
         this.destructive = destructive;
         this.checkboxItems = checkboxItems;
+        this.confirmText = confirmText;
+        this.cancelText = cancelText;
     }
 
     onOpen() {
@@ -94,14 +100,14 @@ export class ConfirmModal extends Modal {
 
         const buttonContainer = contentEl.createDiv({ cls: 'graph_copilot-confirm-buttons' });
 
-        const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+        const cancelButton = buttonContainer.createEl('button', { text: this.cancelText });
         cancelButton.addEventListener('click', () => {
             if (this.onCancel) this.onCancel();
             this.close();
         });
 
         const confirmButton = buttonContainer.createEl('button', {
-            text: 'Confirm',
+            text: this.confirmText,
             cls: this.destructive ? 'mod-warning graph_copilot-confirm-btn--danger' : 'mod-cta'
         });
 

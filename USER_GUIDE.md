@@ -121,7 +121,7 @@ On load, the plugin creates missing files under **`OSINTCopilot/custom/prompts/`
 
 Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** to draft API enrichers as tools.
 
-- Draft flow requires explicit confirmation before any create/update write.
+- Draft flow prompts with **Install** / **Cancel** before any create/update write to the enricher JSON and companion skill.
 - Specs are stored in `OSINTCopilot/custom/enrichers/*.json`.
 - Companion skill docs are stored in `OSINTCopilot/custom/skills/*.md`.
 - Planner tool IDs are exposed as `ENRICH_<id>`.

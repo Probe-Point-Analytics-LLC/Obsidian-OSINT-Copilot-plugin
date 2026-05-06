@@ -866,15 +866,16 @@ Tool id: ${enrichToolId(draft.id)}
 This skill executes the configured HTTP enricher spec in ${enricherPath}.
 `;
     const confirmMsg = [
-      `Create/update enricher "${draft.name}"?`,
-      `Spec: ${enricherPath}`,
-      `Skill: ${skillPath}`,
+      "Is it OK to install this enricher skill into your vault and create or update the files below?",
+      `Enricher: "${draft.name}"`,
+      `Spec (JSON): ${enricherPath}`,
+      `Skill (markdown): ${skillPath}`,
       `Auth mode: ${draft.auth.type}${draft.auth.envVar ? ` (env: ${draft.auth.envVar})` : ""}`,
       "No credentials will be stored; env var references only.",
     ].join("\n");
     new ConfirmModal(
       this.app,
-      "Approve enricher draft",
+      "Install enricher skill?",
       confirmMsg,
       () => {
         void (async () => {
@@ -914,6 +915,9 @@ This skill executes the configured HTTP enricher spec in ${enricherPath}.
       },
       () => new Notice("Enricher draft cancelled."),
       false,
+      undefined,
+      "Install",
+      "Cancel",
     ).open();
   }
 

@@ -164,7 +164,7 @@ The first time the plugin runs (and whenever files are still missing), it create
 
 - **OSINT Copilot: Reload vault prompts** — clear the in-memory cache after edits.
 - **OSINT Copilot: Install missing vault prompt files** — recreate any default file that was deleted (does not overwrite your changes to existing files).
-- **OSINT Copilot: Draft HTTP enricher skill from API documentation** — generate a draft enricher from API docs + user requirements, then require explicit confirmation before writing files.
+- **OSINT Copilot: Draft HTTP enricher skill from API documentation** — generate a draft enricher from API docs + user requirements; the post-draft prompt uses **Install** / **Cancel** before any vault writes.
 
 ## HTTP enrichers (strict approval)
 
