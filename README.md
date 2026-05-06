@@ -15,6 +15,7 @@
 - [Vault prompts (editable rules & agents)](#vault-prompts-editable-rules--agents)
 - [Getting Started](#getting-started)
 - [Runtime Logic (What Runs Where)](#runtime-logic-what-runs-where)
+- [Custom Types Setup (YAML)](docs/CUSTOM_TYPES_SETUP.md)
 - [User Guide](#user-guide)
   - [Entity Management](#entity-management)
   - [Relationship Mapping](#relationship-mapping)
@@ -238,6 +239,23 @@ OSINT Copilot supports the **FollowTheMoney (FTM)** schema, which includes:
 - **RealEstate** - Properties and land
 - **Passport** - Travel documents
 - **Sanction** - Sanctions and restrictions
+
+**Schema references**
+- **FollowTheMoney (FTM):** [https://followthemoney.tech](https://followthemoney.tech)
+- **STIX 2.1:** [https://oasis-open.github.io/cti-documentation/stix/intro](https://oasis-open.github.io/cti-documentation/stix/intro)
+- **MITRE ATT&CK:** [https://attack.mitre.org](https://attack.mitre.org)
+
+**How schema toggles work (Settings → Graph view)**
+- **Schema families in type pickers** controls which schema *sources* are available in creation dialogs:
+  - bundled FTM/OIDSF
+  - vault YAML families (`stix2`, `mitre`, `user`)
+- **OIDSF bundled schema layers** filters only the bundled OIDSF-derived set:
+  - **World** (general entities)
+  - **Links** (interval/relationship types)
+  - **Cyber** (STIX/CTI-aligned bundled entities)
+  - **Analysis** (claims/ACH/evidence-chain style objects)
+
+Turning these toggles off hides types from pickers, but existing notes already in your vault still resolve in graph rendering.
 
 #### Creating Entities
 

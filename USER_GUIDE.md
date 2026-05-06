@@ -122,6 +122,12 @@ Each custom skill is a Markdown file with YAML frontmatter (`skill_kind: vault`,
 
 **Settings:** **Skills folder** under **OSINT Copilot**.
 
+### 3b. Custom YAML types (Person, Company, relationships)
+
+For a detailed custom-type setup guide with complete YAML examples, see:
+
+- [`docs/CUSTOM_TYPES_SETUP.md`](docs/CUSTOM_TYPES_SETUP.md)
+
 ### 4. Entity base path
 
 Default **`OSINTCopilot`**. Entity types become subfolders; **`Connections/`** holds relationship notes.
@@ -267,6 +273,21 @@ What TTPs are associated with Lazarus Group?
 - Under plugin settings (**Graph view** → **Schema families in type pickers**), choose which families appear in the entity and connection type dialogs.
 - New notes are stored under `OSINTCopilot/<family>/<type>/` (for example `ftm/Person/` or `stix2/threat-actor/`). Older vaults that use the flat layout `OSINTCopilot/Person/` still work; those notes are treated as **FTM** unless frontmatter sets `schemaFamily`.
 - **Custom FTM types** in `OSINTCopilot/custom/custom-types.json` continue to work as before. Editing files under `schemas/` triggers a catalog refresh (or reload the plugin).
+
+**Standards and format references**
+- **FollowTheMoney (FTM):** [https://followthemoney.tech](https://followthemoney.tech)
+- **STIX 2.1 (OASIS CTI):** [https://oasis-open.github.io/cti-documentation/stix/intro](https://oasis-open.github.io/cti-documentation/stix/intro)
+- **MITRE ATT&CK:** [https://attack.mitre.org](https://attack.mitre.org)
+
+**How this maps to the settings shown in Graph view**
+- **Schema families in type pickers** = select schema *sources* (bundled FTM/OIDSF, vault `stix2`, vault `mitre`, vault `user`).
+- **OIDSF bundled schema layers** = filter only bundled OIDSF-derived classes:
+  - `World` = common OSINT entities
+  - `Links` = relationship/interval classes
+  - `Cyber` = STIX/CTI-aligned bundled classes
+  - `Analysis` = analytic objects (claims, ACH, evidence-chain style)
+
+These filters affect type pickers; they do not delete existing notes. Existing entities in the vault continue to resolve in graph rendering.
 
 ---
 
