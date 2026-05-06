@@ -115,6 +115,47 @@ export class GraphApiService {
                 throw: false
             });
 
+            // #region agent log
+            try {
+                let host = '';
+                let pathPrefix = '';
+                try {
+                    const u = new URL(url);
+                    host = u.hostname;
+                    pathPrefix = u.pathname.slice(0, 48);
+                } catch {
+                    host = 'invalid-url';
+                }
+                const hdrs = response.headers as Record<string, unknown> | undefined;
+                const hKeys = hdrs && typeof hdrs === 'object' ? Object.keys(hdrs).map((k) => k.toLowerCase()) : [];
+                const body = response.text || '';
+                fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9b4ad8' },
+                    body: JSON.stringify({
+                        sessionId: '9b4ad8',
+                        hypothesisId: 'H1-H5',
+                        runId: 'pre-fix',
+                        location: 'api-service.ts:extractTextFromUrl:afterRequest',
+                        message: 'requestUrl completed',
+                        data: {
+                            status: response.status,
+                            host,
+                            pathPrefix,
+                            contentTypePrefix: String(hdrs?.['content-type'] ?? hdrs?.['Content-Type'] ?? '').slice(0, 120),
+                            headerKeysSample: hKeys.slice(0, 12),
+                            bodyChars: body.length,
+                            looksLikeWebmailUi: /_task=mail|roundcube|webmail/i.test(url),
+                            hasCloudflareHint: hKeys.some((k) => k.includes('cf-')),
+                        },
+                        timestamp: Date.now(),
+                    }),
+                }).catch(() => {});
+            } catch {
+                /* ignore debug log failures */
+            }
+            // #endregion
+
             if (response.status < 200 || response.status >= 300) {
                 throw new Error(`Failed to fetch URL (${response.status})`);
             }
@@ -134,6 +175,35 @@ export class GraphApiService {
             console.debug('[GraphApiService] Extracted text length:', trimmed.length);
             return trimmed;
         } catch (error) {
+            // #region agent log
+            try {
+                let host = '';
+                try {
+                    host = new URL(url).hostname;
+                } catch {
+                    host = 'invalid-url';
+                }
+                fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9b4ad8' },
+                    body: JSON.stringify({
+                        sessionId: '9b4ad8',
+                        hypothesisId: 'H1-H5',
+                        runId: 'pre-fix',
+                        location: 'api-service.ts:extractTextFromUrl:catch',
+                        message: 'extractTextFromUrl threw',
+                        data: {
+                            host,
+                            errName: error instanceof Error ? error.name : typeof error,
+                            errMsg: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+                        },
+                        timestamp: Date.now(),
+                    }),
+                }).catch(() => {});
+            } catch {
+                /* ignore */
+            }
+            // #endregion
             console.error('[GraphApiService] extractTextFromUrl exception:', error);
             throw error;
         }

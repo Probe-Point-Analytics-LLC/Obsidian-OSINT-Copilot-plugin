@@ -214,6 +214,35 @@ export class OrchestrationService {
                     const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
                     ctx += `\n\n=== Content from ${url} ===\n${extractedText}`;
                 } catch (e) {
+                    // #region agent log
+                    try {
+                        fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9b4ad8' },
+                            body: JSON.stringify({
+                                sessionId: '9b4ad8',
+                                hypothesisId: 'H5',
+                                runId: 'pre-fix',
+                                location: 'orchestration-service.ts:processRequestUnified:urlExtractCatch',
+                                message: 'URL extraction failed in orchestration',
+                                data: {
+                                    urlHost: (() => {
+                                        try {
+                                            return new URL(url).hostname;
+                                        } catch {
+                                            return 'invalid';
+                                        }
+                                    })(),
+                                    errName: e instanceof Error ? e.name : typeof e,
+                                    errMsg: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+                                },
+                                timestamp: Date.now(),
+                            }),
+                        }).catch(() => {});
+                    } catch {
+                        /* ignore */
+                    }
+                    // #endregion
                     console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
                     ctx += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${
                         e instanceof Error ? e.message : String(e)
