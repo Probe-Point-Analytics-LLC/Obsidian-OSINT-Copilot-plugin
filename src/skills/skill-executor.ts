@@ -1,5 +1,7 @@
 import type VaultAIPlugin from "../../main";
 import { parseVaultSkillPlannerTool } from "./skill-runtime";
+import { executeEnricherHttp } from "../services/enrichers/enricher-executor";
+import { parseEnrichToolId } from "../services/enrichers/enricher-schema";
 
 /**
  * Runs a vault skill via local Claude (v1: single call, skill body as system context).
@@ -33,4 +35,18 @@ export async function executeVaultSkillTool(
 		signal,
 	);
 	return text;
+}
+
+export async function executeEnricherTool(
+	plugin: VaultAIPlugin,
+	toolId: string,
+	query: string,
+	attachmentsContext: string,
+	signal: AbortSignal | undefined,
+): Promise<string> {
+	const id = parseEnrichToolId(toolId);
+	if (!id) return `Invalid enricher tool id: ${toolId}`;
+	const spec = await plugin.enricherRegistry.getById(id);
+	if (!spec) return `Unknown enricher \`${id}\`.`;
+	return executeEnricherHttp(spec, query, attachmentsContext, signal);
 }

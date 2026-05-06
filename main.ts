@@ -82,6 +82,7 @@ import {
 } from './src/services/agent-runtime/runtime-registry';
 import {
   DEFAULT_CONVERSATION_FOLDER,
+  DEFAULT_ENRICHERS_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
   DEFAULT_SKILLS_FOLDER,
   DEFAULT_TASK_AGENTS_FOLDER,
@@ -92,6 +93,8 @@ import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
 import { SchemaBootstrapService } from './src/services/schema-bootstrap-service';
 import { SchemaCatalogService, mergeEnabledFamilies } from './src/services/schema-catalog-service';
 import type { EnabledSchemaFamilies } from './src/services/schema-catalog-types';
+import { EnricherRegistry } from './src/services/enrichers/enricher-registry';
+import { enrichToolId, normalizeEnricherSpec, type EnricherSpec } from './src/services/enrichers/enricher-schema';
 import {
   DEFAULT_ENABLED_SCHEMA_FAMILIES,
   DEFAULT_OIDSF_MODAL_LAYERS,
@@ -130,6 +133,8 @@ interface VaultAISettings {
   taskAgentOverrides: Record<string, boolean>;
   /** Visible vault folder for custom skills (markdown). Built-ins toggled here too. */
   skillsFolder: string;
+  /** Vault folder for user-created enricher specs (JSON). */
+  enrichersFolder: string;
   /** Per-skill id (built-in or vault): enabled. Undefined defaults to true. */
   skillToggles: Record<string, boolean>;
   // Custom API settings
@@ -221,6 +226,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
   taskAgentOverrides: {},
   skillsFolder: DEFAULT_SKILLS_FOLDER,
+  enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
   skillToggles: {},
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
@@ -268,6 +274,7 @@ export default class VaultAIPlugin extends Plugin {
   taskAgentRegistry!: TaskAgentRegistry;
   taskAgentRunner!: TaskAgentRunner;
   skillRegistry!: SkillRegistry;
+  enricherRegistry!: EnricherRegistry;
   vaultLockService!: VaultLockService;
   schemaCatalogService!: SchemaCatalogService;
   waybackArchiveService!: WaybackArchiveService;
@@ -373,6 +380,16 @@ export default class VaultAIPlugin extends Plugin {
     } catch (e) {
       console.warn('OSINTCopilot: skill bootstrap failed:', e);
     }
+    try {
+      const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+      if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
+        await this.app.vault.createFolder(enricherRoot);
+      }
+    } catch (e) {
+      console.warn('OSINTCopilot: enricher folder bootstrap failed:', e);
+    }
+    this.enricherRegistry = new EnricherRegistry(this.app, () => this.settings.enrichersFolder);
+    this.enricherRegistry.registerVaultEvents(this);
     this.taskAgentRunner = new TaskAgentRunner(
       this.app,
       () => this.claudeCodeService,
@@ -679,8 +696,9 @@ export default class VaultAIPlugin extends Plugin {
         this.vaultPromptLoader?.invalidateAll();
         this.taskAgentRegistry?.invalidate();
         this.skillRegistry?.invalidate();
+        this.enricherRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new Notice("Vault prompts, skills, and task-agent registry refreshed.");
+        new Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
       },
     });
 
@@ -693,11 +711,16 @@ export default class VaultAIPlugin extends Plugin {
             await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
             await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
             await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
+            const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+            if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
+              await this.app.vault.createFolder(enricherRoot);
+            }
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
+            this.enricherRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new Notice("Missing default prompt, skills, and task-agent files were created (existing files unchanged).");
+            new Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
           } catch (e) {
             new Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5000);
           }
@@ -705,10 +728,235 @@ export default class VaultAIPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "draft-http-enricher-from-api-docs",
+      name: "Draft HTTP enricher skill from API documentation",
+      callback: () => {
+        void this.draftHttpEnricherFromUserDetails();
+      },
+    });
+    this.addCommand({
+      id: "set-http-enricher-enabled-state",
+      name: "Set HTTP enricher enabled state (approval required)",
+      callback: () => {
+        void this.setHttpEnricherEnabledState();
+      },
+    });
+
     this.registerVaultLockEditorHooks();
 
     // Add settings tab
     this.addSettingTab(new VaultAISettingTab(this.app, this));
+  }
+
+  private extractJsonObject(raw: string): Record<string, unknown> | null {
+    const text = String(raw || "").trim();
+    if (!text) return null;
+    const fenced = text.match(/```json\s*([\s\S]*?)```/i);
+    const candidate = fenced?.[1] || text;
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+
+  private async appendEnricherAuditLine(line: string): Promise<void> {
+    const path = `${this.settings.enrichersFolder}/audit.log.md`;
+    const stamped = `- ${new Date().toISOString()} ${line}\n`;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) {
+      const prev = await this.app.vault.read(existing);
+      await this.app.vault.modify(existing, prev + stamped);
+      return;
+    }
+    const parts = path.split("/").slice(0, -1);
+    let current = "";
+    for (const p of parts) {
+      current = current ? `${current}/${p}` : p;
+      if (!this.app.vault.getAbstractFileByPath(current)) {
+        await this.app.vault.createFolder(current);
+      }
+    }
+    await this.app.vault.create(path, "# Enricher audit log\n\n" + stamped);
+  }
+
+  private async draftHttpEnricherFromUserDetails(): Promise<void> {
+    const docUrl = (window.prompt("API documentation URL for this enricher:") || "").trim();
+    if (!docUrl) {
+      new Notice("Cancelled: API documentation URL is required.");
+      return;
+    }
+    const details = (window.prompt("What should this enricher search and return? Include required params.") || "").trim();
+    if (!details) {
+      new Notice("Cancelled: integration details are required.");
+      return;
+    }
+    const system = [
+      "You draft JSON for an OSINT HTTP enricher tool.",
+      "Return ONLY one JSON object with keys:",
+      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, inputHints, skillInstructions.",
+      "Use {{query}} placeholder in urlTemplate/body when relevant.",
+      "Never include credentials or API keys.",
+    ].join("\n");
+    const user = `Documentation URL:\n${docUrl}\n\nUser requirements:\n${details}`;
+    let parsed: Record<string, unknown> | null = null;
+    let docHost = "";
+    try { docHost = new URL(docUrl).hostname; } catch { docHost = ""; }
+    try {
+      const raw = await this.graphApiService.callRemoteModel(
+        [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        false,
+      );
+      parsed = this.extractJsonObject(raw);
+    } catch (e) {
+      console.warn("[EnricherDraft] model draft failed, using fallback:", e);
+    }
+
+    const draft = normalizeEnricherSpec({
+      id: parsed?.["id"] || details.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      name: parsed?.["name"] || "Custom Enricher",
+      description: parsed?.["description"] || details,
+      documentationUrl: docUrl,
+      status: "active",
+      enabled: true,
+      allowedDomains: parsed?.["allowedDomains"] || (docHost ? [docHost] : []),
+      auth: {
+        type: parsed?.["authType"] || "none",
+        envVar: parsed?.["authEnvVar"] || "",
+        headerName: parsed?.["authHeaderName"] || "X-API-Key",
+        queryParam: parsed?.["authQueryParam"] || "api_key",
+      },
+      request: {
+        method: String(parsed?.["method"] || "GET").toUpperCase() === "POST" ? "POST" : "GET",
+        urlTemplate: parsed?.["urlTemplate"] || docUrl,
+        headers: { "User-Agent": "OSINT-Copilot-Enricher/1.0" },
+      },
+      inputHints: parsed?.["inputHints"] || ["query"],
+      skillInstructions: parsed?.["skillInstructions"] || "Use this enricher when the user asks for this data source.",
+      limits: {
+        timeoutMs: 15000,
+        retries: 1,
+        maxResponseChars: 8000,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    if (!draft) {
+      new Notice("Failed to build enricher draft.");
+      return;
+    }
+
+    const enricherPath = `${this.settings.enrichersFolder}/${draft.id}.json`;
+    const skillPath = `${this.settings.skillsFolder}/${draft.id}.md`;
+    const skillMd = `---
+skill_kind: vault
+id: ${draft.id}
+name: ${draft.name}
+description: ${draft.description}
+---
+${draft.skillInstructions}
+
+Tool id: ${enrichToolId(draft.id)}
+This skill executes the configured HTTP enricher spec in ${enricherPath}.
+`;
+    const confirmMsg = [
+      `Create/update enricher "${draft.name}"?`,
+      `Spec: ${enricherPath}`,
+      `Skill: ${skillPath}`,
+      `Auth mode: ${draft.auth.type}${draft.auth.envVar ? ` (env: ${draft.auth.envVar})` : ""}`,
+      "No credentials will be stored; env var references only.",
+    ].join("\n");
+    new ConfirmModal(
+      this.app,
+      "Approve enricher draft",
+      confirmMsg,
+      () => {
+        void (async () => {
+          const ensureFolder = async (path: string) => {
+            const parts = path.split("/").slice(0, -1);
+            let current = "";
+            for (const p of parts) {
+              current = current ? `${current}/${p}` : p;
+              if (!this.app.vault.getAbstractFileByPath(current)) {
+                await this.app.vault.createFolder(current);
+              }
+            }
+          };
+          try {
+            await ensureFolder(enricherPath);
+            await ensureFolder(skillPath);
+            const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
+            if (existingSpec instanceof TFile) {
+              await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
+            } else {
+              await this.app.vault.create(enricherPath, JSON.stringify(draft, null, 2));
+            }
+            const existingSkill = this.app.vault.getAbstractFileByPath(skillPath);
+            if (existingSkill instanceof TFile) {
+              await this.app.vault.modify(existingSkill, skillMd);
+            } else {
+              await this.app.vault.create(skillPath, skillMd);
+            }
+            this.enricherRegistry.invalidate();
+            this.skillRegistry.invalidate();
+            await this.appendEnricherAuditLine(`approved create_or_update id=${draft.id} doc=${docUrl}`);
+            new Notice(`Enricher ${draft.name} saved and activated.`);
+          } catch (e) {
+            new Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8000);
+          }
+        })();
+      },
+      () => new Notice("Enricher draft cancelled."),
+      false,
+    ).open();
+  }
+
+  private async setHttpEnricherEnabledState(): Promise<void> {
+    const idInput = (window.prompt("Enricher id (without ENRICH_):") || "").trim().toLowerCase();
+    if (!idInput) return;
+    const nextRaw = (window.prompt("Set state: active or disabled") || "").trim().toLowerCase();
+    const nextStatus = nextRaw === "disabled" ? "disabled" : nextRaw === "active" ? "active" : "";
+    if (!nextStatus) {
+      new Notice("Cancelled: state must be 'active' or 'disabled'.");
+      return;
+    }
+    const path = `${this.settings.enrichersFolder}/${idInput}.json`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      new Notice(`Enricher not found: ${path}`);
+      return;
+    }
+    const raw = await this.app.vault.read(file);
+    const parsed = normalizeEnricherSpec(JSON.parse(raw));
+    if (!parsed) {
+      new Notice("Invalid enricher spec JSON.");
+      return;
+    }
+    const nextEnabled = nextStatus === "active";
+    const msg = `Change enricher "${parsed.name}" status to ${nextStatus}?`;
+    new ConfirmModal(
+      this.app,
+      "Approve enricher state change",
+      msg,
+      () => {
+        void (async () => {
+          parsed.status = nextStatus as EnricherSpec["status"];
+          parsed.enabled = nextEnabled;
+          parsed.updatedAt = new Date().toISOString();
+          await this.app.vault.modify(file, JSON.stringify(parsed, null, 2));
+          this.enricherRegistry.invalidate();
+          await this.appendEnricherAuditLine(`approved set_state id=${parsed.id} status=${nextStatus}`);
+          new Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
+        })();
+      },
+      () => new Notice("State change cancelled."),
+    ).open();
   }
 
   onunload() {
@@ -746,6 +994,9 @@ export default class VaultAIPlugin extends Plugin {
     }
     if (!merged.skillToggles || typeof merged.skillToggles !== 'object') {
       merged.skillToggles = {};
+    }
+    if (typeof merged.enrichersFolder !== 'string' || !merged.enrichersFolder.trim()) {
+      merged.enrichersFolder = DEFAULT_SETTINGS.enrichersFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -824,6 +1075,7 @@ export default class VaultAIPlugin extends Plugin {
 
     this.taskAgentRegistry?.invalidate();
     this.skillRegistry?.invalidate();
+    this.enricherRegistry?.invalidate();
     this.taskAgentRunner?.updateOptions({
       globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
       isPathLocked: (p: string) => this.vaultLockService.isPathLocked(p),
@@ -6021,9 +6273,14 @@ class VaultAISettingTab extends PluginSettingTab {
             await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
             await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
             await new SkillBootstrapService(this.plugin.app, () => this.plugin.settings.skillsFolder).ensureDefaultsInstalled();
+            const enricherRoot = this.plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+            if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
+              await this.plugin.app.vault.createFolder(enricherRoot);
+            }
             this.plugin.vaultPromptLoader?.invalidateAll();
             this.plugin.taskAgentRegistry?.invalidate();
             this.plugin.skillRegistry?.invalidate();
+            this.plugin.enricherRegistry?.invalidate();
             this.plugin.attachVaultSkillFromVault();
             new Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
           } catch (e) {
@@ -6045,6 +6302,19 @@ class VaultAISettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.skillsFolder = value.trim() || DEFAULT_SKILLS_FOLDER;
             this.plugin.skillRegistry?.invalidate();
+            await this.plugin.saveSettings();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Enrichers folder")
+      .setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.")
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_ENRICHERS_FOLDER)
+          .setValue(this.plugin.settings.enrichersFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
+            this.plugin.enricherRegistry?.invalidate();
             await this.plugin.saveSettings();
           }),
       );

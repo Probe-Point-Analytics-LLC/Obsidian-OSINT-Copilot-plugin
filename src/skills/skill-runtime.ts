@@ -1,5 +1,7 @@
 import type { BuiltInSkillId, PlannerTooling, SkillListEntry } from "./skill-types";
 import type { SkillRegistry } from "./skill-registry";
+import type { EnricherRegistry } from "../services/enrichers/enricher-registry";
+import { enrichToolId } from "../services/enrichers/enricher-schema";
 
 export const SKILL_PLANNER_PREFIX = "SKILL_";
 
@@ -55,6 +57,7 @@ export async function buildPlannerTooling(
 	registry: SkillRegistry,
 	skillToggles: Record<string, boolean>,
 	hasAttachments: boolean,
+	enricherRegistry?: EnricherRegistry,
 ): Promise<PlannerTooling> {
 	const vaultSkills = await registry.listVaultSkills();
 	const merged: SkillListEntry[] = [...builtinEntries()];
@@ -67,6 +70,18 @@ export async function buildPlannerTooling(
 			plannerToolId: vaultSkillPlannerToolId(v.id),
 			sourcePath: v.sourcePath,
 		});
+	}
+	if (enricherRegistry) {
+		const enrichers = await enricherRegistry.listRunnable();
+		for (const e of enrichers) {
+			merged.push({
+				kind: "vault",
+				id: `enricher:${e.id}`,
+				name: e.name,
+				description: e.description || `HTTP enricher \`${e.id}\`.`,
+				plannerToolId: enrichToolId(e.id),
+			});
+		}
 	}
 
 	const enabledPlannerToolIds = new Set<string>();

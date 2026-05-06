@@ -117,7 +117,19 @@ On load, the plugin creates missing files under **`OSINTCopilot/custom/prompts/`
 
 **Commands:** **Reload vault prompts**; **Install missing vault prompt files** (adds defaults without overwriting your edits).
 
-### 3. Skills folder (custom planner skills)
+### 3. HTTP enrichers (strict approval)
+
+Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** to draft API enrichers as tools.
+
+- Draft flow requires explicit confirmation before any create/update write.
+- Specs are stored in `OSINTCopilot/custom/enrichers/*.json`.
+- Companion skill docs are stored in `OSINTCopilot/custom/skills/*.md`.
+- Planner tool IDs are exposed as `ENRICH_<id>`.
+- Credentials are env-var references (`auth.envVar`), never stored in spec files.
+
+Detailed setup + example spec mapping: `docs/ENRICHERS_SETUP.md`.
+
+### 4. Skills folder (custom planner skills)
 
 Default **`OSINTCopilot/custom/skills`**. On first run the plugin creates **`README.md`** and **`example-skill.md`** if missing.
 

@@ -31,7 +31,7 @@ __export(main_exports, {
   runtimeSettingsVisibility: () => runtimeSettingsVisibility
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian28 = require("obsidian");
+var import_obsidian29 = require("obsidian");
 
 // src/generated/oidsfBundledSchemas.ts
 var OIDSF_BUNDLED_SCHEMAS = {
@@ -14256,6 +14256,7 @@ var DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversations`;
 var DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
 var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
+var DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`;
 var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
 Research/`;
 var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
@@ -25489,6 +25490,75 @@ function detectOrchestrationIntent(query) {
   return "UNKNOWN";
 }
 
+// src/services/enrichers/enricher-schema.ts
+function parseId(v) {
+  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function enrichToolId(id) {
+  return `ENRICH_${id}`;
+}
+function parseEnrichToolId(toolId) {
+  if (!toolId.startsWith("ENRICH_"))
+    return null;
+  const id = parseId(toolId.slice("ENRICH_".length));
+  return id || null;
+}
+function normalizeEnricherSpec(raw) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const r = raw;
+  const id = parseId(r.id);
+  if (!id)
+    return null;
+  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const timeoutMs = Number(r.limits?.timeoutMs);
+  const retries = Number(r.limits?.retries);
+  const maxResponseChars = Number(r.limits?.maxResponseChars);
+  const authType = String(r.auth?.type || "none");
+  const statusRaw = String(r.status || "draft");
+  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
+  const enabled = r.enabled !== false;
+  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
+  return {
+    id,
+    name: String(r.name || id).trim() || id,
+    description: String(r.description || "").trim(),
+    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
+    status,
+    enabled,
+    allowedDomains,
+    auth: {
+      type: authType === "bearer_env" || authType === "header_env" || authType === "query_env" ? authType : "none",
+      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
+      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
+      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0
+    },
+    request: {
+      method,
+      urlTemplate: String(r.request?.urlTemplate || "").trim(),
+      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
+        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
+      ) : {},
+      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
+    },
+    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
+    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
+      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
+      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
+    } : void 0,
+    skillInstructions: String(r.skillInstructions || "").trim(),
+    limits: {
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
+      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
+      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
+    },
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function isEnricherRunnable(spec) {
+  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
+}
+
 // src/skills/skill-runtime.ts
 var SKILL_PLANNER_PREFIX = "SKILL_";
 function vaultSkillPlannerToolId(vaultSkillId) {
@@ -25524,7 +25594,7 @@ function builtinEntries() {
     }
   ];
 }
-async function buildPlannerTooling(registry, skillToggles, hasAttachments) {
+async function buildPlannerTooling(registry, skillToggles, hasAttachments, enricherRegistry) {
   const vaultSkills = await registry.listVaultSkills();
   const merged = [...builtinEntries()];
   for (const v of vaultSkills) {
@@ -25536,6 +25606,18 @@ async function buildPlannerTooling(registry, skillToggles, hasAttachments) {
       plannerToolId: vaultSkillPlannerToolId(v.id),
       sourcePath: v.sourcePath
     });
+  }
+  if (enricherRegistry) {
+    const enrichers = await enricherRegistry.listRunnable();
+    for (const e of enrichers) {
+      merged.push({
+        kind: "vault",
+        id: `enricher:${e.id}`,
+        name: e.name,
+        description: e.description || `HTTP enricher \`${e.id}\`.`,
+        plannerToolId: enrichToolId(e.id)
+      });
+    }
   }
   const enabledPlannerToolIds = /* @__PURE__ */ new Set();
   const availableToolsLines = [];
@@ -25599,6 +25681,122 @@ function filterToolsToCall(tools, enabled, hasAttachments) {
   });
 }
 
+// src/services/enrichers/enricher-executor.ts
+function interpolate(template, vars) {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
+}
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function ensureDomainAllowed(url, allowlist) {
+  if (!allowlist.length)
+    return;
+  const host = hostOf(url);
+  if (!host)
+    throw new Error("Invalid enricher URL");
+  const ok = allowlist.some((d) => host === d || host.endsWith(`.${d}`));
+  if (!ok)
+    throw new Error(`Domain not allowed by enricher spec: ${host}`);
+}
+function truncate(v, max) {
+  if (v.length <= max)
+    return v;
+  return v.slice(0, max) + "...";
+}
+function authHeader(spec) {
+  const cfg = spec.auth;
+  if (cfg.type === "none")
+    return {};
+  const envVar = cfg.envVar || "";
+  const secret = envVar ? process.env[envVar] : "";
+  if (!secret)
+    throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
+  if (cfg.type === "bearer_env") {
+    return { Authorization: `Bearer ${secret}` };
+  }
+  if (cfg.type === "header_env") {
+    return { [cfg.headerName || "X-API-Key"]: secret };
+  }
+  return {};
+}
+async function executeEnricherHttp(spec, query, attachmentsContext, signal) {
+  const vars = {
+    query,
+    attachments_context: attachmentsContext || ""
+  };
+  const baseUrl = interpolate(spec.request.urlTemplate, vars);
+  const url = new URL(baseUrl);
+  if (spec.auth.type === "query_env") {
+    const envVar = spec.auth.envVar || "";
+    const secret = envVar ? process.env[envVar] : "";
+    if (!secret)
+      throw new Error(`Missing credential env var: ${envVar || "(unset)"}`);
+    url.searchParams.set(spec.auth.queryParam || "api_key", secret);
+  }
+  ensureDomainAllowed(url.toString(), spec.allowedDomains);
+  const headers = {
+    Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+    ...spec.request.headers || {},
+    ...authHeader(spec)
+  };
+  const method = spec.request.method || "GET";
+  const body = method === "POST" && spec.request.bodyTemplate ? interpolate(spec.request.bodyTemplate, vars) : void 0;
+  const started = Date.now();
+  let attempt = 0;
+  let lastErr = null;
+  const totalAttempts = Math.max(1, spec.limits.retries + 1);
+  while (attempt < totalAttempts) {
+    attempt++;
+    try {
+      const timeoutController = new AbortController();
+      const t = setTimeout(() => timeoutController.abort(), spec.limits.timeoutMs);
+      const mergedController = new AbortController();
+      const onAbort = () => {
+        if (!mergedController.signal.aborted)
+          mergedController.abort();
+      };
+      timeoutController.signal.addEventListener("abort", onAbort, { once: true });
+      if (signal)
+        signal.addEventListener("abort", onAbort, { once: true });
+      const res = await fetch(url.toString(), {
+        method,
+        headers,
+        body,
+        signal: mergedController.signal
+      });
+      clearTimeout(t);
+      const text = await res.text();
+      const elapsed2 = Date.now() - started;
+      const truncated = truncate(text, spec.limits.maxResponseChars);
+      const info = `[${spec.id}] ${method} ${url.hostname} status=${res.status} latency_ms=${elapsed2}`;
+      if (!res.ok) {
+        throw new Error(`${info} body=${truncate(text, 1e3)}`);
+      }
+      let summary = truncated;
+      try {
+        const parsed = JSON.parse(text);
+        summary = JSON.stringify(parsed, null, 2);
+      } catch {
+      }
+      console.info("[EnricherExecutor] success", info);
+      return `Enricher ${spec.name} succeeded.
+${truncate(summary, spec.limits.maxResponseChars)}`;
+    } catch (e) {
+      lastErr = e;
+      if (attempt >= totalAttempts)
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+    }
+  }
+  const elapsed = Date.now() - started;
+  console.warn("[EnricherExecutor] failed", { id: spec.id, elapsed, error: String(lastErr) });
+  throw new Error(`Enricher ${spec.name} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}
+
 // src/skills/skill-executor.ts
 async function executeVaultSkillTool(plugin, toolId, query, attachmentsContext, signal) {
   const vid = parseVaultSkillPlannerTool(toolId);
@@ -25628,6 +25826,15 @@ ${attachmentsContext || "(none)"}`;
     signal
   );
   return text;
+}
+async function executeEnricherTool(plugin, toolId, query, attachmentsContext, signal) {
+  const id = parseEnrichToolId(toolId);
+  if (!id)
+    return `Invalid enricher tool id: ${toolId}`;
+  const spec = await plugin.enricherRegistry.getById(id);
+  if (!spec)
+    return `Unknown enricher \`${id}\`.`;
+  return executeEnricherHttp(spec, query, attachmentsContext, signal);
 }
 
 // src/services/agent-runtime/provider-types.ts
@@ -26433,7 +26640,8 @@ ${msg.content}`).join("\n\n") : "No previous conversation.";
     const tooling = await buildPlannerTooling(
       this.plugin.skillRegistry,
       this.plugin.settings.skillToggles ?? {},
-      hasAttachments
+      hasAttachments,
+      this.plugin.enricherRegistry
     );
     if (tooling.enabledPlannerToolIds.size === 0) {
       return {
@@ -26682,6 +26890,7 @@ ${text}`);
     const toolToDisplayName = ORCHESTRATION_TOOL_DISPLAY_NAMES;
     const isCancelled = (toolId) => options?.globalAbort?.aborted === true || options?.abortSignals?.[toolId]?.aborted === true;
     const vaultSkillList = await this.plugin.skillRegistry.listVaultSkills();
+    const enricherList = await this.plugin.enricherRegistry.listRunnable();
     const vaultSkillTitle = (toolId) => {
       const id = parseVaultSkillPlannerTool(toolId);
       if (!id)
@@ -26689,8 +26898,15 @@ ${text}`);
       const m = vaultSkillList.find((s) => s.id === id);
       return m?.name || toolId;
     };
+    const enricherTitle = (toolId) => {
+      const id = parseEnrichToolId(toolId);
+      if (!id)
+        return toolId;
+      const m = enricherList.find((e) => e.id === id);
+      return m?.name || toolId;
+    };
     const promises = tools.map(async (tool) => {
-      const displayName = toolToDisplayName[tool] || (tool.startsWith("SKILL_") ? vaultSkillTitle(tool) : tool);
+      const displayName = toolToDisplayName[tool] || (tool.startsWith("SKILL_") ? vaultSkillTitle(tool) : tool.startsWith("ENRICH_") ? enricherTitle(tool) : tool);
       try {
         switch (tool) {
           case "LOCAL_VAULT": {
@@ -26788,6 +27004,31 @@ Content Preview: ${content.substring(0, 500)}...`);
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 results[tool] = `Skill error: ${msg}`;
+                onProgress(displayName, "Failed", 100);
+              }
+              break;
+            }
+            if (tool.startsWith("ENRICH_")) {
+              if (isCancelled(tool)) {
+                results[tool] = "Cancelled by user.";
+                onProgress(displayName, "Cancelled", 100);
+                break;
+              }
+              onProgress(displayName, "Running enricher API tool...", 35);
+              const sig = options?.abortSignals?.[tool] ?? options?.globalAbort;
+              try {
+                const out = await executeEnricherTool(
+                  this.plugin,
+                  tool,
+                  query,
+                  attachmentsContext,
+                  sig
+                );
+                results[tool] = out;
+                onProgress(displayName, "Complete", 100);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                results[tool] = `Enricher error: ${msg}`;
                 onProgress(displayName, "Failed", 100);
               }
               break;
@@ -29239,6 +29480,81 @@ function mergeEnabledFamilies(partial) {
   return { ...DEFAULT_ENABLED_SCHEMA_FAMILIES, ...partial };
 }
 
+// src/services/enrichers/enricher-registry.ts
+var import_obsidian28 = require("obsidian");
+var EnricherRegistry = class {
+  constructor(app, getFolder) {
+    this.app = app;
+    this.getFolder = getFolder;
+    this.cache = null;
+    this.registered = false;
+  }
+  root() {
+    return (0, import_obsidian28.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
+  }
+  registerVaultEvents(plugin) {
+    if (this.registered)
+      return;
+    this.registered = true;
+    const maybeInvalidate = (file) => {
+      if (!file)
+        return;
+      const root = this.root();
+      const p = (0, import_obsidian28.normalizePath)(file.path);
+      if (p === root || p.startsWith(`${root}/`))
+        this.cache = null;
+    };
+    plugin.registerEvent(this.app.vault.on("modify", maybeInvalidate));
+    plugin.registerEvent(this.app.vault.on("create", maybeInvalidate));
+    plugin.registerEvent(this.app.vault.on("delete", maybeInvalidate));
+    plugin.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      maybeInvalidate(file);
+      if (!oldPath)
+        return;
+      const root = this.root();
+      const p = (0, import_obsidian28.normalizePath)(oldPath);
+      if (p === root || p.startsWith(`${root}/`))
+        this.cache = null;
+    }));
+  }
+  invalidate() {
+    this.cache = null;
+  }
+  async listAll() {
+    if (this.cache)
+      return this.cache;
+    const folder = this.app.vault.getAbstractFileByPath(this.root());
+    if (!(folder instanceof import_obsidian28.TFolder)) {
+      this.cache = [];
+      return this.cache;
+    }
+    const out = [];
+    for (const child of folder.children) {
+      if (!(child instanceof import_obsidian28.TFile) || child.extension !== "json")
+        continue;
+      try {
+        const raw = await this.app.vault.read(child);
+        const parsed = normalizeEnricherSpec(JSON.parse(raw));
+        if (parsed)
+          out.push(parsed);
+      } catch (e) {
+        console.warn("[EnricherRegistry] failed to parse", child.path, e);
+      }
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    this.cache = out;
+    return out;
+  }
+  async listRunnable() {
+    const all = await this.listAll();
+    return all.filter(isEnricherRunnable);
+  }
+  async getById(id) {
+    const all = await this.listAll();
+    return all.find((e) => e.id === id) || null;
+  }
+};
+
 // main.ts
 var ENTITY_EXTRACTION_MODEL = "claude-code";
 var LOCAL_VAULT_MODEL = "claude-code";
@@ -29260,6 +29576,7 @@ var DEFAULT_SETTINGS = {
   taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
   taskAgentOverrides: {},
   skillsFolder: DEFAULT_SKILLS_FOLDER,
+  enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
   skillToggles: {},
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
@@ -29282,7 +29599,7 @@ var DEFAULT_SETTINGS = {
   oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS }
 };
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var VaultAIPlugin = class extends import_obsidian28.Plugin {
+var VaultAIPlugin = class extends import_obsidian29.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -29375,6 +29692,16 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     } catch (e) {
       console.warn("OSINTCopilot: skill bootstrap failed:", e);
     }
+    try {
+      const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+      if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
+        await this.app.vault.createFolder(enricherRoot);
+      }
+    } catch (e) {
+      console.warn("OSINTCopilot: enricher folder bootstrap failed:", e);
+    }
+    this.enricherRegistry = new EnricherRegistry(this.app, () => this.settings.enrichersFolder);
+    this.enricherRegistry.registerVaultEvents(this);
     this.taskAgentRunner = new TaskAgentRunner(
       this.app,
       () => this.claudeCodeService,
@@ -29463,21 +29790,21 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian28.TFile) {
+        if (file instanceof import_obsidian29.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian28.TFile) {
+        if (file instanceof import_obsidian29.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian28.TFile) {
+        if (file instanceof import_obsidian29.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -29491,21 +29818,21 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path) => {
-      const base = (0, import_obsidian28.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
-      const prefix = (0, import_obsidian28.normalizePath)(`${base}/schemas`);
-      const p = (0, import_obsidian28.normalizePath)(path);
+      const base = (0, import_obsidian29.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const prefix = (0, import_obsidian29.normalizePath)(`${base}/schemas`);
+      const p = (0, import_obsidian29.normalizePath)(path);
       return p === prefix || p.startsWith(`${prefix}/`);
     };
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian28.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian29.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian28.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian29.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
@@ -29580,10 +29907,10 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
           a.download = `osint-investigation-${timestamp2}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian28.Notice("Investigation exported successfully");
+          new import_obsidian29.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian28.Notice("Failed to export investigation");
+          new import_obsidian29.Notice("Failed to export investigation");
         }
       }
     });
@@ -29599,7 +29926,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       name: "Reindex vault",
       callback: () => {
         void this.buildIndex().then(() => {
-          new import_obsidian28.Notice("Vault reindexed successfully.");
+          new import_obsidian29.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -29608,7 +29935,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian28.Notice("Entities reloaded from notes.");
+          new import_obsidian29.Notice("Entities reloaded from notes.");
         });
       }
     });
@@ -29626,14 +29953,14 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
         void (async () => {
           try {
             const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
-            new import_obsidian28.Notice(
+            new import_obsidian29.Notice(
               `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
               9e3
             );
             await this.entityManager.loadEntitiesFromNotes();
             await this.refreshOrOpenGraphView();
           } catch (e) {
-            new import_obsidian28.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
+            new import_obsidian29.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
           }
         })();
       }
@@ -29645,8 +29972,9 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
         this.vaultPromptLoader?.invalidateAll();
         this.taskAgentRegistry?.invalidate();
         this.skillRegistry?.invalidate();
+        this.enricherRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new import_obsidian28.Notice("Vault prompts, skills, and task-agent registry refreshed.");
+        new import_obsidian29.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
       }
     });
     this.addCommand({
@@ -29658,19 +29986,254 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
             await new VaultPromptBootstrapService(this.app, () => this.settings.promptsFolder).ensureDefaultsInstalled();
             await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
             await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
+            const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+            if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
+              await this.app.vault.createFolder(enricherRoot);
+            }
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
+            this.enricherRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new import_obsidian28.Notice("Missing default prompt, skills, and task-agent files were created (existing files unchanged).");
+            new import_obsidian29.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
           } catch (e) {
-            new import_obsidian28.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+            new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
           }
         })();
       }
     });
+    this.addCommand({
+      id: "draft-http-enricher-from-api-docs",
+      name: "Draft HTTP enricher skill from API documentation",
+      callback: () => {
+        void this.draftHttpEnricherFromUserDetails();
+      }
+    });
+    this.addCommand({
+      id: "set-http-enricher-enabled-state",
+      name: "Set HTTP enricher enabled state (approval required)",
+      callback: () => {
+        void this.setHttpEnricherEnabledState();
+      }
+    });
     this.registerVaultLockEditorHooks();
     this.addSettingTab(new VaultAISettingTab(this.app, this));
+  }
+  extractJsonObject(raw) {
+    const text = String(raw || "").trim();
+    if (!text)
+      return null;
+    const fenced = text.match(/```json\s*([\s\S]*?)```/i);
+    const candidate = fenced?.[1] || text;
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start)
+      return null;
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  async appendEnricherAuditLine(line) {
+    const path = `${this.settings.enrichersFolder}/audit.log.md`;
+    const stamped = `- ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+`;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian29.TFile) {
+      const prev = await this.app.vault.read(existing);
+      await this.app.vault.modify(existing, prev + stamped);
+      return;
+    }
+    const parts = path.split("/").slice(0, -1);
+    let current = "";
+    for (const p of parts) {
+      current = current ? `${current}/${p}` : p;
+      if (!this.app.vault.getAbstractFileByPath(current)) {
+        await this.app.vault.createFolder(current);
+      }
+    }
+    await this.app.vault.create(path, "# Enricher audit log\n\n" + stamped);
+  }
+  async draftHttpEnricherFromUserDetails() {
+    const docUrl = (window.prompt("API documentation URL for this enricher:") || "").trim();
+    if (!docUrl) {
+      new import_obsidian29.Notice("Cancelled: API documentation URL is required.");
+      return;
+    }
+    const details = (window.prompt("What should this enricher search and return? Include required params.") || "").trim();
+    if (!details) {
+      new import_obsidian29.Notice("Cancelled: integration details are required.");
+      return;
+    }
+    const system = [
+      "You draft JSON for an OSINT HTTP enricher tool.",
+      "Return ONLY one JSON object with keys:",
+      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, inputHints, skillInstructions.",
+      "Use {{query}} placeholder in urlTemplate/body when relevant.",
+      "Never include credentials or API keys."
+    ].join("\n");
+    const user = `Documentation URL:
+${docUrl}
+
+User requirements:
+${details}`;
+    let parsed = null;
+    let docHost = "";
+    try {
+      docHost = new URL(docUrl).hostname;
+    } catch {
+      docHost = "";
+    }
+    try {
+      const raw = await this.graphApiService.callRemoteModel(
+        [
+          { role: "system", content: system },
+          { role: "user", content: user }
+        ],
+        false
+      );
+      parsed = this.extractJsonObject(raw);
+    } catch (e) {
+      console.warn("[EnricherDraft] model draft failed, using fallback:", e);
+    }
+    const draft = normalizeEnricherSpec({
+      id: parsed?.["id"] || details.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      name: parsed?.["name"] || "Custom Enricher",
+      description: parsed?.["description"] || details,
+      documentationUrl: docUrl,
+      status: "active",
+      enabled: true,
+      allowedDomains: parsed?.["allowedDomains"] || (docHost ? [docHost] : []),
+      auth: {
+        type: parsed?.["authType"] || "none",
+        envVar: parsed?.["authEnvVar"] || "",
+        headerName: parsed?.["authHeaderName"] || "X-API-Key",
+        queryParam: parsed?.["authQueryParam"] || "api_key"
+      },
+      request: {
+        method: String(parsed?.["method"] || "GET").toUpperCase() === "POST" ? "POST" : "GET",
+        urlTemplate: parsed?.["urlTemplate"] || docUrl,
+        headers: { "User-Agent": "OSINT-Copilot-Enricher/1.0" }
+      },
+      inputHints: parsed?.["inputHints"] || ["query"],
+      skillInstructions: parsed?.["skillInstructions"] || "Use this enricher when the user asks for this data source.",
+      limits: {
+        timeoutMs: 15e3,
+        retries: 1,
+        maxResponseChars: 8e3
+      },
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    if (!draft) {
+      new import_obsidian29.Notice("Failed to build enricher draft.");
+      return;
+    }
+    const enricherPath = `${this.settings.enrichersFolder}/${draft.id}.json`;
+    const skillPath = `${this.settings.skillsFolder}/${draft.id}.md`;
+    const skillMd = `---
+skill_kind: vault
+id: ${draft.id}
+name: ${draft.name}
+description: ${draft.description}
+---
+${draft.skillInstructions}
+
+Tool id: ${enrichToolId(draft.id)}
+This skill executes the configured HTTP enricher spec in ${enricherPath}.
+`;
+    const confirmMsg = [
+      `Create/update enricher "${draft.name}"?`,
+      `Spec: ${enricherPath}`,
+      `Skill: ${skillPath}`,
+      `Auth mode: ${draft.auth.type}${draft.auth.envVar ? ` (env: ${draft.auth.envVar})` : ""}`,
+      "No credentials will be stored; env var references only."
+    ].join("\n");
+    new ConfirmModal(
+      this.app,
+      "Approve enricher draft",
+      confirmMsg,
+      () => {
+        void (async () => {
+          const ensureFolder = async (path) => {
+            const parts = path.split("/").slice(0, -1);
+            let current = "";
+            for (const p of parts) {
+              current = current ? `${current}/${p}` : p;
+              if (!this.app.vault.getAbstractFileByPath(current)) {
+                await this.app.vault.createFolder(current);
+              }
+            }
+          };
+          try {
+            await ensureFolder(enricherPath);
+            await ensureFolder(skillPath);
+            const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
+            if (existingSpec instanceof import_obsidian29.TFile) {
+              await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
+            } else {
+              await this.app.vault.create(enricherPath, JSON.stringify(draft, null, 2));
+            }
+            const existingSkill = this.app.vault.getAbstractFileByPath(skillPath);
+            if (existingSkill instanceof import_obsidian29.TFile) {
+              await this.app.vault.modify(existingSkill, skillMd);
+            } else {
+              await this.app.vault.create(skillPath, skillMd);
+            }
+            this.enricherRegistry.invalidate();
+            this.skillRegistry.invalidate();
+            await this.appendEnricherAuditLine(`approved create_or_update id=${draft.id} doc=${docUrl}`);
+            new import_obsidian29.Notice(`Enricher ${draft.name} saved and activated.`);
+          } catch (e) {
+            new import_obsidian29.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+          }
+        })();
+      },
+      () => new import_obsidian29.Notice("Enricher draft cancelled."),
+      false
+    ).open();
+  }
+  async setHttpEnricherEnabledState() {
+    const idInput = (window.prompt("Enricher id (without ENRICH_):") || "").trim().toLowerCase();
+    if (!idInput)
+      return;
+    const nextRaw = (window.prompt("Set state: active or disabled") || "").trim().toLowerCase();
+    const nextStatus = nextRaw === "disabled" ? "disabled" : nextRaw === "active" ? "active" : "";
+    if (!nextStatus) {
+      new import_obsidian29.Notice("Cancelled: state must be 'active' or 'disabled'.");
+      return;
+    }
+    const path = `${this.settings.enrichersFolder}/${idInput}.json`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian29.TFile)) {
+      new import_obsidian29.Notice(`Enricher not found: ${path}`);
+      return;
+    }
+    const raw = await this.app.vault.read(file);
+    const parsed = normalizeEnricherSpec(JSON.parse(raw));
+    if (!parsed) {
+      new import_obsidian29.Notice("Invalid enricher spec JSON.");
+      return;
+    }
+    const nextEnabled = nextStatus === "active";
+    const msg = `Change enricher "${parsed.name}" status to ${nextStatus}?`;
+    new ConfirmModal(
+      this.app,
+      "Approve enricher state change",
+      msg,
+      () => {
+        void (async () => {
+          parsed.status = nextStatus;
+          parsed.enabled = nextEnabled;
+          parsed.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          await this.app.vault.modify(file, JSON.stringify(parsed, null, 2));
+          this.enricherRegistry.invalidate();
+          await this.appendEnricherAuditLine(`approved set_state id=${parsed.id} status=${nextStatus}`);
+          new import_obsidian29.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
+        })();
+      },
+      () => new import_obsidian29.Notice("State change cancelled.")
+    ).open();
   }
   onunload() {
   }
@@ -29699,6 +30262,9 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     }
     if (!merged.skillToggles || typeof merged.skillToggles !== "object") {
       merged.skillToggles = {};
+    }
+    if (typeof merged.enrichersFolder !== "string" || !merged.enrichersFolder.trim()) {
+      merged.enrichersFolder = DEFAULT_SETTINGS.enrichersFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -29774,6 +30340,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     }
     this.taskAgentRegistry?.invalidate();
     this.skillRegistry?.invalidate();
+    this.enricherRegistry?.invalidate();
     this.taskAgentRunner?.updateOptions({
       globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
       isPathLocked: (p) => this.vaultLockService.isPathLocked(p)
@@ -29824,7 +30391,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian28.MarkdownView)
+          if (leaf.view instanceof import_obsidian29.MarkdownView)
             update(leaf);
         });
       })
@@ -29841,12 +30408,12 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       })
     );
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (leaf.view instanceof import_obsidian28.MarkdownView)
+      if (leaf.view instanceof import_obsidian29.MarkdownView)
         update(leaf);
     });
   }
   updateVaultLockLeafMode(leaf) {
-    if (!leaf || !(leaf.view instanceof import_obsidian28.MarkdownView))
+    if (!leaf || !(leaf.view instanceof import_obsidian29.MarkdownView))
       return;
     const path = leaf.view.file?.path;
     if (!path || path.endsWith(".canvas"))
@@ -29897,12 +30464,12 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     const btn = document.createElement("div");
     btn.addClass("view-action", "clickable-icon", "osint-copilot-vault-unlock-btn");
     btn.setAttribute("aria-label", "Locked \u2014 click to unlock");
-    (0, import_obsidian28.setIcon)(btn, "lock");
+    (0, import_obsidian29.setIcon)(btn, "lock");
     btn.addEventListener("click", () => {
       new VaultUnlockModal(this.app, () => {
         this.vaultLockService.unlockPath(path);
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian28.MarkdownView && leaf.view.file?.path === path) {
+          if (leaf.view instanceof import_obsidian29.MarkdownView && leaf.view.file?.path === path) {
             this.updateVaultLockLeafMode(leaf);
           }
         });
@@ -29955,7 +30522,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault() {
-    const base = (0, import_obsidian28.normalizePath)(this.settings.entityBasePath);
+    const base = (0, import_obsidian29.normalizePath)(this.settings.entityBasePath);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + "/"));
     let updated = 0;
     for (const file of files) {
@@ -29988,7 +30555,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     if (this.schemaCatalogService) {
       await this.schemaCatalogService.rebuild();
     }
-    new import_obsidian28.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
+    new import_obsidian29.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
   }
   /**
    * Open the Graph View in the main editor area.
@@ -29997,7 +30564,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
    */
   async openGraphView(forceNew = false) {
     if (!this.settings.enableGraphFeatures) {
-      new import_obsidian28.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian29.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -30041,7 +30608,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
-        new import_obsidian28.Notice("Graph view updated with new entities");
+        new import_obsidian29.Notice("Graph view updated with new entities");
       }
     }
   }
@@ -30062,7 +30629,7 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
       if (this.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian28.Notice("Graph view opened with new entities");
+        new import_obsidian29.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -30110,15 +30677,15 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
   async showEntityOnMap(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian28.Notice("Entity not found");
+      new import_obsidian29.Notice("Entity not found");
       return;
     }
     if (entity.type !== "Location") {
-      new import_obsidian28.Notice("Only location entities can be shown on the map");
+      new import_obsidian29.Notice("Only location entities can be shown on the map");
       return;
     }
     if (!entity.properties.latitude || !entity.properties.longitude) {
-      new import_obsidian28.Notice("Location has no coordinates. Please add latitude and longitude.");
+      new import_obsidian29.Notice("Location has no coordinates. Please add latitude and longitude.");
       return;
     }
     await this.openMapView();
@@ -30512,7 +31079,7 @@ ${additionalContext}
     }
   }
 };
-var AskModal = class extends import_obsidian28.Modal {
+var AskModal = class extends import_obsidian29.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -30540,7 +31107,7 @@ var AskModal = class extends import_obsidian28.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian28.Notice("Please enter a question.");
+      new import_obsidian29.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -30556,7 +31123,7 @@ var AskModal = class extends import_obsidian28.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian28.Notice("Answer copied to clipboard.");
+        new import_obsidian29.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -30567,7 +31134,7 @@ var AskModal = class extends import_obsidian28.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian28.TFile) {
+              if (file instanceof import_obsidian29.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -30587,7 +31154,7 @@ var AskModal = class extends import_obsidian28.Modal {
     contentEl.empty();
   }
 };
-var RenameConversationModal = class extends import_obsidian28.Modal {
+var RenameConversationModal = class extends import_obsidian29.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -30653,7 +31220,7 @@ function runtimeSettingsVisibility(selectedRuntimeId) {
     showSelectedCustomSettings: isCustom
   };
 }
-var _ChatView = class _ChatView extends import_obsidian28.ItemView {
+var _ChatView = class _ChatView extends import_obsidian29.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -30737,7 +31304,7 @@ ${ev.details}`;
     if (fallback && fallback !== cur) {
       this.plugin.settings.agentRuntimeProvider = fallback;
       await this.plugin.saveSettings();
-      new import_obsidian28.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
+      new import_obsidian29.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
   buildRuntimeHeaderRow(buttonGroup, av) {
@@ -30762,7 +31329,7 @@ ${ev.details}`;
       });
       return;
     }
-    new import_obsidian28.Setting(wrap).setName("Runtime").addDropdown((dd) => {
+    new import_obsidian29.Setting(wrap).setName("Runtime").addDropdown((dd) => {
       for (const rt of available) {
         dd.addOption(rt.id, rt.displayName);
       }
@@ -31015,18 +31582,18 @@ ${ev.details}`;
           "files =",
           draggable.files?.length
         );
-        if (draggable.file instanceof import_obsidian28.TFolder) {
+        if (draggable.file instanceof import_obsidian29.TFolder) {
           await this.handleDroppedFolder(draggable.file);
           handled = true;
-        } else if (draggable.file instanceof import_obsidian28.TFile) {
+        } else if (draggable.file instanceof import_obsidian29.TFile) {
           await this.handleDroppedAbstractFile(draggable.file);
           handled = true;
         }
         if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian28.TFolder)
+            if (f instanceof import_obsidian29.TFolder)
               await this.handleDroppedFolder(f);
-            else if (f instanceof import_obsidian28.TFile)
+            else if (f instanceof import_obsidian29.TFile)
               await this.handleDroppedAbstractFile(f);
           }
           handled = true;
@@ -31035,10 +31602,10 @@ ${ev.details}`;
           const info = draggable.info;
           if (typeof info === "string") {
             const resolved = this.app.vault.getAbstractFileByPath(info);
-            if (resolved instanceof import_obsidian28.TFolder) {
+            if (resolved instanceof import_obsidian29.TFolder) {
               await this.handleDroppedFolder(resolved);
               handled = true;
-            } else if (resolved instanceof import_obsidian28.TFile) {
+            } else if (resolved instanceof import_obsidian29.TFile) {
               await this.handleDroppedAbstractFile(resolved);
               handled = true;
             }
@@ -31049,10 +31616,10 @@ ${ev.details}`;
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian28.TFolder) {
+          if (abstractFile instanceof import_obsidian29.TFolder) {
             await this.handleDroppedFolder(abstractFile);
             handled = true;
-          } else if (abstractFile instanceof import_obsidian28.TFile) {
+          } else if (abstractFile instanceof import_obsidian29.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             handled = true;
           }
@@ -31202,7 +31769,7 @@ ${ev.details}`;
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian28.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian29.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -31240,12 +31807,12 @@ ${ev.details}`;
     target.value = "";
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian28.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian29.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian28.Notice(`Attached: ${file.name}`);
+    new import_obsidian29.Notice(`Attached: ${file.name}`);
   }
   static isImageFile(name) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -31256,12 +31823,12 @@ ${ev.details}`;
       return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian28.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
+      new import_obsidian29.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian28.Notice(`Attached: ${file.name}`);
+    new import_obsidian29.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
@@ -31275,12 +31842,12 @@ ${ev.details}`;
       return;
     const ext = (file.extension || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian28.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian29.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian28.Notice(`Attached: ${file.name}`);
+    new import_obsidian29.Notice(`Attached: ${file.name}`);
   }
   /**
    * Handle a dropped folder — recursively collect all allowed files and attach them.
@@ -31290,24 +31857,24 @@ ${ev.details}`;
       return;
     const files = this.collectFilesFromFolder(folder);
     if (files.length === 0) {
-      new import_obsidian28.Notice(`No supported files found in folder "${folder.name}"`);
+      new import_obsidian29.Notice(`No supported files found in folder "${folder.name}"`);
       return;
     }
     for (const file of files) {
       this.attachedFiles.push({ file, extracted: false });
     }
     this.renderAttachments();
-    new import_obsidian28.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+    new import_obsidian29.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
   }
   collectFilesFromFolder(folder) {
     const results = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian28.TFile) {
+      if (child instanceof import_obsidian29.TFile) {
         const ext = (child.extension || "").toLowerCase();
         if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
           results.push(child);
         }
-      } else if (child instanceof import_obsidian28.TFolder) {
+      } else if (child instanceof import_obsidian29.TFolder) {
         results.push(...this.collectFilesFromFolder(child));
       }
     }
@@ -31371,14 +31938,14 @@ ${ev.details}`;
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian28.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian29.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian28.Notice(`Text extracted from URL`);
+      new import_obsidian29.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       console.error("URL extraction error:", error);
-      new import_obsidian28.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian29.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
       this.inputEl.disabled = false;
@@ -31392,7 +31959,7 @@ ${ev.details}`;
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian28.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian29.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -31564,7 +32131,7 @@ ${ev.details}`;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian28.Notice("Failed to load conversation");
+      new import_obsidian29.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -31577,7 +32144,7 @@ ${ev.details}`;
     this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian28.Notice("Started new conversation");
+    new import_obsidian29.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -31593,9 +32160,9 @@ ${ev.details}`;
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian28.Notice("Conversation deleted");
+          new import_obsidian29.Notice("Conversation deleted");
         } else {
-          new import_obsidian28.Notice("Failed to delete conversation");
+          new import_obsidian29.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -31613,7 +32180,7 @@ ${ev.details}`;
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian28.Notice("Conversation renamed");
+          new import_obsidian29.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -31637,7 +32204,7 @@ ${ev.details}`;
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian28.MarkdownRenderer.render(
+      await import_obsidian29.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -31764,7 +32331,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian28.TFile) {
+              if (file instanceof import_obsidian29.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -31814,10 +32381,10 @@ ${ev.details}`;
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian28.TFile) {
+                if (file instanceof import_obsidian29.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian28.Notice("Linked note file not found");
+                  new import_obsidian29.Notice("Linked note file not found");
                 }
               })();
             }
@@ -31880,7 +32447,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian28.TFile) {
+              if (file instanceof import_obsidian29.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -32049,11 +32616,11 @@ ${ev.details}`;
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian28.TFile) {
+            if (file instanceof import_obsidian29.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian28.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian29.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian28.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian29.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -32155,7 +32722,7 @@ ${ev.details}`;
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian28.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian29.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -32373,7 +32940,7 @@ ${ev.details}`;
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian28.Notice("Task cancelled");
+        new import_obsidian29.Notice("Task cancelled");
       },
       () => {
       },
@@ -32404,7 +32971,7 @@ ${ev.details}`;
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian28.Notice("Operation cancelled");
+        new import_obsidian29.Notice("Operation cancelled");
       },
       () => {
       },
@@ -32426,7 +32993,7 @@ ${ev.details}`;
     }
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
     if (sendRuntimeAvailability.availableIds.length === 0) {
-      new import_obsidian28.Notice(
+      new import_obsidian29.Notice(
         "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8e3
       );
@@ -32501,21 +33068,21 @@ ${ev.details}`;
             text = attachment.content;
           } else if (isImage) {
             let absolutePath;
-            if (attachment.file instanceof import_obsidian28.TFile) {
+            if (attachment.file instanceof import_obsidian29.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
-              const evidencePath = (0, import_obsidian28.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const evidencePath = (0, import_obsidian29.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
               const folder = this.app.vault.getAbstractFileByPath(evidencePath);
               if (!folder) {
                 await this.app.vault.createFolder(evidencePath);
               }
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
-              const destPath = (0, import_obsidian28.normalizePath)(`${evidencePath}/${safeName}`);
+              const destPath = (0, import_obsidian29.normalizePath)(`${evidencePath}/${safeName}`);
               const buffer = await attachment.file.arrayBuffer();
               const existing = this.app.vault.getAbstractFileByPath(destPath);
               let tFile;
-              if (existing instanceof import_obsidian28.TFile) {
+              if (existing instanceof import_obsidian29.TFile) {
                 tFile = existing;
               } else {
                 tFile = await this.app.vault.createBinary(destPath, buffer);
@@ -32531,7 +33098,7 @@ ${ev.details}`;
                 rawCli: this.plugin.settings.extractionDebugRawCli
               }
             );
-          } else if (attachment.file instanceof import_obsidian28.TFile) {
+          } else if (attachment.file instanceof import_obsidian29.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
@@ -32565,7 +33132,7 @@ ${text}`);
           } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian28.Notice(userMessage, 8e3);
+          new import_obsidian29.Notice(userMessage, 8e3);
         }
       }
       this.activeAbortControllers.delete(extractionMsgIndex);
@@ -32605,9 +33172,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian28.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian29.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian28.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian29.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -32971,13 +33538,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian28.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian29.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian28.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian29.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -33046,7 +33613,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     }).style.marginTop = "0";
     if (plan.planSummary) {
       const summaryDiv = planDiv.createDiv("vault-ai-plan-summary");
-      import_obsidian28.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
+      import_obsidian29.MarkdownRenderer.render(this.app, plan.planSummary, summaryDiv, "", this);
     }
     const allTools = [
       { id: "LOCAL_VAULT", icon: "\u{1F4C1}", label: "Local Vault", desc: "Search your existing Obsidian notes" },
@@ -33111,7 +33678,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
           selectedTools.push(toolId);
       });
       if (selectedTools.length === 0) {
-        new import_obsidian28.Notice("Please select at least one investigation module.");
+        new import_obsidian29.Notice("Please select at least one investigation module.");
         return;
       }
       executeBtn.disabled = true;
@@ -33375,7 +33942,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian28.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian29.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -33492,7 +34059,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian28.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian29.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -33904,7 +34471,7 @@ _ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
   "ico"
 ]);
 var ChatView = _ChatView;
-var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian29.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /**
@@ -33952,47 +34519,47 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian28.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian28.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian28.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian29.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian28.Notice("Update successful! Reloading plugin...");
+            new import_obsidian29.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian28.Notice("Failed to download update. Check console for details.");
+            new import_obsidian29.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian28.Notice("An error occurred during update.");
+          new import_obsidian29.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Graph note lock").setHeading();
-    new import_obsidian28.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
+    new import_obsidian29.Setting(containerEl).setName("Graph note lock").setHeading();
+    new import_obsidian29.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
       "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths."
     ).addButton(
       (btn) => btn.setButtonText("Unlock all").onClick(async () => {
         if (!confirm("Unlock all notes locked from the graph?"))
           return;
         this.plugin.vaultLockService.unlockAll();
-        new import_obsidian28.Notice("All graph locks cleared.");
+        new import_obsidian29.Notice("All graph locks cleared.");
         this.display();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian29.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -34001,7 +34568,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         }
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian29.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -34009,37 +34576,42 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
       text.inputEl.rows = 4;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian28.Setting(containerEl).setName("Vault prompts").setHeading();
-    new import_obsidian28.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
+    new import_obsidian29.Setting(containerEl).setName("Vault prompts").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
       (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
         this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
+    new import_obsidian29.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
       (text) => text.setPlaceholder("default").setValue(this.plugin.settings.activeAgentId).onChange(async (value) => {
         this.plugin.settings.activeAgentId = value.trim() || "default";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           await new SkillBootstrapService(this.plugin.app, () => this.plugin.settings.skillsFolder).ensureDefaultsInstalled();
+          const enricherRoot = this.plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+          if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
+            await this.plugin.app.vault.createFolder(enricherRoot);
+          }
           this.plugin.vaultPromptLoader?.invalidateAll();
           this.plugin.taskAgentRegistry?.invalidate();
           this.plugin.skillRegistry?.invalidate();
+          this.plugin.enricherRegistry?.invalidate();
           this.plugin.attachVaultSkillFromVault();
-          new import_obsidian28.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
+          new import_obsidian29.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
         } catch (e) {
-          new import_obsidian28.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Skills (orchestration)").setHeading();
-    new import_obsidian28.Setting(containerEl).setName("Skills folder").setDesc(
+    new import_obsidian29.Setting(containerEl).setName("Skills (orchestration)").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Skills folder").setDesc(
       "Markdown skills the legacy planner may invoke (SKILL_*). With unified chat, the chosen runtime handles tools; legacy flow still uses skill toggles from settings defaults."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
@@ -34048,21 +34620,28 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Task agents (vault)").setHeading();
-    new import_obsidian28.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
+    new import_obsidian29.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
+      (text) => text.setPlaceholder(DEFAULT_ENRICHERS_FOLDER).setValue(this.plugin.settings.enrichersFolder).onChange(async (value) => {
+        this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
+        this.plugin.enricherRegistry?.invalidate();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian29.Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
       (t) => t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
         this.plugin.settings.taskAgentsEnabled = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
+    new import_obsidian29.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
       (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
         this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
+    new import_obsidian29.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
       text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
@@ -34070,21 +34649,21 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
       text.inputEl.rows = 3;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian28.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           this.plugin.taskAgentRegistry?.invalidate();
-          new import_obsidian28.Notice("Task-agent defaults installed where missing.");
+          new import_obsidian29.Notice("Task-agent defaults installed where missing.");
           this.display();
         } catch (e) {
-          new import_obsidian28.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian29.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
-    new import_obsidian28.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian29.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
         this.plugin.settings.conversationFolder = folder;
@@ -34093,7 +34672,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Unified chat agent").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
       text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description"
@@ -34103,7 +34682,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
       (rt) => rt.id === selectedRuntimeId
     );
     const visibility = runtimeSettingsVisibility(selectedRuntimeId);
-    new import_obsidian28.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
+    new import_obsidian29.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
       (dd) => {
         const options = getConfiguredRuntimeOptions(this.plugin);
         for (const option of options)
@@ -34117,33 +34696,33 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         });
       }
     );
-    new import_obsidian28.Setting(containerEl).setName("Unified agent orchestration").setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.").addToggle(
+    new import_obsidian29.Setting(containerEl).setName("Unified agent orchestration").setDesc("When on (default), chat skips the legacy planner and built-in LOCAL_VAULT / EXTRACT tools. Turn off to restore the old multi-tool flow.").addToggle(
       (t) => t.setValue(this.plugin.settings.unifiedAgentOrchestration !== false).onChange(async (v) => {
         this.plugin.settings.unifiedAgentOrchestration = v;
         await this.plugin.saveSettings();
       })
     );
     if (visibility.showHermesSettings) {
-      new import_obsidian28.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
+      new import_obsidian29.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
         (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
           this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
+      new import_obsidian29.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
         (text) => text.setPlaceholder("").setValue(this.plugin.settings.hermesAgentExtraArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentExtraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
+      new import_obsidian29.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
         (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs)).setValue(String(this.plugin.settings.hermesAgentTimeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           this.plugin.settings.hermesAgentTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
+      new import_obsidian29.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
         (text) => text.setPlaceholder("--version").setValue(this.plugin.settings.hermesAgentHealthCheckArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
@@ -34155,34 +34734,34 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
         text: "Claude runtime selected. Claude CLI/model and extraction diagnostics are configured in the \u201CGraph extraction (Claude Code)\u201D section below.",
         cls: "setting-item-description"
       });
-      new import_obsidian28.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
+      new import_obsidian29.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
     }
-    new import_obsidian28.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
-          new import_obsidian28.Notice(
+          new import_obsidian29.Notice(
             ok ? `${this.runtimeLabel(provider.id)} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
           );
         } catch (e) {
-          new import_obsidian28.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+          new import_obsidian29.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Custom runtimes").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Custom runtimes").setHeading();
     containerEl.createEl("p", {
       text: "Manage Hermes-compatible local CLIs. Edit fields appear only when a custom runtime is selected as Agent runtime.",
       cls: "setting-item-description"
     });
-    new import_obsidian28.Setting(containerEl).setName("Configured custom runtimes").setDesc(
+    new import_obsidian29.Setting(containerEl).setName("Configured custom runtimes").setDesc(
       this.plugin.settings.customAgentRuntimes.length > 0 ? this.plugin.settings.customAgentRuntimes.map((rt) => `${rt.displayName} (${rt.id})`).join(", ") : "No custom runtime configured yet."
     );
-    new import_obsidian28.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
       (btn) => btn.setButtonText("Add runtime").onClick(async () => {
         const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
         this.plugin.settings.customAgentRuntimes.push(next);
@@ -34193,7 +34772,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     if (visibility.showSelectedCustomSettings && selectedCustomRuntime) {
       const i = this.plugin.settings.customAgentRuntimes.findIndex((rt2) => rt2.id === selectedCustomRuntime.id);
       const rt = selectedCustomRuntime;
-      new import_obsidian28.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
+      new import_obsidian29.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
         (btn) => btn.setButtonText("Remove selected").setWarning().onClick(async () => {
           if (i < 0)
             return;
@@ -34206,13 +34785,13 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Display name").addText(
+      new import_obsidian29.Setting(containerEl).setName("Display name").addText(
         (text) => text.setValue(rt.displayName).onChange(async (value) => {
           rt.displayName = value.trim() || `Custom ${i + 1}`;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
+      new import_obsidian29.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
         (text) => text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
           const nextId = this.uniqueCustomRuntimeId(value, rt.id);
           const prevId = rt.id;
@@ -34224,7 +34803,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Enabled").addToggle(
+      new import_obsidian29.Setting(containerEl).setName("Enabled").addToggle(
         (toggle) => toggle.setValue(rt.enabled).onChange(async (value) => {
           rt.enabled = value;
           if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
@@ -34234,62 +34813,62 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("CLI path").addText(
+      new import_obsidian29.Setting(containerEl).setName("CLI path").addText(
         (text) => text.setValue(rt.cliPath).onChange(async (value) => {
           rt.cliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Extra CLI args").addText(
+      new import_obsidian29.Setting(containerEl).setName("Extra CLI args").addText(
         (text) => text.setValue(rt.extraArgs).onChange(async (value) => {
           rt.extraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Request timeout (ms)").addText(
+      new import_obsidian29.Setting(containerEl).setName("Request timeout (ms)").addText(
         (text) => text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           rt.timeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 12e4;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian28.Setting(containerEl).setName("Health-check args").addText(
+      new import_obsidian29.Setting(containerEl).setName("Health-check args").addText(
         (text) => text.setValue(rt.healthCheckArgs).onChange(async (value) => {
           rt.healthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian28.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
       text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description"
     });
-    new import_obsidian28.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+    new import_obsidian29.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
       (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
         this.plugin.settings.claudeCodeCliPath = value || "claude";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+    new import_obsidian29.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
+    new import_obsidian29.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
       (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
         this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
+    new import_obsidian29.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.extractionDebugRawCli).onChange(async (value) => {
         this.plugin.settings.extractionDebugRawCli = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
+    new import_obsidian29.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
       (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
@@ -34304,28 +34883,28 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
           });
           const ok = await svc.isAvailable();
           if (!ok) {
-            new import_obsidian28.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
+            new import_obsidian29.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
             btn.setButtonText("Test Claude binary");
             btn.setDisabled(false);
             return;
           }
           await svc.chat("", "Reply with exactly the single word: OK");
-          new import_obsidian28.Notice("Claude CLI is available and responded to a test request.", 6e3);
+          new import_obsidian29.Notice("Claude CLI is available and responded to a test request.", 6e3);
         } catch (e) {
           const msg = e?.message || String(e);
-          new import_obsidian28.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
+          new import_obsidian29.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
         }
         btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian28.Setting(containerEl).setName("Schema families in type pickers").setDesc(
+    new import_obsidian29.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian29.Setting(containerEl).setName("Schema families in type pickers").setDesc(
       "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/."
     );
     const fam = this.plugin.settings.enabledSchemaFamilies;
     const addFamToggle = (key, name) => {
-      new import_obsidian28.Setting(containerEl).setName(name).addToggle(
+      new import_obsidian29.Setting(containerEl).setName(name).addToggle(
         (toggle) => toggle.setValue(fam[key]).onChange(async (value) => {
           fam[key] = value;
           await this.plugin.saveSettings();
@@ -34336,12 +34915,12 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     addFamToggle("stix2", "STIX 2 (vault YAML)");
     addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
     addFamToggle("user", "User YAML (schemas/user)");
-    new import_obsidian28.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
+    new import_obsidian29.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
       "Filter the bundled ontology (OIDSF) in FTM pickers: World (default entities), Links (relationship/interval types), Cyber (STIX-aligned), Analysis (claims/ACH/etc.). Graph still resolves any type already in the vault."
     );
     const layers = this.plugin.settings.oidsfModalLayers;
     const addLayerToggle = (key, caption) => {
-      new import_obsidian28.Setting(containerEl).setName(caption).addToggle(
+      new import_obsidian29.Setting(containerEl).setName(caption).addToggle(
         (toggle) => toggle.setValue(layers[key]).onChange(async (value) => {
           layers[key] = value;
           await this.plugin.saveSettings();
@@ -34352,13 +34931,13 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     addLayerToggle("links", "Links (relationship / interval types)");
     addLayerToggle("cyber", "Cyber (STIX / CTI-aligned entities)");
     addLayerToggle("analysis", "Analysis (claims, ACH, evidence chains, \u2026)");
-    new import_obsidian28.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian29.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian28.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian29.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
@@ -34383,7 +34962,7 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
       }
       for (const a of list) {
         const runnable = isTaskAgentRunnable(a, this.plugin.settings);
-        new import_obsidian28.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
+        new import_obsidian29.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
           t.setValue(runnable);
           t.onChange(async (v) => {
             if (v) {

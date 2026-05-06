@@ -46,4 +46,21 @@ describe("buildPlannerTooling", () => {
 		expect(t.enabledPlannerToolIds.has("LOCAL_VAULT")).toBe(true);
 		expect(t.enabledPlannerToolIds.has("EXTRACT_TO_GRAPH")).toBe(false);
 	});
+
+	it("includes runnable enrichers as planner tools", async () => {
+		const registry = {
+			listVaultSkills: vi.fn().mockResolvedValue([]),
+		} as unknown as SkillRegistry;
+		const enricherRegistry = {
+			listRunnable: vi.fn().mockResolvedValue([
+				{
+					id: "whois",
+					name: "WHOIS API",
+					description: "Domain enrichment",
+				},
+			]),
+		} as any;
+		const t = await buildPlannerTooling(registry, {}, true, enricherRegistry);
+		expect(t.enabledPlannerToolIds.has("ENRICH_whois")).toBe(true);
+	});
 });

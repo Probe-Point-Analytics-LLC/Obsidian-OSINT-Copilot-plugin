@@ -35,6 +35,7 @@ describe('ChatView', () => {
             taskAgentGlobalOutputAllowlist: DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
             taskAgentOverrides: {},
             skillsFolder: DEFAULT_SKILLS_FOLDER,
+            enrichersFolder: "OSINTCopilot/custom/enrichers",
             skillToggles: {},
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',

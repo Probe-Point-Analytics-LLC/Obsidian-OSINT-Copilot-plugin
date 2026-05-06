@@ -12,6 +12,7 @@ export const DEFAULT_CONVERSATION_FOLDER = `${OSINT_COPILOT_VAULT_ROOT}/conversa
 export const DEFAULT_PROMPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/prompts`;
 export const DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 export const DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
+export const DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`;
 
 /** Global allowlist prefixes for task-agent vault writes (newline-separated). */
 export const DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/\nResearch/`;

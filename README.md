@@ -16,6 +16,7 @@
 - [Getting Started](#getting-started)
 - [Runtime Logic (What Runs Where)](#runtime-logic-what-runs-where)
 - [Custom Types Setup (YAML)](docs/CUSTOM_TYPES_SETUP.md)
+- [HTTP Enrichers Setup](docs/ENRICHERS_SETUP.md)
 - [User Guide](#user-guide)
   - [Entity Management](#entity-management)
   - [Relationship Mapping](#relationship-mapping)
@@ -163,6 +164,18 @@ The first time the plugin runs (and whenever files are still missing), it create
 
 - **OSINT Copilot: Reload vault prompts** — clear the in-memory cache after edits.
 - **OSINT Copilot: Install missing vault prompt files** — recreate any default file that was deleted (does not overwrite your changes to existing files).
+- **OSINT Copilot: Draft HTTP enricher skill from API documentation** — generate a draft enricher from API docs + user requirements, then require explicit confirmation before writing files.
+
+## HTTP enrichers (strict approval)
+
+HTTP enrichers let users add API data sources as planner tools, similar to connector-based workflows:
+
+- Enricher specs: `OSINTCopilot/custom/enrichers/*.json`
+- Companion skills: `OSINTCopilot/custom/skills/*.md`
+- Tool IDs exposed to planner: `ENRICH_<id>`
+- Credentials are resolved from environment variables referenced in spec (`auth.envVar`), never stored in spec markdown/json.
+
+See full setup and mapping example in [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_SETUP.md).
 
 ---
 

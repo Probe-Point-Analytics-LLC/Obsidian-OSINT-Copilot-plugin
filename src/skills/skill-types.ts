@@ -2,6 +2,7 @@
 export type BuiltInSkillId = "local_vault" | "graph_generation";
 
 export type SkillKind = "builtin" | "vault";
+export type PlannerExtraKind = "enricher";
 
 /** Unified entry for UI and planner (built-ins + vault markdown). */
 export interface SkillListEntry {
@@ -36,4 +37,12 @@ export interface PlannerTooling {
 	criticalRulesLines: string[];
 	/** Routed intent block (conditional on enabled tools). */
 	buildRoutedIntentBlock: (intentLabel: string, hasAttachments: boolean) => string;
+}
+
+export interface PlannerExtraTool {
+	kind: PlannerExtraKind;
+	id: string;
+	name: string;
+	description: string;
+	plannerToolId: string;
 }

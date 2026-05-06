@@ -19,7 +19,8 @@ import {
 	parseVaultSkillPlannerTool,
 } from '../skills/skill-runtime';
 import type { PlannerTooling } from '../skills/skill-types';
-import { executeVaultSkillTool } from '../skills/skill-executor';
+import { executeEnricherTool, executeVaultSkillTool } from '../skills/skill-executor';
+import { parseEnrichToolId } from './enrichers/enricher-schema';
 import { createAgentProvider } from './agent-runtime/create-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
@@ -449,6 +450,7 @@ export class OrchestrationService {
             this.plugin.skillRegistry,
             this.plugin.settings.skillToggles ?? {},
             hasAttachments,
+            this.plugin.enricherRegistry,
         );
 
         if (tooling.enabledPlannerToolIds.size === 0) {
@@ -779,17 +781,24 @@ Respond with this exact JSON structure:
             options?.abortSignals?.[toolId]?.aborted === true;
 
         const vaultSkillList = await this.plugin.skillRegistry.listVaultSkills();
+        const enricherList = await this.plugin.enricherRegistry.listRunnable();
         const vaultSkillTitle = (toolId: string): string => {
             const id = parseVaultSkillPlannerTool(toolId);
             if (!id) return toolId;
             const m = vaultSkillList.find((s) => s.id === id);
             return m?.name || toolId;
         };
+        const enricherTitle = (toolId: string): string => {
+            const id = parseEnrichToolId(toolId);
+            if (!id) return toolId;
+            const m = enricherList.find((e) => e.id === id);
+            return m?.name || toolId;
+        };
 
         const promises = tools.map(async (tool) => {
             const displayName =
                 toolToDisplayName[tool] ||
-                (tool.startsWith("SKILL_") ? vaultSkillTitle(tool) : tool);
+                (tool.startsWith("SKILL_") ? vaultSkillTitle(tool) : tool.startsWith("ENRICH_") ? enricherTitle(tool) : tool);
             try {
                 switch (tool) {
                     case "LOCAL_VAULT": {
@@ -903,6 +912,31 @@ Respond with this exact JSON structure:
                             } catch (e) {
                                 const msg = e instanceof Error ? e.message : String(e);
                                 results[tool] = `Skill error: ${msg}`;
+                                onProgress(displayName, "Failed", 100);
+                            }
+                            break;
+                        }
+                        if (tool.startsWith("ENRICH_")) {
+                            if (isCancelled(tool)) {
+                                results[tool] = "Cancelled by user.";
+                                onProgress(displayName, "Cancelled", 100);
+                                break;
+                            }
+                            onProgress(displayName, "Running enricher API tool...", 35);
+                            const sig = options?.abortSignals?.[tool] ?? options?.globalAbort;
+                            try {
+                                const out = await executeEnricherTool(
+                                    this.plugin,
+                                    tool,
+                                    query,
+                                    attachmentsContext,
+                                    sig,
+                                );
+                                results[tool] = out;
+                                onProgress(displayName, "Complete", 100);
+                            } catch (e) {
+                                const msg = e instanceof Error ? e.message : String(e);
+                                results[tool] = `Enricher error: ${msg}`;
                                 onProgress(displayName, "Failed", 100);
                             }
                             break;
