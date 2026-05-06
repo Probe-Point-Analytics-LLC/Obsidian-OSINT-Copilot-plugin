@@ -101,6 +101,27 @@ export class GraphApiService {
         return this.isOnline;
     }
 
+    /** Human-readable reason when HTTP denies access (no secrets / body in message). */
+    private urlFetchDeniedExplanation(status: number, url: string, headers: Record<string, unknown> | undefined): string {
+        if (status !== 401 && status !== 403) {
+            return `Failed to fetch URL (HTTP ${status})`;
+        }
+        const hKeys = headers && typeof headers === 'object' ? Object.keys(headers).map((k) => k.toLowerCase()) : [];
+        const cloudflare = hKeys.some((k) => k.includes('cf-'));
+        const webmail = /_task=mail|roundcube|webmail|\/owa\/|zimbra|horde\//i.test(url);
+        const parts = [
+            `HTTP ${status}: Obsidian cannot fetch this URL as a logged-in browser would.`,
+            'The request is sent without your site cookies, so webmail, private portals, and many authenticated links return 401/403.',
+        ];
+        if (webmail) {
+            parts.push('For email: export or copy the message text into chat instead of pasting the webmail print URL.');
+        }
+        if (cloudflare) {
+            parts.push('Headers suggest Cloudflare in front; automated clients are often blocked until a real browser completes any checks.');
+        }
+        return parts.join(' ');
+    }
+
     /**
      * Extract text from a URL locally by fetching the page and stripping HTML.
      */
@@ -115,49 +136,8 @@ export class GraphApiService {
                 throw: false
             });
 
-            // #region agent log
-            try {
-                let host = '';
-                let pathPrefix = '';
-                try {
-                    const u = new URL(url);
-                    host = u.hostname;
-                    pathPrefix = u.pathname.slice(0, 48);
-                } catch {
-                    host = 'invalid-url';
-                }
-                const hdrs = response.headers as Record<string, unknown> | undefined;
-                const hKeys = hdrs && typeof hdrs === 'object' ? Object.keys(hdrs).map((k) => k.toLowerCase()) : [];
-                const body = response.text || '';
-                fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9b4ad8' },
-                    body: JSON.stringify({
-                        sessionId: '9b4ad8',
-                        hypothesisId: 'H1-H5',
-                        runId: 'pre-fix',
-                        location: 'api-service.ts:extractTextFromUrl:afterRequest',
-                        message: 'requestUrl completed',
-                        data: {
-                            status: response.status,
-                            host,
-                            pathPrefix,
-                            contentTypePrefix: String(hdrs?.['content-type'] ?? hdrs?.['Content-Type'] ?? '').slice(0, 120),
-                            headerKeysSample: hKeys.slice(0, 12),
-                            bodyChars: body.length,
-                            looksLikeWebmailUi: /_task=mail|roundcube|webmail/i.test(url),
-                            hasCloudflareHint: hKeys.some((k) => k.includes('cf-')),
-                        },
-                        timestamp: Date.now(),
-                    }),
-                }).catch(() => {});
-            } catch {
-                /* ignore debug log failures */
-            }
-            // #endregion
-
             if (response.status < 200 || response.status >= 300) {
-                throw new Error(`Failed to fetch URL (${response.status})`);
+                throw new Error(this.urlFetchDeniedExplanation(response.status, url, response.headers as Record<string, unknown> | undefined));
             }
 
             const contentType = (response.headers?.['content-type'] || '').toLowerCase();
@@ -175,35 +155,6 @@ export class GraphApiService {
             console.debug('[GraphApiService] Extracted text length:', trimmed.length);
             return trimmed;
         } catch (error) {
-            // #region agent log
-            try {
-                let host = '';
-                try {
-                    host = new URL(url).hostname;
-                } catch {
-                    host = 'invalid-url';
-                }
-                fetch('http://127.0.0.1:7289/ingest/198dc7b8-9272-4918-abeb-9aa01fcb3925', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9b4ad8' },
-                    body: JSON.stringify({
-                        sessionId: '9b4ad8',
-                        hypothesisId: 'H1-H5',
-                        runId: 'pre-fix',
-                        location: 'api-service.ts:extractTextFromUrl:catch',
-                        message: 'extractTextFromUrl threw',
-                        data: {
-                            host,
-                            errName: error instanceof Error ? error.name : typeof error,
-                            errMsg: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
-                        },
-                        timestamp: Date.now(),
-                    }),
-                }).catch(() => {});
-            } catch {
-                /* ignore */
-            }
-            // #endregion
             console.error('[GraphApiService] extractTextFromUrl exception:', error);
             throw error;
         }
