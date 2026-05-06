@@ -71,6 +71,8 @@ describe('ChatView send routing', () => {
       hermesAgentExtraArgs: '',
       hermesAgentTimeoutMs: 120_000,
       hermesAgentHealthCheckArgs: '--version',
+      extractionLogVerbosity: 'detailed',
+      extractionDebugRawCli: false,
       themeMode: 'system',
       customCheckpoints: [],
       lockedVaultPaths: [],

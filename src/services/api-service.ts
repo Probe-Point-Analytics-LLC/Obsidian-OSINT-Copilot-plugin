@@ -14,7 +14,7 @@
 
 import { requestUrl } from 'obsidian';
 import { AIOperation, Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
-import { ClaudeCodeService } from './claude-code-service';
+import { ClaudeCodeService, type ExtractionLogOptions } from './claude-code-service';
 
 /** Optional tuning for vault ingest: smaller chunks + per-chunk callback for live UI. */
 export interface VaultProcessTextChunkOptions {
@@ -204,11 +204,11 @@ export class GraphApiService {
     /**
      * Extract text/information from an image file using Claude Code vision.
      */
-    async extractTextFromImage(absolutePath: string, signal?: AbortSignal): Promise<string> {
+    async extractTextFromImage(absolutePath: string, signal?: AbortSignal, logOptions?: ExtractionLogOptions): Promise<string> {
         if (!this.claudeCodeService) {
             throw new Error('Claude Code service not initialized.');
         }
-        return this.claudeCodeService.extractTextFromImage(absolutePath, signal);
+        return this.claudeCodeService.extractTextFromImage(absolutePath, signal, logOptions);
     }
 
     private readFileAsText(file: File): Promise<string> {

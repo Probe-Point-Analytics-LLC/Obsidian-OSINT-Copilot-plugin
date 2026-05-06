@@ -12,6 +12,31 @@ export interface ClaudeCodeConfig {
     cliWorkingDirectory?: string;
 }
 
+export type ExtractionLogLevel = 'info' | 'warn' | 'error' | 'debug';
+export type ExtractionLogPhase =
+    | 'invoke_start'
+    | 'stdin_sent'
+    | 'invoke_exit'
+    | 'parse_start'
+    | 'parse_success'
+    | 'parse_failed'
+    | 'invoke_error'
+    | 'invoke_aborted';
+
+export interface ExtractionLogEvent {
+    phase: ExtractionLogPhase;
+    level: ExtractionLogLevel;
+    message: string;
+    file?: string;
+    details?: string;
+    timestamp: number;
+}
+
+export interface ExtractionLogOptions {
+    emit?: (event: ExtractionLogEvent) => void;
+    rawCli?: boolean;
+}
+
 const DEFAULT_CONFIG: ClaudeCodeConfig = {
     cliPath: 'claude',
     model: 'sonnet',
@@ -20,6 +45,15 @@ const DEFAULT_CONFIG: ClaudeCodeConfig = {
 };
 
 const SKILL_FILE = '.claude/GRAPH_EXTRACTION.md';
+
+export function sanitizeCliOutput(text: string, maxLen = 500): string {
+    const cleaned = (text || '')
+        .replace(/\x1b\[[0-9;]*m/g, '')
+        .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+        .trim();
+    if (cleaned.length <= maxLen) return cleaned;
+    return `${cleaned.slice(0, maxLen)}…`;
+}
 
 export class ClaudeCodeService {
     private config: ClaudeCodeConfig;
@@ -100,22 +134,48 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         existingEntities?: Entity[],
         onProgress?: (message: string, percent: number) => void,
         signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
     ): Promise<ProcessTextResponse> {
         const prompt = await this.buildPrompt(text, existingEntities);
 
         onProgress?.('Invoking Claude Code CLI...', 30);
+        logOptions?.emit?.({
+            phase: 'invoke_start',
+            level: 'info',
+            message: 'Invoking Claude Code CLI for entity extraction',
+            timestamp: Date.now(),
+        });
 
         try {
-            const raw = await this.invokeCLI(prompt, signal);
+            const raw = await this.invokeCLI(prompt, signal, 1, logOptions);
             onProgress?.('Parsing response...', 80);
+            logOptions?.emit?.({
+                phase: 'parse_start',
+                level: 'info',
+                message: 'Parsing extraction response JSON',
+                timestamp: Date.now(),
+            });
 
             const parsed = this.parseResponse(raw);
             if (!parsed) {
+                logOptions?.emit?.({
+                    phase: 'parse_failed',
+                    level: 'warn',
+                    message: 'Could not parse extraction response JSON',
+                    details: sanitizeCliOutput(raw, 900),
+                    timestamp: Date.now(),
+                });
                 return { success: false, error: 'Could not parse JSON from Claude response' };
             }
 
             const operations = this.normalizeOperations(parsed);
             onProgress?.('Extraction complete', 100);
+            logOptions?.emit?.({
+                phase: 'parse_success',
+                level: 'info',
+                message: `Extraction complete (${operations.length} operation${operations.length === 1 ? '' : 's'})`,
+                timestamp: Date.now(),
+            });
 
             return { success: true, operations };
         } catch (err: any) {
@@ -125,9 +185,15 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         }
     }
 
-    private invokeCLI(prompt: string, signal?: AbortSignal, maxTurns: number = 1): Promise<string> {
+    private invokeCLI(prompt: string, signal?: AbortSignal, maxTurns: number = 1, logOptions?: ExtractionLogOptions): Promise<string> {
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
+                logOptions?.emit?.({
+                    phase: 'invoke_aborted',
+                    level: 'warn',
+                    message: 'CLI invocation skipped because request is already aborted',
+                    timestamp: Date.now(),
+                });
                 reject(new DOMException('Aborted', 'AbortError'));
                 return;
             }
@@ -142,6 +208,13 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             ];
 
             const cwd = this.config.cliWorkingDirectory?.trim();
+            logOptions?.emit?.({
+                phase: 'invoke_start',
+                level: 'info',
+                message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}`,
+                details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
+                timestamp: Date.now(),
+            });
             const child = execFile(
                 this.config.cliPath,
                 args,
@@ -152,26 +225,54 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                     ...(cwd ? { cwd } : {}),
                 },
                 (error: any, stdout: string, stderr: string) => {
+                    const errOut = stderr?.trim() ?? '';
+                    const stdOut = stdout?.trim() ?? '';
                     if (error) {
                         if (error.killed || error.signal === 'SIGTERM') {
+                            logOptions?.emit?.({
+                                phase: 'invoke_aborted',
+                                level: 'warn',
+                                message: 'Claude CLI process aborted',
+                                timestamp: Date.now(),
+                            });
                             reject(new DOMException('Aborted', 'AbortError'));
                         } else {
-                            const errOut = stderr?.trim() ?? '';
-                            const stdOut = stdout?.trim() ?? '';
                             // Claude Code often prints fatal messages on stdout; include both for Obsidian notices and logs.
                             const combined = [errOut, stdOut].filter(Boolean).join('\n');
                             const tail = combined || error.message || 'unknown error';
+                            logOptions?.emit?.({
+                                phase: 'invoke_error',
+                                level: 'error',
+                                message: `Claude CLI failed (code ${error.code})`,
+                                details: logOptions?.rawCli
+                                    ? (combined || error.message || 'unknown error')
+                                    : sanitizeCliOutput(combined || error.message || 'unknown error', 1200),
+                                timestamp: Date.now(),
+                            });
                             console.error('[ClaudeCodeService] CLI failed', { code: error.code, stderr: errOut, stdout: stdOut });
                             reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
                         }
                         return;
                     }
+                    logOptions?.emit?.({
+                        phase: 'invoke_exit',
+                        level: 'info',
+                        message: 'Claude CLI completed successfully',
+                        details: logOptions?.rawCli ? stdOut : sanitizeCliOutput(stdOut, 400),
+                        timestamp: Date.now(),
+                    });
                     resolve(stdout);
                 },
             );
 
             child.stdin?.write(prompt);
             child.stdin?.end();
+            logOptions?.emit?.({
+                phase: 'stdin_sent',
+                level: 'debug',
+                message: 'Prompt sent to Claude CLI stdin',
+                timestamp: Date.now(),
+            });
 
             if (signal) {
                 const onAbort = () => {
@@ -278,18 +379,19 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         systemPrompt: string,
         userMessage: string,
         signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
     ): Promise<string> {
         const prompt = systemPrompt
             ? `${systemPrompt}\n\n---\n\n${userMessage}`
             : userMessage;
-        return this.invokeCLI(prompt, signal);
+        return this.invokeCLI(prompt, signal, 1, logOptions);
     }
 
     /**
      * Extract text and information from an image using Claude's vision capabilities.
      * Uses --max-turns 5 to allow Claude to read the file with its built-in tools.
      */
-    async extractTextFromImage(absolutePath: string, signal?: AbortSignal): Promise<string> {
+    async extractTextFromImage(absolutePath: string, signal?: AbortSignal, logOptions?: ExtractionLogOptions): Promise<string> {
         const prompt = `Read the image file at "${absolutePath}" and extract ALL information from it.
 
 Extract and return:
@@ -301,7 +403,15 @@ Extract and return:
 
 Return ONLY the extracted information as plain text. No markdown formatting, no commentary about the extraction process.`;
 
-        return this.invokeCLI(prompt, signal, 5);
+        return this.invokeCLI(prompt, signal, 5, {
+            ...logOptions,
+            emit: (event) => {
+                logOptions?.emit?.({
+                    ...event,
+                    file: absolutePath,
+                });
+            },
+        });
     }
 
     async isAvailable(): Promise<boolean> {

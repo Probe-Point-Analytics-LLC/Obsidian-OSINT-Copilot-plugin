@@ -36,7 +36,7 @@ import {
 import { EntityManager } from './src/services/entity-manager';
 import { WaybackArchiveService } from './src/services/wayback-archive-service';
 import { GraphApiService } from './src/services/api-service';
-import { ClaudeCodeService } from './src/services/claude-code-service';
+import { ClaudeCodeService, type ExtractionLogEvent } from './src/services/claude-code-service';
 import {
   ConversationService,
   Conversation,
@@ -139,6 +139,10 @@ interface VaultAISettings {
   hermesAgentTimeoutMs: number;
   /** argv used only for Settings → Test (e.g. "--version"). */
   hermesAgentHealthCheckArgs: string;
+  /** Chat attachment extraction logs: minimal = milestones only, detailed = include CLI snippets. */
+  extractionLogVerbosity: 'minimal' | 'detailed';
+  /** Include full raw stdout/stderr in extraction logs (debug only; may expose sensitive output). */
+  extractionDebugRawCli: boolean;
   customCheckpoints: CustomCheckpoint[];
   // --- Theme Mode ---
   themeMode: 'system' | 'light' | 'dark';
@@ -217,6 +221,8 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   hermesAgentExtraArgs: '',
   hermesAgentTimeoutMs: 120_000,
   hermesAgentHealthCheckArgs: '--version',
+  extractionLogVerbosity: 'detailed',
+  extractionDebugRawCli: false,
   customCheckpoints: [],
 
   themeMode: 'system',
@@ -743,6 +749,12 @@ export default class VaultAIPlugin extends Plugin {
     }
     if (typeof merged.hermesAgentHealthCheckArgs !== 'string' || !merged.hermesAgentHealthCheckArgs.trim()) {
       merged.hermesAgentHealthCheckArgs = DEFAULT_SETTINGS.hermesAgentHealthCheckArgs;
+    }
+    if (merged.extractionLogVerbosity !== 'minimal' && merged.extractionLogVerbosity !== 'detailed') {
+      merged.extractionLogVerbosity = DEFAULT_SETTINGS.extractionLogVerbosity;
+    }
+    if (typeof merged.extractionDebugRawCli !== 'boolean') {
+      merged.extractionDebugRawCli = DEFAULT_SETTINGS.extractionDebugRawCli;
     }
     this.settings = merged as unknown as VaultAISettings;
     if (stripped) {
@@ -1864,6 +1876,9 @@ export interface ChatHistoryItem {
   vaultIngestPreviewCommands?: string[];
   /** Vault ingest: human-readable lines as each entity/link is applied automatically. */
   vaultIngestLiveLog?: string[];
+  /** Attachment extraction diagnostics emitted from ClaudeCodeService. */
+  extractionLogs?: ExtractionLogEvent[];
+  extractionLogsExpanded?: boolean;
 }
 
 export class ChatView extends ItemView {
@@ -1901,6 +1916,17 @@ export class ChatView extends ItemView {
 
   // Track active operations for cancellation
   activeAbortControllers: Map<number, AbortController> = new Map();
+
+  private shouldDisplayDetailedExtractionLogs(): boolean {
+    return this.plugin.settings.extractionLogVerbosity === 'detailed';
+  }
+
+  private formatExtractionLogLine(ev: ExtractionLogEvent): string {
+    const t = new Date(ev.timestamp).toLocaleTimeString();
+    const base = `[${t}] ${ev.level.toUpperCase()} ${ev.phase}: ${ev.message}`;
+    if (!ev.details) return base;
+    return `${base}\n${ev.details}`;
+  }
 
   constructor(leaf: WorkspaceLeaf, plugin: VaultAIPlugin) {
     super(leaf);
@@ -3077,6 +3103,29 @@ export class ChatView extends ItemView {
         });
       }
 
+      if (item.role === "assistant" && item.extractionLogs && item.extractionLogs.length > 0) {
+        const details = messageDiv.createEl("details", { cls: "vault-ai-extraction-logs" });
+        details.style.cssText =
+          "margin-top: 8px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary);";
+        details.open = !!item.extractionLogsExpanded;
+        const summary = details.createEl("summary", {
+          text: `Extraction logs (${item.extractionLogs.length})`,
+        });
+        summary.style.cssText = "cursor: pointer; font-size: 12px; color: var(--text-muted);";
+        details.addEventListener("toggle", () => {
+          item.extractionLogsExpanded = details.open;
+        });
+
+        const logList = details.createEl("div", { cls: "vault-ai-extraction-log-list" });
+        logList.style.cssText =
+          "margin-top: 8px; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;";
+        for (const ev of item.extractionLogs) {
+          const row = logList.createEl("pre", { text: this.formatExtractionLogLine(ev) });
+          row.style.cssText =
+            "margin: 0; white-space: pre-wrap; font-size: 11px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 4px; padding: 6px;";
+        }
+      }
+
       // NEW: Show multiple progress bars for concurrent investigation tools
       if (item.role === "assistant" && item.multiProgress && Object.keys(item.multiProgress).length > 0) {
         const multiProgressContainer = messageDiv.createDiv("vault-ai-multi-progress-container");
@@ -4007,6 +4056,7 @@ export class ChatView extends ItemView {
         role: "assistant",
         content: `📄 Extracting text from ${fileCount} file${fileCount > 1 ? 's' : ''}...`,
         progress: { message: `Processing 1/${fileCount}...`, percent: 5 },
+        extractionLogs: [],
       });
       await this.renderMessages();
 
@@ -4019,6 +4069,22 @@ export class ChatView extends ItemView {
           this.chatHistory[extractionMsgIndex].progress = { message, percent };
           this.updateProgressBar(extractionMsgIndex, { message, percent });
         }
+      };
+
+      const appendExtractionLog = (ev: ExtractionLogEvent) => {
+        if (!this.activeAbortControllers.has(extractionMsgIndex)) return;
+        const item = this.chatHistory[extractionMsgIndex];
+        if (!item) return;
+        if (!item.extractionLogs) item.extractionLogs = [];
+        const include = this.shouldDisplayDetailedExtractionLogs()
+          ? true
+          : (ev.phase === 'invoke_start' || ev.phase === 'invoke_exit' || ev.phase === 'invoke_error' || ev.phase === 'invoke_aborted');
+        if (!include) return;
+        item.extractionLogs.push(ev);
+        if (item.extractionLogs.length > 80) {
+          item.extractionLogs = item.extractionLogs.slice(-80);
+        }
+        void this.renderMessages();
       };
 
       let extractedCount = 0;
@@ -4070,7 +4136,14 @@ export class ChatView extends ItemView {
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
 
-            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath, extractionController.signal);
+            text = await this.plugin.graphApiService.extractTextFromImage(
+              absolutePath,
+              extractionController.signal,
+              {
+                emit: appendExtractionLog,
+                rawCli: this.plugin.settings.extractionDebugRawCli,
+              },
+            );
           } else if (attachment.file instanceof TFile) {
             const ext = (attachment.file.extension || '').toLowerCase();
             const textExts = ['md', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'log', 'yaml', 'yml', 'toml', 'ini'];
@@ -6097,6 +6170,32 @@ class VaultAISettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.claudeCodeModel)
           .onChange(async (value) => {
             this.plugin.settings.claudeCodeModel = value || 'sonnet';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Extraction log verbosity")
+      .setDesc("How much Claude extraction detail is shown in chat while processing attachments.")
+      .addDropdown((dd) =>
+        dd
+          .addOption("minimal", "Minimal (milestones)")
+          .addOption("detailed", "Detailed (stages + snippets)")
+          .setValue(this.plugin.settings.extractionLogVerbosity)
+          .onChange(async (value) => {
+            this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Extraction debug: raw CLI output")
+      .setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.extractionDebugRawCli)
+          .onChange(async (value) => {
+            this.plugin.settings.extractionDebugRawCli = value;
             await this.plugin.saveSettings();
           })
       );

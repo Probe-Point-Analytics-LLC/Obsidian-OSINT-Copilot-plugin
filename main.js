@@ -16386,11 +16386,11 @@ Tip: paste the text content directly into the chat instead.`
   /**
    * Extract text/information from an image file using Claude Code vision.
    */
-  async extractTextFromImage(absolutePath, signal) {
+  async extractTextFromImage(absolutePath, signal, logOptions) {
     if (!this.claudeCodeService) {
       throw new Error("Claude Code service not initialized.");
     }
-    return this.claudeCodeService.extractTextFromImage(absolutePath, signal);
+    return this.claudeCodeService.extractTextFromImage(absolutePath, signal, logOptions);
   }
   readFileAsText(file) {
     return new Promise((resolve, reject) => {
@@ -16753,6 +16753,12 @@ var DEFAULT_CONFIG = {
   timeoutMs: 12e4
 };
 var SKILL_FILE = ".claude/GRAPH_EXTRACTION.md";
+function sanitizeCliOutput(text, maxLen = 500) {
+  const cleaned = (text || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "").trim();
+  if (cleaned.length <= maxLen)
+    return cleaned;
+  return `${cleaned.slice(0, maxLen)}\u2026`;
+}
 var ClaudeCodeService = class {
   constructor(pluginDir, config) {
     /** When set, tried first for graph extraction skill (vault-editable). */
@@ -16817,18 +16823,43 @@ ${text}
 
 CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no investigation plan, no explanation. Just the {"operations": [...]} JSON.`;
   }
-  async extractEntities(text, existingEntities, onProgress, signal) {
+  async extractEntities(text, existingEntities, onProgress, signal, logOptions) {
     const prompt = await this.buildPrompt(text, existingEntities);
     onProgress?.("Invoking Claude Code CLI...", 30);
+    logOptions?.emit?.({
+      phase: "invoke_start",
+      level: "info",
+      message: "Invoking Claude Code CLI for entity extraction",
+      timestamp: Date.now()
+    });
     try {
-      const raw = await this.invokeCLI(prompt, signal);
+      const raw = await this.invokeCLI(prompt, signal, 1, logOptions);
       onProgress?.("Parsing response...", 80);
+      logOptions?.emit?.({
+        phase: "parse_start",
+        level: "info",
+        message: "Parsing extraction response JSON",
+        timestamp: Date.now()
+      });
       const parsed = this.parseResponse(raw);
       if (!parsed) {
+        logOptions?.emit?.({
+          phase: "parse_failed",
+          level: "warn",
+          message: "Could not parse extraction response JSON",
+          details: sanitizeCliOutput(raw, 900),
+          timestamp: Date.now()
+        });
         return { success: false, error: "Could not parse JSON from Claude response" };
       }
       const operations = this.normalizeOperations(parsed);
       onProgress?.("Extraction complete", 100);
+      logOptions?.emit?.({
+        phase: "parse_success",
+        level: "info",
+        message: `Extraction complete (${operations.length} operation${operations.length === 1 ? "" : "s"})`,
+        timestamp: Date.now()
+      });
       return { success: true, operations };
     } catch (err) {
       if (err.name === "AbortError")
@@ -16837,9 +16868,15 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       return { success: false, error: err.message || String(err) };
     }
   }
-  invokeCLI(prompt, signal, maxTurns = 1) {
+  invokeCLI(prompt, signal, maxTurns = 1, logOptions) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
+        logOptions?.emit?.({
+          phase: "invoke_aborted",
+          level: "warn",
+          message: "CLI invocation skipped because request is already aborted",
+          timestamp: Date.now()
+        });
         reject(new DOMException("Aborted", "AbortError"));
         return;
       }
@@ -16854,6 +16891,13 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         String(maxTurns)
       ];
       const cwd = this.config.cliWorkingDirectory?.trim();
+      logOptions?.emit?.({
+        phase: "invoke_start",
+        level: "info",
+        message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}`,
+        details: cwd ? `cwd=${cwd}` : "cwd=(default)",
+        timestamp: Date.now()
+      });
       const child = execFile2(
         this.config.cliPath,
         args,
@@ -16864,24 +16908,50 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
           ...cwd ? { cwd } : {}
         },
         (error, stdout, stderr) => {
+          const errOut = stderr?.trim() ?? "";
+          const stdOut = stdout?.trim() ?? "";
           if (error) {
             if (error.killed || error.signal === "SIGTERM") {
+              logOptions?.emit?.({
+                phase: "invoke_aborted",
+                level: "warn",
+                message: "Claude CLI process aborted",
+                timestamp: Date.now()
+              });
               reject(new DOMException("Aborted", "AbortError"));
             } else {
-              const errOut = stderr?.trim() ?? "";
-              const stdOut = stdout?.trim() ?? "";
               const combined = [errOut, stdOut].filter(Boolean).join("\n");
               const tail = combined || error.message || "unknown error";
+              logOptions?.emit?.({
+                phase: "invoke_error",
+                level: "error",
+                message: `Claude CLI failed (code ${error.code})`,
+                details: logOptions?.rawCli ? combined || error.message || "unknown error" : sanitizeCliOutput(combined || error.message || "unknown error", 1200),
+                timestamp: Date.now()
+              });
               console.error("[ClaudeCodeService] CLI failed", { code: error.code, stderr: errOut, stdout: stdOut });
               reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
             }
             return;
           }
+          logOptions?.emit?.({
+            phase: "invoke_exit",
+            level: "info",
+            message: "Claude CLI completed successfully",
+            details: logOptions?.rawCli ? stdOut : sanitizeCliOutput(stdOut, 400),
+            timestamp: Date.now()
+          });
           resolve(stdout);
         }
       );
       child.stdin?.write(prompt);
       child.stdin?.end();
+      logOptions?.emit?.({
+        phase: "stdin_sent",
+        level: "debug",
+        message: "Prompt sent to Claude CLI stdin",
+        timestamp: Date.now()
+      });
       if (signal) {
         const onAbort = () => {
           child.kill("SIGTERM");
@@ -16969,19 +17039,19 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
    * General-purpose chat: send system + user messages to Claude CLI, return text.
    * Used for local search answer synthesis, entity extraction from queries, etc.
    */
-  async chat(systemPrompt, userMessage, signal) {
+  async chat(systemPrompt, userMessage, signal, logOptions) {
     const prompt = systemPrompt ? `${systemPrompt}
 
 ---
 
 ${userMessage}` : userMessage;
-    return this.invokeCLI(prompt, signal);
+    return this.invokeCLI(prompt, signal, 1, logOptions);
   }
   /**
    * Extract text and information from an image using Claude's vision capabilities.
    * Uses --max-turns 5 to allow Claude to read the file with its built-in tools.
    */
-  async extractTextFromImage(absolutePath, signal) {
+  async extractTextFromImage(absolutePath, signal, logOptions) {
     const prompt = `Read the image file at "${absolutePath}" and extract ALL information from it.
 
 Extract and return:
@@ -16992,7 +17062,15 @@ Extract and return:
 - A brief description of what the image shows
 
 Return ONLY the extracted information as plain text. No markdown formatting, no commentary about the extraction process.`;
-    return this.invokeCLI(prompt, signal, 5);
+    return this.invokeCLI(prompt, signal, 5, {
+      ...logOptions,
+      emit: (event) => {
+        logOptions?.emit?.({
+          ...event,
+          file: absolutePath
+        });
+      }
+    });
   }
   async isAvailable() {
     return new Promise((resolve) => {
@@ -29035,6 +29113,8 @@ var DEFAULT_SETTINGS = {
   hermesAgentExtraArgs: "",
   hermesAgentTimeoutMs: 12e4,
   hermesAgentHealthCheckArgs: "--version",
+  extractionLogVerbosity: "detailed",
+  extractionDebugRawCli: false,
   customCheckpoints: [],
   themeMode: "system",
   lockedVaultPaths: [],
@@ -29476,6 +29556,12 @@ var VaultAIPlugin = class extends import_obsidian28.Plugin {
     }
     if (typeof merged.hermesAgentHealthCheckArgs !== "string" || !merged.hermesAgentHealthCheckArgs.trim()) {
       merged.hermesAgentHealthCheckArgs = DEFAULT_SETTINGS.hermesAgentHealthCheckArgs;
+    }
+    if (merged.extractionLogVerbosity !== "minimal" && merged.extractionLogVerbosity !== "detailed") {
+      merged.extractionLogVerbosity = DEFAULT_SETTINGS.extractionLogVerbosity;
+    }
+    if (typeof merged.extractionDebugRawCli !== "boolean") {
+      merged.extractionDebugRawCli = DEFAULT_SETTINGS.extractionDebugRawCli;
     }
     this.settings = merged;
     if (stripped) {
@@ -30403,6 +30489,17 @@ var _ChatView = class _ChatView extends import_obsidian28.ItemView {
      */
     this._awaitingToolReview = false;
     this.plugin = plugin;
+  }
+  shouldDisplayDetailedExtractionLogs() {
+    return this.plugin.settings.extractionLogVerbosity === "detailed";
+  }
+  formatExtractionLogLine(ev) {
+    const t = new Date(ev.timestamp).toLocaleTimeString();
+    const base = `[${t}] ${ev.level.toUpperCase()} ${ev.phase}: ${ev.message}`;
+    if (!ev.details)
+      return base;
+    return `${base}
+${ev.details}`;
   }
   getViewType() {
     return CHAT_VIEW_TYPE;
@@ -31362,6 +31459,24 @@ var _ChatView = class _ChatView extends import_obsidian28.ItemView {
           text: `${item.progress.message || "Processing..."} (${item.progress.percent}%)`
         });
       }
+      if (item.role === "assistant" && item.extractionLogs && item.extractionLogs.length > 0) {
+        const details = messageDiv.createEl("details", { cls: "vault-ai-extraction-logs" });
+        details.style.cssText = "margin-top: 8px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary);";
+        details.open = !!item.extractionLogsExpanded;
+        const summary = details.createEl("summary", {
+          text: `Extraction logs (${item.extractionLogs.length})`
+        });
+        summary.style.cssText = "cursor: pointer; font-size: 12px; color: var(--text-muted);";
+        details.addEventListener("toggle", () => {
+          item.extractionLogsExpanded = details.open;
+        });
+        const logList = details.createEl("div", { cls: "vault-ai-extraction-log-list" });
+        logList.style.cssText = "margin-top: 8px; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;";
+        for (const ev of item.extractionLogs) {
+          const row = logList.createEl("pre", { text: this.formatExtractionLogLine(ev) });
+          row.style.cssText = "margin: 0; white-space: pre-wrap; font-size: 11px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 4px; padding: 6px;";
+        }
+      }
       if (item.role === "assistant" && item.multiProgress && Object.keys(item.multiProgress).length > 0) {
         const multiProgressContainer = messageDiv.createDiv("vault-ai-multi-progress-container");
         multiProgressContainer.style.cssText = `
@@ -32136,7 +32251,8 @@ var _ChatView = class _ChatView extends import_obsidian28.ItemView {
       this.chatHistory.push({
         role: "assistant",
         content: `\u{1F4C4} Extracting text from ${fileCount} file${fileCount > 1 ? "s" : ""}...`,
-        progress: { message: `Processing 1/${fileCount}...`, percent: 5 }
+        progress: { message: `Processing 1/${fileCount}...`, percent: 5 },
+        extractionLogs: []
       });
       await this.renderMessages();
       const extractionController = new AbortController();
@@ -32148,6 +32264,23 @@ var _ChatView = class _ChatView extends import_obsidian28.ItemView {
           this.chatHistory[extractionMsgIndex].progress = { message, percent };
           this.updateProgressBar(extractionMsgIndex, { message, percent });
         }
+      };
+      const appendExtractionLog = (ev) => {
+        if (!this.activeAbortControllers.has(extractionMsgIndex))
+          return;
+        const item = this.chatHistory[extractionMsgIndex];
+        if (!item)
+          return;
+        if (!item.extractionLogs)
+          item.extractionLogs = [];
+        const include = this.shouldDisplayDetailedExtractionLogs() ? true : ev.phase === "invoke_start" || ev.phase === "invoke_exit" || ev.phase === "invoke_error" || ev.phase === "invoke_aborted";
+        if (!include)
+          return;
+        item.extractionLogs.push(ev);
+        if (item.extractionLogs.length > 80) {
+          item.extractionLogs = item.extractionLogs.slice(-80);
+        }
+        void this.renderMessages();
       };
       let extractedCount = 0;
       let failedCount = 0;
@@ -32194,7 +32327,14 @@ var _ChatView = class _ChatView extends import_obsidian28.ItemView {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
-            text = await this.plugin.graphApiService.extractTextFromImage(absolutePath, extractionController.signal);
+            text = await this.plugin.graphApiService.extractTextFromImage(
+              absolutePath,
+              extractionController.signal,
+              {
+                emit: appendExtractionLog,
+                rawCli: this.plugin.settings.extractionDebugRawCli
+              }
+            );
           } else if (attachment.file instanceof import_obsidian28.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
@@ -33802,6 +33942,18 @@ var VaultAISettingTab = class extends import_obsidian28.PluginSettingTab {
     new import_obsidian28.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
+      (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
+        this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian28.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.extractionDebugRawCli).onChange(async (value) => {
+        this.plugin.settings.extractionDebugRawCli = value;
         await this.plugin.saveSettings();
       })
     );

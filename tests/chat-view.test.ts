@@ -45,6 +45,8 @@ describe('ChatView', () => {
             hermesAgentExtraArgs: '',
             hermesAgentTimeoutMs: 120_000,
             hermesAgentHealthCheckArgs: '--version',
+            extractionLogVerbosity: 'detailed',
+            extractionDebugRawCli: false,
             themeMode: 'system',
             customCheckpoints: [],
             advancedGraphMode: true,
