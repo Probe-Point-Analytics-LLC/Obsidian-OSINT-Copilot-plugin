@@ -10,7 +10,7 @@ When **drafting** specs (command **Draft HTTP enricher skill from API documentat
 
 - **`allowedDomains`** lists every hostname used in `request.urlTemplate` (the API origin, not only the documentation host).
 - **Auth**: use `bearer_vault` / `header_vault` / `query_vault` with `vaultRelativePath` under the vault credentials folder for secrets; never put API keys in JSON or chat.
-- **Templates**: `{{query}}` and `{{attachments_context}}` in `urlTemplate` / `bodyTemplate` as supported by the executor.
+- **Templates**: `{{query}}` and `{{attachments_context}}` in `urlTemplate` / `bodyTemplate`. The plugin **URL-encodes** those values when building `urlTemplate` (needed for path segments like `.../query/{{query}}` when the query contains spaces or `@`). **`bodyTemplate`** uses **raw** substitution so JSON bodies stay valid.
 - **Avoid** APIs that only work behind a **browser session** the plugin cannot reproduce.
 
 ## Operator checklist

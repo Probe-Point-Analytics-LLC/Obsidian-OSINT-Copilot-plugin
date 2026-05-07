@@ -44,7 +44,35 @@ describe('executeEnricherHttp', () => {
 		expect(out).toContain('"hits": 1');
 		expect(requestUrl).toHaveBeenCalledWith(
 			expect.objectContaining({
-				url: 'https://api.example.com/v?q=x@y.com',
+				url: 'https://api.example.com/v?q=x%40y.com',
+				method: 'GET',
+				throw: false,
+			}),
+		);
+	});
+
+	it('URL-encodes query in urlTemplate for path segments (e.g. names with spaces)', async () => {
+		vi.mocked(requestUrl).mockResolvedValue({
+			status: 200,
+			text: '{}',
+			headers: {},
+			json: {},
+			arrayBuffer: new ArrayBuffer(0),
+		} as any);
+
+		const spec = minimalSpec({
+			request: {
+				method: 'GET',
+				urlTemplate: 'https://api.example.com/v2/query/{{query}}',
+				headers: {},
+			},
+		});
+
+		await executeEnricherHttp(spec, 'Paolo De Lellis', '', undefined, undefined, undefined);
+
+		expect(requestUrl).toHaveBeenCalledWith(
+			expect.objectContaining({
+				url: 'https://api.example.com/v2/query/Paolo%20De%20Lellis',
 				method: 'GET',
 				throw: false,
 			}),

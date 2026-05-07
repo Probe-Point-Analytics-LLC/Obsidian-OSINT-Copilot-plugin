@@ -25822,6 +25822,18 @@ async function readVaultCredential(vault, credentialsFolder, vaultRelativePath) 
 function interpolate(template, vars) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
 }
+function urlTemplateVars(query, attachmentsContext) {
+  return {
+    query: encodeURIComponent(query),
+    attachments_context: encodeURIComponent(attachmentsContext || "")
+  };
+}
+function bodyTemplateVars(query, attachmentsContext) {
+  return {
+    query,
+    attachments_context: attachmentsContext || ""
+  };
+}
 function hostOf(url) {
   try {
     return new URL(url).hostname.toLowerCase();
@@ -25875,11 +25887,7 @@ async function authHeader(spec, vault, credentialsFolder) {
   return {};
 }
 async function executeEnricherHttp(spec, query, attachmentsContext, signal, vault, credentialsFolder) {
-  const vars = {
-    query,
-    attachments_context: attachmentsContext || ""
-  };
-  const baseUrl = interpolate(spec.request.urlTemplate, vars);
+  const baseUrl = interpolate(spec.request.urlTemplate, urlTemplateVars(query, attachmentsContext));
   const url = new URL(baseUrl);
   const credRoot = credentialsFolder ?? DEFAULT_CREDENTIALS_FOLDER;
   if (spec.auth.type === "query_env") {
@@ -25904,7 +25912,7 @@ async function executeEnricherHttp(spec, query, attachmentsContext, signal, vaul
     ...await authHeader(spec, vault, credRoot)
   };
   const method = spec.request.method || "GET";
-  const body = method === "POST" && spec.request.bodyTemplate ? interpolate(spec.request.bodyTemplate, vars) : void 0;
+  const body = method === "POST" && spec.request.bodyTemplate ? interpolate(spec.request.bodyTemplate, bodyTemplateVars(query, attachmentsContext)) : void 0;
   const started = Date.now();
   let attempt = 0;
   let lastErr = null;
@@ -26064,7 +26072,7 @@ Rules for custom_vault_operations:
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
-- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation). HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
+- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}}: the executor applies URL encoding (encodeURIComponent) to those values in urlTemplate only; bodyTemplate receives raw strings for JSON. HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
 - When fixing or replacing an enricher, every upsert_enricher object MUST include the complete spec in the "spec" field (all fields needed for a working file). Do not describe the new JSON only in answer_markdown \u2014 the chat approval UI and Apply step use custom_vault_operations[].spec.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 

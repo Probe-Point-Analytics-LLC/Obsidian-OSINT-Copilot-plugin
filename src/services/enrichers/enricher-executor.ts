@@ -51,6 +51,22 @@ function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
 }
 
+/** Values for urlTemplate: encode so path segments and query values are valid (spaces, @, unicode, etc.). */
+function urlTemplateVars(query: string, attachmentsContext: string): Record<string, string> {
+  return {
+    query: encodeURIComponent(query),
+    attachments_context: encodeURIComponent(attachmentsContext || ""),
+  };
+}
+
+/** Values for bodyTemplate: keep raw strings (JSON bodies must not be URL-encoded). */
+function bodyTemplateVars(query: string, attachmentsContext: string): Record<string, string> {
+  return {
+    query,
+    attachments_context: attachmentsContext || "",
+  };
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname.toLowerCase();
@@ -111,11 +127,7 @@ export async function executeEnricherHttp(
   vault?: Vault,
   credentialsFolder?: string,
 ): Promise<string> {
-  const vars = {
-    query,
-    attachments_context: attachmentsContext || "",
-  };
-  const baseUrl = interpolate(spec.request.urlTemplate, vars);
+  const baseUrl = interpolate(spec.request.urlTemplate, urlTemplateVars(query, attachmentsContext));
   const url = new URL(baseUrl);
   const credRoot = credentialsFolder ?? DEFAULT_CREDENTIALS_FOLDER;
   if (spec.auth.type === "query_env") {
@@ -139,7 +151,7 @@ export async function executeEnricherHttp(
   const method = spec.request.method || "GET";
   const body =
     method === "POST" && spec.request.bodyTemplate
-      ? interpolate(spec.request.bodyTemplate, vars)
+      ? interpolate(spec.request.bodyTemplate, bodyTemplateVars(query, attachmentsContext))
       : undefined;
 
   const started = Date.now();

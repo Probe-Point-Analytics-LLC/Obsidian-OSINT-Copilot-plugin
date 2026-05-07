@@ -132,6 +132,8 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 
 **Agent-drafted specs (Claude or unified `upsert_enricher`):** The plugin performs enricher HTTP with **Obsidian `requestUrl`** (not your browser tab). Put the **real API hostname** in `allowedDomains` (not only the docs website). Prefer **vault-backed auth** with `vaultRelativePath` for API keys. Avoid APIs that only work with a **logged-in browser cookie**—those will fail the same way authenticated webmail URLs fail for “fetch link” features.
 
+**URL templates:** In `request.urlTemplate`, `{{query}}` and `{{attachments_context}}` are **URL-encoded** (e.g. spaces → `%20`, `@` → `%40`) so path-style APIs like LeakCheck’s `/api/v2/query/{{query}}` accept names and emails. JSON **`bodyTemplate`** still uses **raw** values.
+
 **Unified chat — agent-proposed enricher JSON:** The unified agent can include **`upsert_enricher`** (and optionally **`delete_enricher`**) in **`custom_vault_operations`** alongside **`upsert_skill`**. Invalid specs are discarded before you see them; you still confirm with **Apply selected** in chat, same as skills and credentials. After apply, the new `enrichers/<id>.json` is on disk and the enricher list reloads.
 
 **Review before Apply:** In chat, each proposed vault row can show an expandable **Preview enricher JSON** or **Preview skill** so you read the full draft (not only the one-line summary) before **Apply selected**.
