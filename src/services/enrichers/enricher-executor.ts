@@ -3,6 +3,12 @@ import { DEFAULT_CREDENTIALS_FOLDER } from "../../constants/vault-layout";
 import { normalizeCredentialsRelativePath } from "../custom-vault-operations";
 import type { EnricherSpec } from "./enricher-schema";
 
+/**
+ * Pause between consecutive enricher HTTP calls in unified chat. Some APIs (e.g. LeakCheck)
+ * reject bursts stricter than “one at a time” if each call finishes in under ~300ms.
+ */
+export const ENRICHER_INVOCATION_SPACING_MS = 500;
+
 function pathIsUnderPrefix(path: string, prefix: string): boolean {
   const p = normalizePath(path);
   const pre = normalizePath(prefix);
@@ -16,12 +22,29 @@ async function readVaultCredential(
 ): Promise<string> {
   const root = normalizePath(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
   const rel = normalizeCredentialsRelativePath(vaultRelativePath);
-  if (!rel) throw new Error("Invalid vault credential relative path");
+  if (!rel) {
+    throw new Error(
+      `Invalid vault credential path "${vaultRelativePath}". ` +
+        `Use a path relative to **Settings → OSINT Copilot → Credentials folder** (no leading /, no .. segments), e.g. leakcheck/api-key.txt.`,
+    );
+  }
   const full = normalizePath(`${root}/${rel}`);
   if (!pathIsUnderPrefix(full, root)) throw new Error("Credential path escapes credentials folder");
   const file = vault.getAbstractFileByPath(full);
-  if (!(file instanceof TFile)) throw new Error(`Credential file not found: ${rel}`);
-  return (await vault.read(file)).trim();
+  if (!(file instanceof TFile)) {
+    throw new Error(
+      `Credential file not found in vault at: ${full}\n` +
+        `(credentials folder "${root}" + "${rel}"). ` +
+        `Check that **Credentials folder** in plugin settings matches where chat **Apply** wrote the file, and that the note exists in this vault.`,
+    );
+  }
+  const secret = (await vault.read(file)).trim();
+  if (!secret) {
+    throw new Error(
+      `Credential file is empty: ${full}. Paste the secret (single line) or re-apply **put_credentials** and confirm in chat.`,
+    );
+  }
+  return secret;
 }
 
 function interpolate(template: string, vars: Record<string, string>): string {

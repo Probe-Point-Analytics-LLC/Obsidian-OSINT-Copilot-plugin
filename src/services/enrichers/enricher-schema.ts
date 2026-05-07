@@ -106,7 +106,18 @@ export function normalizeEnricherSpec(raw: unknown): EnricherSpec | null {
   let authType: EnricherAuthType = "none";
   if (envTypes.includes(authTypeRaw)) authType = authTypeRaw;
   else if (vaultTypes.includes(authTypeRaw)) {
-    authType = vaultRelativePath ? authTypeRaw : "none";
+    if (vaultRelativePath) {
+      authType = authTypeRaw;
+    } else {
+      authType = "none";
+      const hint =
+        vaultRelRaw !== ""
+          ? `vault credential path rejected or unsafe in JSON: "${vaultRelRaw}"`
+          : `${authTypeRaw} requires auth.vaultRelativePath (e.g. leakcheck/api-key.txt)`;
+      console.warn(
+        `[EnricherSchema] enricher "${id}": ${hint}; auth downgraded to none — requests will not send vault API keys.`,
+      );
+    }
   }
 
   return {

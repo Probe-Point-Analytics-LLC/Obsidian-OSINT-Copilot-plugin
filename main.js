@@ -25589,7 +25589,15 @@ function normalizeEnricherSpec(raw) {
   if (envTypes.includes(authTypeRaw))
     authType = authTypeRaw;
   else if (vaultTypes.includes(authTypeRaw)) {
-    authType = vaultRelativePath ? authTypeRaw : "none";
+    if (vaultRelativePath) {
+      authType = authTypeRaw;
+    } else {
+      authType = "none";
+      const hint = vaultRelRaw !== "" ? `vault credential path rejected or unsafe in JSON: "${vaultRelRaw}"` : `${authTypeRaw} requires auth.vaultRelativePath (e.g. leakcheck/api-key.txt)`;
+      console.warn(
+        `[EnricherSchema] enricher "${id}": ${hint}; auth downgraded to none \u2014 requests will not send vault API keys.`
+      );
+    }
   }
   return {
     id,
@@ -25779,6 +25787,7 @@ function summarizeCustomVaultOperation(op) {
 }
 
 // src/services/enrichers/enricher-executor.ts
+var ENRICHER_INVOCATION_SPACING_MS = 500;
 function pathIsUnderPrefix(path, prefix) {
   const p = (0, import_obsidian15.normalizePath)(path);
   const pre = (0, import_obsidian15.normalizePath)(prefix);
@@ -25787,15 +25796,28 @@ function pathIsUnderPrefix(path, prefix) {
 async function readVaultCredential(vault, credentialsFolder, vaultRelativePath) {
   const root = (0, import_obsidian15.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
   const rel = normalizeCredentialsRelativePath(vaultRelativePath);
-  if (!rel)
-    throw new Error("Invalid vault credential relative path");
+  if (!rel) {
+    throw new Error(
+      `Invalid vault credential path "${vaultRelativePath}". Use a path relative to **Settings \u2192 OSINT Copilot \u2192 Credentials folder** (no leading /, no .. segments), e.g. leakcheck/api-key.txt.`
+    );
+  }
   const full = (0, import_obsidian15.normalizePath)(`${root}/${rel}`);
   if (!pathIsUnderPrefix(full, root))
     throw new Error("Credential path escapes credentials folder");
   const file = vault.getAbstractFileByPath(full);
-  if (!(file instanceof import_obsidian15.TFile))
-    throw new Error(`Credential file not found: ${rel}`);
-  return (await vault.read(file)).trim();
+  if (!(file instanceof import_obsidian15.TFile)) {
+    throw new Error(
+      `Credential file not found in vault at: ${full}
+(credentials folder "${root}" + "${rel}"). Check that **Credentials folder** in plugin settings matches where chat **Apply** wrote the file, and that the note exists in this vault.`
+    );
+  }
+  const secret = (await vault.read(file)).trim();
+  if (!secret) {
+    throw new Error(
+      `Credential file is empty: ${full}. Paste the secret (single line) or re-apply **put_credentials** and confirm in chat.`
+    );
+  }
+  return secret;
 }
 function interpolate(template, vars) {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key) => vars[key] ?? "");
@@ -26782,6 +26804,9 @@ ${out}`);
             blocks.push(`${heading}
 
 **Error:** ${msg}`);
+          }
+          if (i < n - 1 && ENRICHER_INVOCATION_SPACING_MS > 0) {
+            await new Promise((r) => setTimeout(r, ENRICHER_INVOCATION_SPACING_MS));
           }
         }
         if (blocks.length) {

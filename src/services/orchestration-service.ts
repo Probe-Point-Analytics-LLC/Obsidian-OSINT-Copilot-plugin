@@ -14,6 +14,7 @@ import { buildInferredOsintSources } from './osint-confidence-engine';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { parseVaultSkillPlannerTool } from '../skills/skill-runtime';
 import { executeEnricherTool, executeVaultSkillTool } from '../skills/skill-executor';
+import { ENRICHER_INVOCATION_SPACING_MS } from './enrichers/enricher-executor';
 import { enrichToolId, parseEnrichToolId } from './enrichers/enricher-schema';
 import { createAgentProvider } from './agent-runtime/create-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
@@ -302,6 +303,9 @@ export class OrchestrationService {
                         enricherFail++;
                         const msg = err instanceof Error ? err.message : String(err);
                         blocks.push(`${heading}\n\n**Error:** ${msg}`);
+                    }
+                    if (i < n - 1 && ENRICHER_INVOCATION_SPACING_MS > 0) {
+                        await new Promise((r) => setTimeout(r, ENRICHER_INVOCATION_SPACING_MS));
                     }
                 }
                 if (blocks.length) {
