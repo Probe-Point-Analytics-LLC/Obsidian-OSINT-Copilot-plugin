@@ -29,11 +29,11 @@ Rules for custom_vault_operations:
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
-- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side — follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include the API hostname used in request.urlTemplate; urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation).
+- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side — follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation). HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
-- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
+- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them inside Obsidian using requestUrl (same class of outbound HTTP as other plugin features — not a separate Node server, not the user's browser, so CORS as in a web page does not apply the same way; still use public/token APIs suitable for server-style requests).
 - Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs — use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
 - enricher_id must match each enricher JSON file's **id** field exactly after normalization (lowercase, hyphens). Example: if the file id is leakcheck, use "enricher_id": "leakcheck", not "leakcheck_v2" unless the file id is leakcheck-v2. query maps to URL/body templates as {query}.`;
 
@@ -77,7 +77,7 @@ export function buildUnifiedAgentUserPrompt(ctx: AgentTurnContext): string {
     if (ids.length > 0) {
         parts.push(
             '',
-            '=== REGISTERED HTTP ENRICHERS (vault JSON — prefer enricher_invocations; plugin runs these without Bash/curl) ===',
+            '=== REGISTERED HTTP ENRICHERS (vault JSON — prefer enricher_invocations; plugin runs these via Obsidian requestUrl, without Bash/curl) ===',
             `Active enricher ids (use enricher_id exactly): ${ids.join(', ')}`,
         );
     } else {

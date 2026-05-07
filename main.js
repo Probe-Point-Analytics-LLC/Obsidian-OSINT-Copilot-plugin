@@ -25888,28 +25888,46 @@ async function executeEnricherHttp(spec, query, attachmentsContext, signal, vaul
   while (attempt < totalAttempts) {
     attempt++;
     try {
-      const timeoutController = new AbortController();
-      const t = setTimeout(() => timeoutController.abort(), spec.limits.timeoutMs);
-      const mergedController = new AbortController();
-      const onAbort = () => {
-        if (!mergedController.signal.aborted)
-          mergedController.abort();
-      };
-      timeoutController.signal.addEventListener("abort", onAbort, { once: true });
-      if (signal)
-        signal.addEventListener("abort", onAbort, { once: true });
-      const res = await fetch(url.toString(), {
+      const strHeaders = {};
+      for (const [k, v] of Object.entries(headers)) {
+        strHeaders[k] = String(v ?? "");
+      }
+      const urlStr = url.toString();
+      const postBody = method === "POST" ? body : void 0;
+      const contentType = method === "POST" && postBody ? postBody.trimStart().startsWith("{") || postBody.trimStart().startsWith("[") ? "application/json" : "text/plain; charset=utf-8" : void 0;
+      const runRequest = () => (0, import_obsidian15.requestUrl)({
+        url: urlStr,
         method,
-        headers,
-        body,
-        signal: mergedController.signal
+        headers: strHeaders,
+        body: postBody,
+        contentType,
+        throw: false
       });
-      clearTimeout(t);
-      const text = await res.text();
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new DOMException("Aborted", "AbortError")), spec.limits.timeoutMs);
+      });
+      const abortPromise = signal ? new Promise((_, reject) => {
+        if (signal.aborted)
+          reject(new DOMException("Aborted", "AbortError"));
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }) : null;
+      let res;
+      try {
+        res = await Promise.race([
+          runRequest(),
+          timeoutPromise,
+          ...abortPromise ? [abortPromise] : []
+        ]);
+      } finally {
+        if (timeoutId !== void 0)
+          clearTimeout(timeoutId);
+      }
+      const text = res.text || "";
       const elapsed2 = Date.now() - started;
       const truncated = truncate(text, spec.limits.maxResponseChars);
       const info = `[${spec.id}] ${method} ${url.hostname} status=${res.status} latency_ms=${elapsed2}`;
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         throw new Error(`${info} body=${truncate(text, 1e3)}`);
       }
       let summary = truncated;
@@ -26022,11 +26040,11 @@ Rules for custom_vault_operations:
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
-- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include the API hostname used in request.urlTemplate; urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation).
+- upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation). HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
-- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them via Node (no curl/Bash), using vault-stored credentials per enricher auth config.
+- For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them inside Obsidian using requestUrl (same class of outbound HTTP as other plugin features \u2014 not a separate Node server, not the user's browser, so CORS as in a web page does not apply the same way; still use public/token APIs suitable for server-style requests).
 - Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs \u2014 use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
 - enricher_id must match each enricher JSON file's **id** field exactly after normalization (lowercase, hyphens). Example: if the file id is leakcheck, use "enricher_id": "leakcheck", not "leakcheck_v2" unless the file id is leakcheck-v2. query maps to URL/body templates as {query}.`;
 function buildUnifiedAgentSystemPrompt(providerLabel) {
@@ -26065,7 +26083,7 @@ ${m.content}`).join("\n\n---\n\n") : "(no prior messages)";
   if (ids.length > 0) {
     parts.push(
       "",
-      "=== REGISTERED HTTP ENRICHERS (vault JSON \u2014 prefer enricher_invocations; plugin runs these without Bash/curl) ===",
+      "=== REGISTERED HTTP ENRICHERS (vault JSON \u2014 prefer enricher_invocations; plugin runs these via Obsidian requestUrl, without Bash/curl) ===",
       `Active enricher ids (use enricher_id exactly): ${ids.join(", ")}`
     );
   } else {
@@ -30321,10 +30339,14 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       return;
     }
     const system = [
-      "You draft JSON for an OSINT HTTP enricher tool.",
+      "You draft JSON for an OSINT HTTP enricher tool that will run inside Obsidian (plugin HTTP, not a browser tab).",
       "Return ONLY one JSON object with keys:",
-      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, inputHints, skillInstructions.",
-      "Use {{query}} placeholder in urlTemplate/body when relevant.",
+      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, vaultRelativePath, inputHints, skillInstructions.",
+      "Runtime: Obsidian uses requestUrl (no CORS from app origin). urlTemplate must hit the real API origin \u2014 do not rely on browser-only session cookies or front-end-only endpoints.",
+      "allowedDomains must list every hostname used in urlTemplate (API host), not only the documentation site host.",
+      "Auth: prefer bearer_vault | header_vault | query_vault with vaultRelativePath (relative path under the vault credentials folder); use bearer_env | header_env | query_env only if appropriate. Never put API keys or secrets in the JSON.",
+      "Use {{query}} and {{attachments_context}} in urlTemplate or body when relevant.",
+      "If the integration is only usable from a logged-in browser UI (cookie/session webmail style), respond with a JSON object whose skillInstructions clearly state the API is not suitable as an HTTP enricher and the user should paste exports instead.",
       "Never include credentials or API keys."
     ].join("\n");
     const user = `Documentation URL:
@@ -30363,7 +30385,8 @@ ${details}`;
         type: parsed?.["authType"] || "none",
         envVar: parsed?.["authEnvVar"] || "",
         headerName: parsed?.["authHeaderName"] || "X-API-Key",
-        queryParam: parsed?.["authQueryParam"] || "api_key"
+        queryParam: parsed?.["authQueryParam"] || "api_key",
+        vaultRelativePath: typeof parsed?.["vaultRelativePath"] === "string" ? String(parsed["vaultRelativePath"]).trim() : ""
       },
       request: {
         method: String(parsed?.["method"] || "GET").toUpperCase() === "POST" ? "POST" : "GET",
@@ -30395,6 +30418,7 @@ ${draft.skillInstructions}
 
 Tool id: ${enrichToolId(draft.id)}
 This skill executes the configured HTTP enricher spec in ${enricherPath}.
+Do not tell the user to run raw curl from Obsidian for this API; unified chat should call this tool via enricher_invocations with enricher_id \`${draft.id}\`.
 `;
     const confirmMsg = [
       "Is it OK to install this enricher skill into your vault and create or update the files below?",

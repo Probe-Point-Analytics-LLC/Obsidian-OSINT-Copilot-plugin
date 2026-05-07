@@ -807,10 +807,14 @@ export default class VaultAIPlugin extends Plugin {
       return;
     }
     const system = [
-      "You draft JSON for an OSINT HTTP enricher tool.",
+      "You draft JSON for an OSINT HTTP enricher tool that will run inside Obsidian (plugin HTTP, not a browser tab).",
       "Return ONLY one JSON object with keys:",
-      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, inputHints, skillInstructions.",
-      "Use {{query}} placeholder in urlTemplate/body when relevant.",
+      "id, name, description, method, urlTemplate, allowedDomains, authType, authEnvVar, authHeaderName, authQueryParam, vaultRelativePath, inputHints, skillInstructions.",
+      "Runtime: Obsidian uses requestUrl (no CORS from app origin). urlTemplate must hit the real API origin — do not rely on browser-only session cookies or front-end-only endpoints.",
+      "allowedDomains must list every hostname used in urlTemplate (API host), not only the documentation site host.",
+      "Auth: prefer bearer_vault | header_vault | query_vault with vaultRelativePath (relative path under the vault credentials folder); use bearer_env | header_env | query_env only if appropriate. Never put API keys or secrets in the JSON.",
+      "Use {{query}} and {{attachments_context}} in urlTemplate or body when relevant.",
+      "If the integration is only usable from a logged-in browser UI (cookie/session webmail style), respond with a JSON object whose skillInstructions clearly state the API is not suitable as an HTTP enricher and the user should paste exports instead.",
       "Never include credentials or API keys.",
     ].join("\n");
     const user = `Documentation URL:\n${docUrl}\n\nUser requirements:\n${details}`;
@@ -843,6 +847,8 @@ export default class VaultAIPlugin extends Plugin {
         envVar: parsed?.["authEnvVar"] || "",
         headerName: parsed?.["authHeaderName"] || "X-API-Key",
         queryParam: parsed?.["authQueryParam"] || "api_key",
+        vaultRelativePath:
+          typeof parsed?.["vaultRelativePath"] === "string" ? String(parsed["vaultRelativePath"]).trim() : "",
       },
       request: {
         method: String(parsed?.["method"] || "GET").toUpperCase() === "POST" ? "POST" : "GET",
@@ -875,6 +881,7 @@ ${draft.skillInstructions}
 
 Tool id: ${enrichToolId(draft.id)}
 This skill executes the configured HTTP enricher spec in ${enricherPath}.
+Do not tell the user to run raw curl from Obsidian for this API; unified chat should call this tool via enricher_invocations with enricher_id \`${draft.id}\`.
 `;
     const confirmMsg = [
       "Is it OK to install this enricher skill into your vault and create or update the files below?",

@@ -1,4 +1,4 @@
-import { normalizePath, TFile, type Vault } from "obsidian";
+import { normalizePath, requestUrl, TFile, type RequestUrlResponse, type Vault } from "obsidian";
 import { DEFAULT_CREDENTIALS_FOLDER } from "../../constants/vault-layout";
 import { normalizeCredentialsRelativePath } from "../custom-vault-operations";
 import type { EnricherSpec } from "./enricher-schema";
@@ -124,26 +124,56 @@ export async function executeEnricherHttp(
   while (attempt < totalAttempts) {
     attempt++;
     try {
-      const timeoutController = new AbortController();
-      const t = setTimeout(() => timeoutController.abort(), spec.limits.timeoutMs);
-      const mergedController = new AbortController();
-      const onAbort = () => {
-        if (!mergedController.signal.aborted) mergedController.abort();
-      };
-      timeoutController.signal.addEventListener("abort", onAbort, { once: true });
-      if (signal) signal.addEventListener("abort", onAbort, { once: true });
-      const res = await fetch(url.toString(), {
-        method,
-        headers,
-        body,
-        signal: mergedController.signal,
+      const strHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(headers)) {
+        strHeaders[k] = String(v ?? "");
+      }
+      const urlStr = url.toString();
+      const postBody = method === "POST" ? body : undefined;
+      const contentType =
+        method === "POST" && postBody
+          ? postBody.trimStart().startsWith("{") || postBody.trimStart().startsWith("[")
+            ? "application/json"
+            : "text/plain; charset=utf-8"
+          : undefined;
+
+      const runRequest = (): Promise<RequestUrlResponse> =>
+        requestUrl({
+          url: urlStr,
+          method,
+          headers: strHeaders,
+          body: postBody,
+          contentType,
+          throw: false,
+        });
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new DOMException("Aborted", "AbortError")), spec.limits.timeoutMs);
       });
-      clearTimeout(t);
-      const text = await res.text();
+      const abortPromise = signal
+        ? new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(new DOMException("Aborted", "AbortError"));
+            signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+          })
+        : null;
+
+      let res: RequestUrlResponse;
+      try {
+        res = await Promise.race([
+          runRequest(),
+          timeoutPromise,
+          ...(abortPromise ? [abortPromise] : []),
+        ]);
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
+
+      const text = res.text || "";
       const elapsed = Date.now() - started;
       const truncated = truncate(text, spec.limits.maxResponseChars);
       const info = `[${spec.id}] ${method} ${url.hostname} status=${res.status} latency_ms=${elapsed}`;
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         throw new Error(`${info} body=${truncate(text, 1000)}`);
       }
       let summary = truncated;
