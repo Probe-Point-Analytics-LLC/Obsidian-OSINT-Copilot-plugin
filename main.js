@@ -17549,7 +17549,7 @@ var ConversationService = class {
 };
 
 // src/views/graph-view.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 
 // src/modals/entity-modal.ts
 var import_obsidian7 = require("obsidian");
@@ -21370,10 +21370,494 @@ var GraphHistoryManager = class {
   }
 };
 
+// src/views/timeline-view.ts
+var import_obsidian11 = require("obsidian");
+var TIMELINE_VIEW_TYPE = "graph_copilot-timeline-view";
+function isEventEntityType(entityType) {
+  return typeof entityType === "string" && entityType.trim().toLowerCase() === "event";
+}
+function isExplicitlyOffTimeline(value) {
+  if (value === false || value === 0)
+    return true;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    return s === "false" || s === "no" || s === "0" || s === "";
+  }
+  return false;
+}
+function pickFirstTimelineDateProperty(properties) {
+  const keys = ["start_date", "first_seen", "first_seen_precise", "date", "published", "first_observed", "modified"];
+  for (const k of keys) {
+    const v = properties[k];
+    if (typeof v === "string" && v.trim() && !["unknown", "n/a"].includes(v.trim().toLowerCase())) {
+      return v.trim();
+    }
+  }
+  return void 0;
+}
+var TimelineView = class extends import_obsidian11.ItemView {
+  constructor(leaf, entityManager, onEventClick) {
+    super(leaf);
+    this.container = null;
+    this.timelineContainer = null;
+    this.events = [];
+    this.onEventClick = null;
+    /** Debounce vault edits (browser `setTimeout` id is numeric). */
+    this.vaultRefreshTimer = null;
+    this.entityManager = entityManager;
+    this.onEventClick = onEventClick || null;
+  }
+  getViewType() {
+    return TIMELINE_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "OSINTCopilot timeline";
+  }
+  getIcon() {
+    return "calendar-clock";
+  }
+  async onOpen() {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("graph_copilot-timeline-container");
+    const toolbar = container.createDiv({ cls: "graph_copilot-timeline-toolbar" });
+    this.createToolbar(toolbar);
+    this.timelineContainer = container.createDiv({ cls: "graph_copilot-timeline-canvas" });
+    this.applyStyles();
+    await this.refresh();
+    const basePrefix = (0, import_obsidian11.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
+    const scheduleRefreshFromPath = (path) => {
+      if (!path.replace(/\\/g, "/").toLowerCase().startsWith(basePrefix))
+        return;
+      if (this.vaultRefreshTimer !== null) {
+        window.clearTimeout(this.vaultRefreshTimer);
+      }
+      this.vaultRefreshTimer = window.setTimeout(() => {
+        this.vaultRefreshTimer = null;
+        void this.refresh();
+      }, 400);
+    };
+    this.registerEvent(
+      this.app.vault.on("modify", (f) => {
+        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (f) => {
+        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (f) => {
+        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (f, oldPath) => {
+        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+        if (typeof oldPath === "string")
+          scheduleRefreshFromPath(oldPath);
+      })
+    );
+  }
+  async onClose() {
+    if (this.vaultRefreshTimer !== null) {
+      window.clearTimeout(this.vaultRefreshTimer);
+      this.vaultRefreshTimer = null;
+    }
+    this.events = [];
+  }
+  /**
+   * Apply CSS styles for the timeline.
+   */
+  applyStyles() {
+    if (!this.timelineContainer)
+      return;
+    this.timelineContainer.setCssProps({
+      width: "100%",
+      height: "calc(100% - 50px)",
+      "overflow-x": "auto",
+      "overflow-y": "auto",
+      padding: "20px",
+      "box-sizing": "border-box"
+    });
+  }
+  /**
+   * Create the toolbar.
+   */
+  createToolbar(toolbar) {
+    toolbar.setCssProps({
+      display: "flex",
+      gap: "10px",
+      padding: "10px",
+      background: "var(--background-secondary)",
+      "border-bottom": "1px solid var(--background-modifier-border)"
+    });
+    const addBtn = toolbar.createEl("button", { text: "+ add event" });
+    addBtn.addClass("graph_copilot-add-entity-btn");
+    addBtn.onclick = () => this.openEventCreator();
+    toolbar.createDiv({ cls: "graph_copilot-toolbar-separator" });
+    const refreshBtn = toolbar.createEl("button", { text: "\u21BB refresh" });
+    refreshBtn.onclick = () => {
+      (async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "\u21BB loading...";
+        await this.refresh();
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "\u21BB refresh";
+      })();
+    };
+    const filterSpan = toolbar.createEl("span", {
+      text: "Event entities with a parseable date; hidden if \xABadd_to_timeline\xBB is explicitly off. Auto-syncs when notes change.",
+      cls: "graph_copilot-timeline-info"
+    });
+    filterSpan.setCssProps({
+      "margin-left": "auto",
+      color: "var(--text-muted)",
+      "font-size": "12px"
+    });
+  }
+  /**
+   * Open the event creation modal.
+   */
+  openEventCreator() {
+    const modal = new EntityCreationModal(
+      this.app,
+      this.entityManager,
+      "Event" /* Event */,
+      (entityId) => {
+        this.refresh();
+      }
+    );
+    modal.open();
+  }
+  /**
+   * Refresh the timeline with current data.
+   * Reloads entities from disk to ensure persistence across Obsidian restarts.
+   */
+  async refresh() {
+    if (!this.timelineContainer)
+      return;
+    try {
+      await this.entityManager.loadEntitiesFromNotes();
+    } catch (error) {
+      console.error("[TimelineView] Failed to reload entities from notes:", error);
+    }
+    const entities = this.entityManager.getAllEntities().filter((e) => isEventEntityType(e.type));
+    this.events = this.parseEvents(entities);
+    this.renderTimeline();
+  }
+  /**
+   * Parse entities into timeline events.
+   * Events are included unless add_to_timeline is explicitly set to false.
+   */
+  parseEvents(entities) {
+    const events = [];
+    for (const entity of entities) {
+      if (isExplicitlyOffTimeline(entity.properties.add_to_timeline))
+        continue;
+      const startRaw = pickFirstTimelineDateProperty(entity.properties);
+      const startDate = this.parseDate(startRaw);
+      if (!startDate)
+        continue;
+      const endRaw = typeof entity.properties.end_date === "string" ? entity.properties.end_date : entity.properties.last_seen;
+      const endDate = this.parseDate(typeof endRaw === "string" ? endRaw : void 0);
+      events.push({
+        id: entity.id,
+        label: entity.label,
+        start: startDate,
+        end: endDate || void 0,
+        color: ENTITY_CONFIGS["Event" /* Event */].color
+      });
+    }
+    events.sort((a, b) => a.start.getTime() - b.start.getTime());
+    return events;
+  }
+  /**
+   * Parse a date string. Supports YYYY-MM-DD HH:mm, YYYY-MM-DD, and standard Date formats.
+   */
+  parseDate(dateStr) {
+    if (!dateStr || dateStr.toLowerCase() === "unknown" || dateStr.toLowerCase() === "n/a")
+      return null;
+    try {
+      const withTimeMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+      if (withTimeMatch) {
+        return new Date(
+          parseInt(withTimeMatch[1]),
+          parseInt(withTimeMatch[2]) - 1,
+          parseInt(withTimeMatch[3]),
+          parseInt(withTimeMatch[4]),
+          parseInt(withTimeMatch[5])
+        );
+      }
+      const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (dateOnlyMatch) {
+        return new Date(
+          parseInt(dateOnlyMatch[1]),
+          parseInt(dateOnlyMatch[2]) - 1,
+          parseInt(dateOnlyMatch[3])
+        );
+      }
+      if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr.trim())) {
+        const iso = new Date(dateStr.trim());
+        if (!isNaN(iso.getTime()))
+          return iso;
+      }
+      const date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+    } catch (e) {
+      console.error("Failed to parse date:", dateStr);
+    }
+    return null;
+  }
+  /**
+   * Render the timeline visualization.
+   */
+  renderTimeline() {
+    if (!this.timelineContainer)
+      return;
+    this.timelineContainer.empty();
+    if (this.events.length === 0) {
+      const emptyEl = this.timelineContainer.createDiv({ cls: "graph_copilot-timeline-empty" });
+      emptyEl.setCssProps({
+        "text-align": "center",
+        padding: "40px",
+        color: "var(--text-muted)"
+      });
+      const p1 = emptyEl.createEl("p", {
+        text: "No events added to the timeline yet."
+      });
+      p1.setCssProps({ "margin-bottom": "10px" });
+      const p2 = emptyEl.createEl("p", {
+        text: "Create an Entity with type Event and a start_date (or first_seen / date). Use \u21BB refresh if you just edited notes. Set add_to_timeline: false to hide a note from this view."
+      });
+      p2.setCssProps({ "font-size": "12px" });
+      return;
+    }
+    const wrapper = this.timelineContainer.createDiv({ cls: "graph_copilot-timeline-wrapper" });
+    wrapper.setCssProps({
+      position: "relative",
+      "min-height": "100%",
+      "padding-left": "200px"
+    });
+    const line = wrapper.createDiv({ cls: "graph_copilot-timeline-line" });
+    line.setCssProps({
+      position: "absolute",
+      left: "180px",
+      top: "0",
+      bottom: "0",
+      width: "4px",
+      background: "var(--interactive-accent)",
+      "border-radius": "2px"
+    });
+    this.events.forEach((event, index) => {
+      this.renderEvent(wrapper, event, index);
+    });
+  }
+  /**
+   * Render a single event on the timeline.
+   */
+  renderEvent(container, event, index) {
+    const eventEl = container.createDiv({ cls: "graph_copilot-timeline-event" });
+    eventEl.setCssProps({
+      position: "relative",
+      "margin-bottom": "30px",
+      "padding-left": "40px"
+    });
+    const dot = eventEl.createDiv({ cls: "graph_copilot-timeline-dot" });
+    dot.setCssProps({
+      position: "absolute",
+      left: "-12px",
+      top: "5px",
+      width: "20px",
+      height: "20px",
+      background: event.color,
+      "border-radius": "50%",
+      border: "3px solid var(--background-primary)",
+      "box-shadow": `0 0 0 2px ${event.color}`
+    });
+    const dateLabel = eventEl.createDiv({ cls: "graph_copilot-timeline-date" });
+    dateLabel.setCssProps({
+      position: "absolute",
+      left: "-180px",
+      top: "0",
+      width: "150px",
+      "text-align": "right",
+      "font-size": "12px",
+      color: "var(--text-muted)"
+    });
+    dateLabel.textContent = this.formatDate(event.start);
+    const card = eventEl.createDiv({ cls: "graph_copilot-timeline-card" });
+    card.setCssProps({
+      background: "var(--background-secondary)",
+      "border-left": `4px solid ${event.color}`,
+      padding: "15px",
+      "border-radius": "0 8px 8px 0",
+      transition: "transform 0.2s, box-shadow 0.2s",
+      cursor: "pointer"
+    });
+    const cardHeader = card.createDiv({ cls: "graph_copilot-timeline-card-header" });
+    cardHeader.setCssProps({
+      display: "flex",
+      "justify-content": "space-between",
+      "align-items": "flex-start",
+      gap: "10px"
+    });
+    const title = cardHeader.createEl("h4", { text: event.label });
+    title.setCssProps({
+      margin: "0",
+      color: "var(--text-normal)",
+      flex: "1"
+    });
+    const removeBtn = cardHeader.createEl("button", {
+      text: "\u2715 remove",
+      cls: "graph_copilot-timeline-remove-btn"
+    });
+    removeBtn.setCssProps({
+      background: "transparent",
+      border: "1px solid var(--text-muted)",
+      color: "var(--text-muted)",
+      padding: "2px 8px",
+      "border-radius": "4px",
+      "font-size": "11px",
+      cursor: "pointer",
+      transition: "all 0.2s",
+      "white-space": "nowrap"
+    });
+    removeBtn.title = "Remove from timeline";
+    removeBtn.onmouseenter = () => {
+      removeBtn.setCssProps({
+        background: "var(--background-modifier-error)",
+        "border-color": "var(--background-modifier-error)",
+        color: "white"
+      });
+    };
+    removeBtn.onmouseleave = () => {
+      removeBtn.setCssProps({
+        background: "transparent",
+        "border-color": "var(--text-muted)",
+        color: "var(--text-muted)"
+      });
+    };
+    removeBtn.onclick = async (e) => {
+      e.stopPropagation();
+      await this.toggleEventTimeline(event.id, false);
+    };
+    const timeRange = card.createDiv({ cls: "graph_copilot-timeline-time" });
+    timeRange.setCssProps({
+      "font-size": "12px",
+      color: "var(--text-muted)",
+      "margin-top": "5px"
+    });
+    let timeText = this.formatTime(event.start);
+    if (event.end) {
+      timeText += ` \u2192 ${this.formatTime(event.end)}`;
+    }
+    timeRange.textContent = timeText;
+    card.onmouseenter = () => {
+      card.setCssProps({
+        transform: "translateX(5px)",
+        "box-shadow": "0 4px 12px rgba(0,0,0,0.2)"
+      });
+    };
+    card.onmouseleave = () => {
+      card.setCssProps({
+        transform: "translateX(0)",
+        "box-shadow": "none"
+      });
+    };
+    card.onclick = (e) => {
+      if (e.target.closest(".graph_copilot-timeline-remove-btn"))
+        return;
+      if (this.onEventClick) {
+        this.onEventClick(event.id);
+      } else {
+        this.entityManager.openEntityNote(event.id);
+      }
+    };
+    card.addEventListener("contextmenu", (e) => {
+      const menu = new import_obsidian11.Menu();
+      menu.addItem((item) => {
+        item.setTitle("Edit").setIcon("pencil").onClick(() => {
+          const entity = this.entityManager.getEntity(event.id);
+          if (entity) {
+            new EntityCreationModal(
+              this.app,
+              this.entityManager,
+              entity.type,
+              () => {
+                this.refresh();
+              },
+              entity.properties,
+              entity.id
+            ).open();
+          } else {
+            new import_obsidian11.Notice("Entity not found");
+          }
+        });
+      });
+      menu.showAtPosition({ x: e.clientX, y: e.clientY });
+    });
+  }
+  /**
+   * Toggle an event's timeline inclusion status.
+   */
+  async toggleEventTimeline(entityId, addToTimeline) {
+    try {
+      await this.entityManager.updateEntity(entityId, { add_to_timeline: addToTimeline });
+      await this.refresh();
+    } catch (error) {
+      console.error("[TimelineView] Failed to toggle event timeline status:", error);
+    }
+  }
+  /**
+   * Format a date for display.
+   */
+  formatDate(date) {
+    const options = {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    };
+    return date.toLocaleDateString(void 0, options);
+  }
+  /**
+   * Format a time for display.
+   */
+  formatTime(date) {
+    const options = {
+      hour: "2-digit",
+      minute: "2-digit"
+    };
+    return date.toLocaleTimeString(void 0, options);
+  }
+  /**
+   * Add an event to the timeline.
+   */
+  addEvent(entity) {
+    if (entity.type !== "Event" /* Event */)
+      return;
+    this.refresh();
+  }
+  /**
+   * Remove an event from the timeline.
+   */
+  removeEvent(entityId) {
+    this.events = this.events.filter((e) => e.id !== entityId);
+    this.renderTimeline();
+  }
+};
+
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
 var NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
-var _GraphView = class _GraphView extends import_obsidian11.ItemView {
+var _GraphView = class _GraphView extends import_obsidian12.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap, graphHost) {
     super(leaf);
     this.cy = null;
@@ -21570,7 +22054,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       ol.createEl("li", { text: "Check console tab for errors" });
       ol.createEl("li", { text: "Check network tab for failed requests to unpkg.com" });
       ol.createEl("li", { text: "Verify plugin settings: enableGraphFeatures should be enabled" });
-      new import_obsidian11.Notice("Graph failed to load. Check console for details.", 1e4);
+      new import_obsidian12.Notice("Graph failed to load. Check console for details.", 1e4);
     }
   }
   setupGraphDropHandlers(container) {
@@ -21613,14 +22097,14 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
           return;
         const position = this.screenToModelPosition(evt.clientX, evt.clientY);
         const dragManager = this.app.dragManager;
-        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian11.TFile) {
+        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian12.TFile) {
           await this.handleGraphFileDrop([dragManager.draggable.file], position);
           return;
         }
         const internalPath = evt.dataTransfer.getData("text/plain");
         if (internalPath) {
           const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-          if (tfile instanceof import_obsidian11.TFile) {
+          if (tfile instanceof import_obsidian12.TFile) {
             await this.handleGraphFileDrop([tfile], position);
             return;
           }
@@ -21644,17 +22128,17 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     };
   }
   async handleExternalFileDrop(fileList, position) {
-    const evidencePath = (0, import_obsidian11.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
+    const evidencePath = (0, import_obsidian12.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
     await this.ensureFolderExists(evidencePath);
     const tFiles = [];
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
-      const destPath = (0, import_obsidian11.normalizePath)(`${evidencePath}/${safeName}`);
+      const destPath = (0, import_obsidian12.normalizePath)(`${evidencePath}/${safeName}`);
       try {
         const buffer = await file.arrayBuffer();
         const existing = this.app.vault.getAbstractFileByPath(destPath);
-        if (existing instanceof import_obsidian11.TFile) {
+        if (existing instanceof import_obsidian12.TFile) {
           tFiles.push(existing);
         } else {
           const created = await this.app.vault.createBinary(destPath, buffer);
@@ -21662,7 +22146,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         }
       } catch (err) {
         console.error(`[GraphView] Failed to import file ${file.name}:`, err);
-        new import_obsidian11.Notice(`Failed to import ${file.name}`);
+        new import_obsidian12.Notice(`Failed to import ${file.name}`);
       }
     }
     if (tFiles.length > 0) {
@@ -21676,7 +22160,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       const isImage = _GraphView.IMAGE_EXTENSIONS.has(ext);
       const isDocument2 = _GraphView.DOCUMENT_EXTENSIONS.has(ext);
       if (!isImage && !isDocument2) {
-        new import_obsidian11.Notice(`Unsupported file type: .${ext}`);
+        new import_obsidian12.Notice(`Unsupported file type: .${ext}`);
         continue;
       }
       const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
@@ -21697,11 +22181,11 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         }
         this.historyManager.recordEntityCreate(entity);
         this.addEntityToGraphAtPosition(entity, dropPos);
-        new import_obsidian11.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
+        new import_obsidian12.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
         offset++;
       } catch (err) {
         console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
-        new import_obsidian11.Notice(`Failed to add ${file.name} to graph`);
+        new import_obsidian12.Notice(`Failed to add ${file.name} to graph`);
       }
     }
   }
@@ -21743,7 +22227,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     if (!_GraphView.IMAGE_EXTENSIONS.has(ext))
       return void 0;
     const file = this.app.vault.getAbstractFileByPath(fp);
-    if (file instanceof import_obsidian11.TFile) {
+    if (file instanceof import_obsidian12.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return void 0;
@@ -21847,7 +22331,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     delGraphBtn.onclick = () => {
       const id = this.graphHost.getActiveGraphId();
       if (id === "default") {
-        new import_obsidian11.Notice("Cannot delete the default graph workspace.");
+        new import_obsidian12.Notice("Cannot delete the default graph workspace.");
         return;
       }
       const label = this.graphHost.listGraphWorkspaces().find((g) => g.id === id)?.name ?? id;
@@ -21956,14 +22440,14 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         refreshBtn.textContent = "\u21BB refreshing...";
         try {
           await this.refreshWithSavedPositions();
-          new import_obsidian11.Notice("Graph refreshed successfully");
+          new import_obsidian12.Notice("Graph refreshed successfully");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-success)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
           }, 300);
         } catch (error) {
           console.error("[GraphView] Manual refresh failed:", error);
-          new import_obsidian11.Notice("Failed to refresh graph. Check console for details.");
+          new import_obsidian12.Notice("Failed to refresh graph. Check console for details.");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-error)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
@@ -21997,10 +22481,10 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       a.download = `osint-investigation-${timestamp2}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      new import_obsidian11.Notice("Investigation exported successfully");
+      new import_obsidian12.Notice("Investigation exported successfully");
     } catch (error) {
       console.error("[GraphView] Export failed:", error);
-      new import_obsidian11.Notice("Failed to export investigation");
+      new import_obsidian12.Notice("Failed to export investigation");
     }
   }
   /**
@@ -22032,7 +22516,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     if (this.container) {
       this.container.addClass("graph_copilot-connection-mode");
     }
-    new import_obsidian11.Notice("Connection mode: click the source node");
+    new import_obsidian12.Notice("Connection mode: click the source node");
   }
   /**
    * Exit connection mode.
@@ -22086,7 +22570,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       this.container.addClass("graph_copilot-box-select-mode");
     }
     this.updateSelectionUI();
-    new import_obsidian11.Notice("Box select mode: drag to select multiple items");
+    new import_obsidian12.Notice("Box select mode: drag to select multiple items");
   }
   /**
    * Exit box selection mode.
@@ -22129,7 +22613,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     const slice = this.allGraphPositions[newId] || {};
     this.nodePositionsCache = new Map(Object.entries(slice));
     await this.refreshWithSavedPositions();
-    new import_obsidian11.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
+    new import_obsidian12.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
   }
   /** File paths for notes backing the current selection (entities + connections). */
   getSelectedNotePaths() {
@@ -22148,13 +22632,13 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
   }
   async lockSelectedArea() {
     const n = this.graphHost.vaultLockService.lockPaths(this.getSelectedNotePaths());
-    new import_obsidian11.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
+    new import_obsidian12.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
   }
   unlockSelectedArea() {
     const lock = this.graphHost.vaultLockService;
     const lockedPaths = this.getSelectedNotePaths().filter((p) => lock.isPathLocked(p));
     if (lockedPaths.length === 0) {
-      new import_obsidian11.Notice("No locked notes in the selection");
+      new import_obsidian12.Notice("No locked notes in the selection");
       return;
     }
     new ConfirmModal(
@@ -22165,7 +22649,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         for (const p of lockedPaths) {
           lock.unlockPath(p);
         }
-        new import_obsidian11.Notice(`Unlocked ${lockedPaths.length} note(s)`);
+        new import_obsidian12.Notice(`Unlocked ${lockedPaths.length} note(s)`);
       },
       void 0,
       false
@@ -22180,12 +22664,12 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       return;
     if (connection.filePath) {
       const file = this.app.vault.getAbstractFileByPath(connection.filePath);
-      if (file instanceof import_obsidian11.TFile) {
+      if (file instanceof import_obsidian12.TFile) {
         await this.app.workspace.getLeaf().openFile(file);
         return;
       }
     }
-    new import_obsidian11.Notice("No note file found for this relationship");
+    new import_obsidian12.Notice("No note file found for this relationship");
   }
   /**
    * Handle node click in connection mode.
@@ -22200,10 +22684,10 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       if (this.statusIndicator) {
         this.statusIndicator.textContent = `Source: ${nodeLabel} \u2192 Click target...`;
       }
-      new import_obsidian11.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
+      new import_obsidian12.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
     } else {
       if (nodeId === this.sourceNodeId) {
-        new import_obsidian11.Notice("Cannot connect a node to itself. Click a different node.");
+        new import_obsidian12.Notice("Cannot connect a node to itself. Click a different node.");
         return;
       }
       const modal = new FTMIntervalTypeSelectorModal(
@@ -22389,7 +22873,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
       if (evt.target === this.cy) {
         if (this.connectionMode) {
           this.exitConnectionMode();
-          new import_obsidian11.Notice("Connection mode cancelled");
+          new import_obsidian12.Notice("Connection mode cancelled");
         } else if (!this.boxSelectMode && (this.selectedNodes.size > 0 || this.selectedEdges.size > 0)) {
           this.clearSelection();
         }
@@ -22533,7 +23017,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     });
     this.updateSelectionUI();
     const totalCount = this.selectedNodes.size + this.selectedEdges.size;
-    new import_obsidian11.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
+    new import_obsidian12.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
   }
   /**
    * Clear all selections (nodes and edges).
@@ -22714,14 +23198,14 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     for (const entityId of this.selectedNodes) {
       const e = this.entityManager.getEntity(entityId);
       if (e?.filePath && lock.isPathLocked(e.filePath)) {
-        new import_obsidian11.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
+        new import_obsidian12.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
         return;
       }
     }
     for (const connectionId of this.selectedEdges) {
       const c = this.entityManager.getConnection(connectionId);
       if (c?.filePath && lock.isPathLocked(c.filePath)) {
-        new import_obsidian11.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
+        new import_obsidian12.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
         return;
       }
     }
@@ -22784,9 +23268,9 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
     if (failedRelationships > 0)
       failParts.push(`${failedRelationships} ${failedRelationships === 1 ? "relationship" : "relationships"}`);
     if (failParts.length === 0) {
-      new import_obsidian11.Notice(`Successfully deleted ${successParts.join(" and ")}`);
+      new import_obsidian12.Notice(`Successfully deleted ${successParts.join(" and ")}`);
     } else {
-      new import_obsidian11.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
+      new import_obsidian12.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
     }
   }
   /**
@@ -22857,13 +23341,13 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
           }
           this.selectedNodes.delete(entityId);
           this.updateSelectionUI();
-          new import_obsidian11.Notice(`Deleted entity: ${label}`);
+          new import_obsidian12.Notice(`Deleted entity: ${label}`);
         } else {
-          new import_obsidian11.Notice(`Failed to delete entity: ${label}`);
+          new import_obsidian12.Notice(`Failed to delete entity: ${label}`);
         }
       } catch (error) {
         console.error(`Failed to delete entity ${entityId}:`, error);
-        new import_obsidian11.Notice(`Error deleting entity: ${label}`);
+        new import_obsidian12.Notice(`Error deleting entity: ${label}`);
       }
     };
     buttonContainer.appendChild(deleteBtn);
@@ -22909,7 +23393,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         const fp = entityForLock.filePath;
         new VaultUnlockModal(this.app, () => {
           lock.unlockPath(fp);
-          new import_obsidian11.Notice("Note unlocked");
+          new import_obsidian12.Notice("Note unlocked");
         }, "Unlock entity note").open();
       });
       menu.appendChild(unlockNoteItem);
@@ -22932,7 +23416,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian11.Notice("Entity not found");
+        new import_obsidian12.Notice("Entity not found");
       }
       menu.remove();
     });
@@ -22944,7 +23428,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
           if (this.onShowOnMap) {
             this.onShowOnMap(entityId);
           } else {
-            new import_obsidian11.Notice("Map view not available");
+            new import_obsidian12.Notice("Map view not available");
           }
           menu.remove();
         });
@@ -22961,9 +23445,9 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         menu.appendChild(geolocateItem);
       }
     }
-    if (entityType === "Event" /* Event */) {
+    if (isEventEntityType(entityType)) {
       const entity = this.entityManager.getEntity(entityId);
-      if (entity && entity.properties.start_date) {
+      if (entity && pickFirstTimelineDateProperty(entity.properties)) {
         const isOnTimeline = entity.properties.add_to_timeline === true;
         const timelineLabel = isOnTimeline ? "\u{1F4C5} Remove from Timeline" : "\u{1F4C5} Add to Timeline";
         const timelineItem = this.createMenuItem(timelineLabel, () => {
@@ -22972,14 +23456,14 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
               await this.entityManager.updateEntity(entityId, {
                 add_to_timeline: !isOnTimeline
               });
-              new import_obsidian11.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
+              new import_obsidian12.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
               const updatedEntity = this.entityManager.getEntity(entityId);
               if (updatedEntity) {
                 this.updateEntityInGraph(updatedEntity);
               }
             } catch (error) {
               console.error("[GraphView] Failed to toggle timeline status:", error);
-              new import_obsidian11.Notice("Failed to update timeline status");
+              new import_obsidian12.Notice("Failed to update timeline status");
             }
             menu.remove();
           })();
@@ -23099,7 +23583,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian11.Notice("Connection not found");
+        new import_obsidian12.Notice("Connection not found");
       }
       menu.remove();
     });
@@ -23112,7 +23596,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
         const fp = connectionForLock.filePath;
         new VaultUnlockModal(this.app, () => {
           edgeLock.unlockPath(fp);
-          new import_obsidian11.Notice("Note unlocked");
+          new import_obsidian12.Notice("Note unlocked");
         }, "Unlock relationship note").open();
       });
       menu.appendChild(unlockConnItem);
@@ -23147,7 +23631,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
   async deleteRelationship(connectionId, relationship, sourceLabel, targetLabel) {
     const connection = this.entityManager.getConnection(connectionId);
     if (!connection) {
-      new import_obsidian11.Notice("Relationship not found");
+      new import_obsidian12.Notice("Relationship not found");
       return;
     }
     new ConfirmModal(
@@ -23161,7 +23645,7 @@ var _GraphView = class _GraphView extends import_obsidian11.ItemView {
           if (this.cy) {
             this.cy.getElementById(connectionId).remove();
           }
-          new import_obsidian11.Notice(`Deleted relationship: ${relationship}`);
+          new import_obsidian12.Notice(`Deleted relationship: ${relationship}`);
         })();
       },
       void 0,
@@ -23695,7 +24179,7 @@ ${label}
             this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
           });
           this.savePositions();
-          new import_obsidian11.Notice("Graph rearranged");
+          new import_obsidian12.Notice("Graph rearranged");
         }
         resolve();
       }, 600);
@@ -23792,7 +24276,7 @@ ${label}
     try {
       console.debug(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE} `);
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian11.TFile) {
+      if (file instanceof import_obsidian12.TFile) {
         const content = await this.app.vault.read(file);
         const raw = JSON.parse(content);
         if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === "object") {
@@ -23837,7 +24321,7 @@ ${label}
       } catch (e) {
       }
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian11.TFile) {
+      if (file instanceof import_obsidian12.TFile) {
         await this.app.vault.modify(file, content);
         console.debug("[GraphView] Positions saved successfully (modified existing file)");
       } else {
@@ -23848,7 +24332,7 @@ ${label}
           const errorMessage = createError.message;
           if (errorMessage?.includes("already exists")) {
             const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-            if (existingFile instanceof import_obsidian11.TFile) {
+            if (existingFile instanceof import_obsidian12.TFile) {
               await this.app.vault.modify(existingFile, content);
               console.debug("[GraphView] Positions saved successfully (modified after race condition)");
             }
@@ -23973,15 +24457,15 @@ ${label}
    */
   async performUndo() {
     if (!this.historyManager.canUndo()) {
-      new import_obsidian11.Notice("Nothing to undo");
+      new import_obsidian12.Notice("Nothing to undo");
       return;
     }
     const description = this.historyManager.getLastUndoDescription();
     const success = await this.historyManager.undo();
     if (success) {
-      new import_obsidian11.Notice(`Undo: ${description} `);
+      new import_obsidian12.Notice(`Undo: ${description} `);
     } else {
-      new import_obsidian11.Notice("Undo failed");
+      new import_obsidian12.Notice("Undo failed");
     }
   }
   /**
@@ -23989,15 +24473,15 @@ ${label}
    */
   async performRedo() {
     if (!this.historyManager.canRedo()) {
-      new import_obsidian11.Notice("Nothing to redo");
+      new import_obsidian12.Notice("Nothing to redo");
       return;
     }
     const description = this.historyManager.getLastRedoDescription();
     const success = await this.historyManager.redo();
     if (success) {
-      new import_obsidian11.Notice(`Redo: ${description} `);
+      new import_obsidian12.Notice(`Redo: ${description} `);
     } else {
-      new import_obsidian11.Notice("Redo failed");
+      new import_obsidian12.Notice("Redo failed");
     }
   }
   /**
@@ -24330,7 +24814,7 @@ ${label}
   async geolocateEntity(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian11.Notice("Entity not found");
+      new import_obsidian12.Notice("Entity not found");
       return;
     }
     let address;
@@ -24348,18 +24832,18 @@ ${label}
       country = entity.properties.country;
     }
     if (!address && !city && !country) {
-      new import_obsidian11.Notice("No address information found. Please add address details to the entity first.");
+      new import_obsidian12.Notice("No address information found. Please add address details to the entity first.");
       return;
     }
     try {
-      new import_obsidian11.Notice("Geocoding address...");
+      new import_obsidian12.Notice("Geocoding address...");
       const result = await this.geocodingService.geocodeAddressWithRetry(
         address,
         city,
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian11.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
+          new import_obsidian12.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
         }
       );
       const updates = {
@@ -24383,15 +24867,15 @@ ${label}
       if (updatedEntity) {
         this.updateEntityInGraph(updatedEntity);
       }
-      new import_obsidian11.Notice(`\u2713 Geocoded: ${result.displayName} 
+      new import_obsidian12.Notice(`\u2713 Geocoded: ${result.displayName} 
 Lat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)} 
 Confidence: ${result.confidence} `);
     } catch (error) {
       if (error instanceof GeocodingError) {
-        new import_obsidian11.Notice(`Geocoding failed: ${error.message} `);
+        new import_obsidian12.Notice(`Geocoding failed: ${error.message} `);
       } else {
         console.error("[GraphView] Geocoding error:", error);
-        new import_obsidian11.Notice("Failed to geocode address. Please try again.");
+        new import_obsidian12.Notice("Failed to geocode address. Please try again.");
       }
     }
   }
@@ -24399,417 +24883,6 @@ Confidence: ${result.confidence} `);
 _GraphView.IMAGE_EXTENSIONS = /* @__PURE__ */ new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"]);
 _GraphView.DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set(["pdf", "docx", "doc", "txt", "md", "csv", "json", "html", "xml", "rtf"]);
 var GraphView = _GraphView;
-
-// src/views/timeline-view.ts
-var import_obsidian12 = require("obsidian");
-var TIMELINE_VIEW_TYPE = "graph_copilot-timeline-view";
-var TimelineView = class extends import_obsidian12.ItemView {
-  constructor(leaf, entityManager, onEventClick) {
-    super(leaf);
-    this.container = null;
-    this.timelineContainer = null;
-    this.events = [];
-    this.onEventClick = null;
-    this.entityManager = entityManager;
-    this.onEventClick = onEventClick || null;
-  }
-  getViewType() {
-    return TIMELINE_VIEW_TYPE;
-  }
-  getDisplayText() {
-    return "OSINTCopilot timeline";
-  }
-  getIcon() {
-    return "calendar-clock";
-  }
-  async onOpen() {
-    const container = this.containerEl.children[1];
-    container.empty();
-    container.addClass("graph_copilot-timeline-container");
-    const toolbar = container.createDiv({ cls: "graph_copilot-timeline-toolbar" });
-    this.createToolbar(toolbar);
-    this.timelineContainer = container.createDiv({ cls: "graph_copilot-timeline-canvas" });
-    this.applyStyles();
-    await this.refresh();
-  }
-  async onClose() {
-    this.events = [];
-  }
-  /**
-   * Apply CSS styles for the timeline.
-   */
-  applyStyles() {
-    if (!this.timelineContainer)
-      return;
-    this.timelineContainer.setCssProps({
-      width: "100%",
-      height: "calc(100% - 50px)",
-      "overflow-x": "auto",
-      "overflow-y": "auto",
-      padding: "20px",
-      "box-sizing": "border-box"
-    });
-  }
-  /**
-   * Create the toolbar.
-   */
-  createToolbar(toolbar) {
-    toolbar.setCssProps({
-      display: "flex",
-      gap: "10px",
-      padding: "10px",
-      background: "var(--background-secondary)",
-      "border-bottom": "1px solid var(--background-modifier-border)"
-    });
-    const addBtn = toolbar.createEl("button", { text: "+ add event" });
-    addBtn.addClass("graph_copilot-add-entity-btn");
-    addBtn.onclick = () => this.openEventCreator();
-    toolbar.createDiv({ cls: "graph_copilot-toolbar-separator" });
-    const refreshBtn = toolbar.createEl("button", { text: "\u21BB refresh" });
-    refreshBtn.onclick = () => {
-      (async () => {
-        refreshBtn.disabled = true;
-        refreshBtn.textContent = "\u21BB loading...";
-        await this.refresh();
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = "\u21BB refresh";
-      })();
-    };
-    const filterSpan = toolbar.createEl("span", {
-      text: 'Shows events with "add to timeline" enabled',
-      cls: "graph_copilot-timeline-info"
-    });
-    filterSpan.setCssProps({
-      "margin-left": "auto",
-      color: "var(--text-muted)",
-      "font-size": "12px"
-    });
-  }
-  /**
-   * Open the event creation modal.
-   */
-  openEventCreator() {
-    const modal = new EntityCreationModal(
-      this.app,
-      this.entityManager,
-      "Event" /* Event */,
-      (entityId) => {
-        this.refresh();
-      }
-    );
-    modal.open();
-  }
-  /**
-   * Refresh the timeline with current data.
-   * Reloads entities from disk to ensure persistence across Obsidian restarts.
-   */
-  async refresh() {
-    if (!this.timelineContainer)
-      return;
-    try {
-      await this.entityManager.loadEntitiesFromNotes();
-    } catch (error) {
-      console.error("[TimelineView] Failed to reload entities from notes:", error);
-    }
-    const entities = this.entityManager.getEntitiesByType("Event" /* Event */);
-    this.events = this.parseEvents(entities);
-    this.renderTimeline();
-  }
-  /**
-   * Parse entities into timeline events.
-   * Events are included unless add_to_timeline is explicitly set to false.
-   */
-  parseEvents(entities) {
-    const events = [];
-    for (const entity of entities) {
-      if (entity.properties.add_to_timeline === false)
-        continue;
-      const startDate = this.parseDate(entity.properties.start_date);
-      if (!startDate)
-        continue;
-      const endDate = this.parseDate(entity.properties.end_date);
-      events.push({
-        id: entity.id,
-        label: entity.label,
-        start: startDate,
-        end: endDate || void 0,
-        color: ENTITY_CONFIGS["Event" /* Event */].color
-      });
-    }
-    events.sort((a, b) => a.start.getTime() - b.start.getTime());
-    return events;
-  }
-  /**
-   * Parse a date string. Supports YYYY-MM-DD HH:mm, YYYY-MM-DD, and standard Date formats.
-   */
-  parseDate(dateStr) {
-    if (!dateStr || dateStr.toLowerCase() === "unknown" || dateStr.toLowerCase() === "n/a")
-      return null;
-    try {
-      const withTimeMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-      if (withTimeMatch) {
-        return new Date(
-          parseInt(withTimeMatch[1]),
-          parseInt(withTimeMatch[2]) - 1,
-          parseInt(withTimeMatch[3]),
-          parseInt(withTimeMatch[4]),
-          parseInt(withTimeMatch[5])
-        );
-      }
-      const dateOnlyMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (dateOnlyMatch) {
-        return new Date(
-          parseInt(dateOnlyMatch[1]),
-          parseInt(dateOnlyMatch[2]) - 1,
-          parseInt(dateOnlyMatch[3])
-        );
-      }
-      const date = new Date(dateStr);
-      if (!isNaN(date.getTime())) {
-        return date;
-      }
-    } catch (e) {
-      console.error("Failed to parse date:", dateStr);
-    }
-    return null;
-  }
-  /**
-   * Render the timeline visualization.
-   */
-  renderTimeline() {
-    if (!this.timelineContainer)
-      return;
-    this.timelineContainer.empty();
-    if (this.events.length === 0) {
-      const emptyEl = this.timelineContainer.createDiv({ cls: "graph_copilot-timeline-empty" });
-      emptyEl.setCssProps({
-        "text-align": "center",
-        padding: "40px",
-        color: "var(--text-muted)"
-      });
-      const p1 = emptyEl.createEl("p", {
-        text: "No events added to the timeline yet."
-      });
-      p1.setCssProps({ "margin-bottom": "10px" });
-      const p2 = emptyEl.createEl("p", {
-        text: 'To add events: create an event entity with a start date, then check the "add to timeline" checkbox.'
-      });
-      p2.setCssProps({ "font-size": "12px" });
-      return;
-    }
-    const wrapper = this.timelineContainer.createDiv({ cls: "graph_copilot-timeline-wrapper" });
-    wrapper.setCssProps({
-      position: "relative",
-      "min-height": "100%",
-      "padding-left": "200px"
-    });
-    const line = wrapper.createDiv({ cls: "graph_copilot-timeline-line" });
-    line.setCssProps({
-      position: "absolute",
-      left: "180px",
-      top: "0",
-      bottom: "0",
-      width: "4px",
-      background: "var(--interactive-accent)",
-      "border-radius": "2px"
-    });
-    this.events.forEach((event, index) => {
-      this.renderEvent(wrapper, event, index);
-    });
-  }
-  /**
-   * Render a single event on the timeline.
-   */
-  renderEvent(container, event, index) {
-    const eventEl = container.createDiv({ cls: "graph_copilot-timeline-event" });
-    eventEl.setCssProps({
-      position: "relative",
-      "margin-bottom": "30px",
-      "padding-left": "40px"
-    });
-    const dot = eventEl.createDiv({ cls: "graph_copilot-timeline-dot" });
-    dot.setCssProps({
-      position: "absolute",
-      left: "-12px",
-      top: "5px",
-      width: "20px",
-      height: "20px",
-      background: event.color,
-      "border-radius": "50%",
-      border: "3px solid var(--background-primary)",
-      "box-shadow": `0 0 0 2px ${event.color}`
-    });
-    const dateLabel = eventEl.createDiv({ cls: "graph_copilot-timeline-date" });
-    dateLabel.setCssProps({
-      position: "absolute",
-      left: "-180px",
-      top: "0",
-      width: "150px",
-      "text-align": "right",
-      "font-size": "12px",
-      color: "var(--text-muted)"
-    });
-    dateLabel.textContent = this.formatDate(event.start);
-    const card = eventEl.createDiv({ cls: "graph_copilot-timeline-card" });
-    card.setCssProps({
-      background: "var(--background-secondary)",
-      "border-left": `4px solid ${event.color}`,
-      padding: "15px",
-      "border-radius": "0 8px 8px 0",
-      transition: "transform 0.2s, box-shadow 0.2s",
-      cursor: "pointer"
-    });
-    const cardHeader = card.createDiv({ cls: "graph_copilot-timeline-card-header" });
-    cardHeader.setCssProps({
-      display: "flex",
-      "justify-content": "space-between",
-      "align-items": "flex-start",
-      gap: "10px"
-    });
-    const title = cardHeader.createEl("h4", { text: event.label });
-    title.setCssProps({
-      margin: "0",
-      color: "var(--text-normal)",
-      flex: "1"
-    });
-    const removeBtn = cardHeader.createEl("button", {
-      text: "\u2715 remove",
-      cls: "graph_copilot-timeline-remove-btn"
-    });
-    removeBtn.setCssProps({
-      background: "transparent",
-      border: "1px solid var(--text-muted)",
-      color: "var(--text-muted)",
-      padding: "2px 8px",
-      "border-radius": "4px",
-      "font-size": "11px",
-      cursor: "pointer",
-      transition: "all 0.2s",
-      "white-space": "nowrap"
-    });
-    removeBtn.title = "Remove from timeline";
-    removeBtn.onmouseenter = () => {
-      removeBtn.setCssProps({
-        background: "var(--background-modifier-error)",
-        "border-color": "var(--background-modifier-error)",
-        color: "white"
-      });
-    };
-    removeBtn.onmouseleave = () => {
-      removeBtn.setCssProps({
-        background: "transparent",
-        "border-color": "var(--text-muted)",
-        color: "var(--text-muted)"
-      });
-    };
-    removeBtn.onclick = async (e) => {
-      e.stopPropagation();
-      await this.toggleEventTimeline(event.id, false);
-    };
-    const timeRange = card.createDiv({ cls: "graph_copilot-timeline-time" });
-    timeRange.setCssProps({
-      "font-size": "12px",
-      color: "var(--text-muted)",
-      "margin-top": "5px"
-    });
-    let timeText = this.formatTime(event.start);
-    if (event.end) {
-      timeText += ` \u2192 ${this.formatTime(event.end)}`;
-    }
-    timeRange.textContent = timeText;
-    card.onmouseenter = () => {
-      card.setCssProps({
-        transform: "translateX(5px)",
-        "box-shadow": "0 4px 12px rgba(0,0,0,0.2)"
-      });
-    };
-    card.onmouseleave = () => {
-      card.setCssProps({
-        transform: "translateX(0)",
-        "box-shadow": "none"
-      });
-    };
-    card.onclick = (e) => {
-      if (e.target.closest(".graph_copilot-timeline-remove-btn"))
-        return;
-      if (this.onEventClick) {
-        this.onEventClick(event.id);
-      } else {
-        this.entityManager.openEntityNote(event.id);
-      }
-    };
-    card.addEventListener("contextmenu", (e) => {
-      const menu = new import_obsidian12.Menu();
-      menu.addItem((item) => {
-        item.setTitle("Edit").setIcon("pencil").onClick(() => {
-          const entity = this.entityManager.getEntity(event.id);
-          if (entity) {
-            new EntityCreationModal(
-              this.app,
-              this.entityManager,
-              entity.type,
-              () => {
-                this.refresh();
-              },
-              entity.properties,
-              entity.id
-            ).open();
-          } else {
-            new import_obsidian12.Notice("Entity not found");
-          }
-        });
-      });
-      menu.showAtPosition({ x: e.clientX, y: e.clientY });
-    });
-  }
-  /**
-   * Toggle an event's timeline inclusion status.
-   */
-  async toggleEventTimeline(entityId, addToTimeline) {
-    try {
-      await this.entityManager.updateEntity(entityId, { add_to_timeline: addToTimeline });
-      await this.refresh();
-    } catch (error) {
-      console.error("[TimelineView] Failed to toggle event timeline status:", error);
-    }
-  }
-  /**
-   * Format a date for display.
-   */
-  formatDate(date) {
-    const options = {
-      year: "numeric",
-      month: "short",
-      day: "numeric"
-    };
-    return date.toLocaleDateString(void 0, options);
-  }
-  /**
-   * Format a time for display.
-   */
-  formatTime(date) {
-    const options = {
-      hour: "2-digit",
-      minute: "2-digit"
-    };
-    return date.toLocaleTimeString(void 0, options);
-  }
-  /**
-   * Add an event to the timeline.
-   */
-  addEvent(entity) {
-    if (entity.type !== "Event" /* Event */)
-      return;
-    this.refresh();
-  }
-  /**
-   * Remove an event from the timeline.
-   */
-  removeEvent(entityId) {
-    this.events = this.events.filter((e) => e.id !== entityId);
-    this.renderTimeline();
-  }
-};
 
 // src/views/map-view.ts
 var import_obsidian13 = require("obsidian");

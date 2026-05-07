@@ -3,12 +3,37 @@
  * Timeline View for visualizing Event entities with dates.
  */
 
-import { App, ItemView, WorkspaceLeaf, Menu, Notice } from 'obsidian';
+import { App, ItemView, TFile, WorkspaceLeaf, Menu, Notice, normalizePath } from 'obsidian';
 import { Entity, EntityType, ENTITY_CONFIGS } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityCreationModal } from '../modals/entity-modal';
 
 export const TIMELINE_VIEW_TYPE = 'graph_copilot-timeline-view';
+
+/** Match Event notes regardless of YAML casing (`event` vs `Event`). */
+export function isEventEntityType(entityType: string | undefined): boolean {
+    return typeof entityType === 'string' && entityType.trim().toLowerCase() === 'event';
+}
+
+function isExplicitlyOffTimeline(value: unknown): boolean {
+    if (value === false || value === 0) return true;
+    if (typeof value === 'string') {
+        const s = value.trim().toLowerCase();
+        return s === 'false' || s === 'no' || s === '0' || s === '';
+    }
+    return false;
+}
+
+export function pickFirstTimelineDateProperty(properties: Record<string, unknown>): string | undefined {
+    const keys = ['start_date', 'first_seen', 'first_seen_precise', 'date', 'published', 'first_observed', 'modified'];
+    for (const k of keys) {
+        const v = properties[k];
+        if (typeof v === 'string' && v.trim() && !['unknown', 'n/a'].includes(v.trim().toLowerCase())) {
+            return v.trim();
+        }
+    }
+    return undefined;
+}
 
 interface TimelineEvent {
     id: string;
@@ -24,6 +49,8 @@ export class TimelineView extends ItemView {
     private timelineContainer: HTMLElement | null = null;
     private events: TimelineEvent[] = [];
     private onEventClick: ((entityId: string) => void) | null = null;
+    /** Debounce vault edits (browser `setTimeout` id is numeric). */
+    private vaultRefreshTimer: number | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -62,9 +89,48 @@ export class TimelineView extends ItemView {
 
         // Load entities from disk and refresh the timeline
         await this.refresh();
+
+        const basePrefix = normalizePath(this.entityManager.getBasePath()).toLowerCase() + '/';
+
+        const scheduleRefreshFromPath = (path: string): void => {
+            if (!path.replace(/\\/g, '/').toLowerCase().startsWith(basePrefix)) return;
+            if (this.vaultRefreshTimer !== null) {
+                window.clearTimeout(this.vaultRefreshTimer);
+            }
+            this.vaultRefreshTimer = window.setTimeout(() => {
+                this.vaultRefreshTimer = null;
+                void this.refresh();
+            }, 400);
+        };
+
+        this.registerEvent(
+            this.app.vault.on('modify', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('create', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('delete', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('rename', (f, oldPath) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+                if (typeof oldPath === 'string') scheduleRefreshFromPath(oldPath);
+            }),
+        );
     }
 
     async onClose(): Promise<void> {
+        if (this.vaultRefreshTimer !== null) {
+            window.clearTimeout(this.vaultRefreshTimer);
+            this.vaultRefreshTimer = null;
+        }
         this.events = [];
     }
 
@@ -118,7 +184,7 @@ export class TimelineView extends ItemView {
 
         // Filter label
         const filterSpan = toolbar.createEl('span', {
-            text: 'Shows events with "add to timeline" enabled',
+            text: 'Event entities with a parseable date; hidden if «add_to_timeline» is explicitly off. Auto-syncs when notes change.',
             cls: 'graph_copilot-timeline-info'
         });
         filterSpan.setCssProps({
@@ -158,8 +224,8 @@ export class TimelineView extends ItemView {
             console.error('[TimelineView] Failed to reload entities from notes:', error);
         }
 
-        // Get all Event entities with dates
-        const entities = this.entityManager.getEntitiesByType(EntityType.Event);
+        // All Event-* entities (case-insensitive YAML type); graph may index "event"
+        const entities = this.entityManager.getAllEntities().filter((e) => isEventEntityType(e.type));
         this.events = this.parseEvents(entities);
 
         // Render the timeline
@@ -174,12 +240,15 @@ export class TimelineView extends ItemView {
         const events: TimelineEvent[] = [];
 
         for (const entity of entities) {
-            if (entity.properties.add_to_timeline === false) continue;
+            if (isExplicitlyOffTimeline(entity.properties.add_to_timeline)) continue;
 
-            const startDate = this.parseDate(entity.properties.start_date as string | undefined);
+            const startRaw = pickFirstTimelineDateProperty(entity.properties as Record<string, unknown>);
+            const startDate = this.parseDate(startRaw);
             if (!startDate) continue;
 
-            const endDate = this.parseDate(entity.properties.end_date as string | undefined);
+            const endRaw =
+                typeof entity.properties.end_date === 'string' ? entity.properties.end_date : entity.properties.last_seen;
+            const endDate = this.parseDate(typeof endRaw === 'string' ? endRaw : undefined);
 
             events.push({
                 id: entity.id,
@@ -223,6 +292,12 @@ export class TimelineView extends ItemView {
                 );
             }
 
+            // ISO-8601 / STIX-style: 2026-05-07T14:30:00Z
+            if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr.trim())) {
+                const iso = new Date(dateStr.trim());
+                if (!isNaN(iso.getTime())) return iso;
+            }
+
             const date = new Date(dateStr);
             if (!isNaN(date.getTime())) {
                 return date;
@@ -255,7 +330,7 @@ export class TimelineView extends ItemView {
             p1.setCssProps({ 'margin-bottom': '10px' });
 
             const p2 = emptyEl.createEl('p', {
-                text: 'To add events: create an event entity with a start date, then check the "add to timeline" checkbox.'
+                text: 'Create an Entity with type Event and a start_date (or first_seen / date). Use ↻ refresh if you just edited notes. Set add_to_timeline: false to hide a note from this view.',
             });
             p2.setCssProps({ 'font-size': '12px' });
             return;
