@@ -16352,6 +16352,9 @@ ${newFm}
 
 // src/services/api-service.ts
 var import_obsidian4 = require("obsidian");
+function isLikelyExpectedUrlFetchFailure(message) {
+  return /^HTTP (401|403)\b/.test(message) || /^Failed to fetch URL \(HTTP (401|403|407|429)\)/.test(message) || message.includes("Obsidian cannot fetch this URL");
+}
 var _GraphApiService = class _GraphApiService {
   constructor() {
     this.isOnline = false;
@@ -16385,8 +16388,18 @@ var _GraphApiService = class _GraphApiService {
   getOnlineStatus() {
     return this.isOnline;
   }
-  /** Human-readable reason when HTTP denies access (no secrets / body in message). */
-  urlFetchDeniedExplanation(status, url, headers) {
+  /** One-line status for logs and throw messages (orchestration uses tryExtract; UI may show more). */
+  shortHttpFetchMessage(status) {
+    if (status === 401 || status === 403) {
+      return `HTTP ${status} (page not loaded \u2014 sign-in or site protection may be required)`;
+    }
+    if (status === 429) {
+      return `HTTP ${status} (rate limited)`;
+    }
+    return `HTTP ${status} (page not loaded)`;
+  }
+  /** Longer guidance for modal / Notice when extractTextFromUrl throws (optional UI). */
+  urlFetchDeniedExplanationForUi(status, url, headers) {
     if (status !== 401 && status !== 403) {
       return `Failed to fetch URL (HTTP ${status})`;
     }
@@ -16406,10 +16419,10 @@ var _GraphApiService = class _GraphApiService {
     return parts.join(" ");
   }
   /**
-   * Extract text from a URL locally by fetching the page and stripping HTML.
+   * Fetch URL and extract text without throwing (for unified orchestration).
    */
-  async extractTextFromUrl(url) {
-    console.debug("[GraphApiService] extractTextFromUrl (local) called with:", url);
+  async tryExtractTextFromUrl(url) {
+    console.debug("[GraphApiService] tryExtractTextFromUrl:", url);
     try {
       const response = await (0, import_obsidian4.requestUrl)({
         url,
@@ -16418,7 +16431,14 @@ var _GraphApiService = class _GraphApiService {
         throw: false
       });
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(this.urlFetchDeniedExplanation(response.status, url, response.headers));
+        const hdrs = response.headers;
+        const longDetail = response.status === 401 || response.status === 403 ? this.urlFetchDeniedExplanationForUi(response.status, url, hdrs) : void 0;
+        return {
+          ok: false,
+          status: response.status,
+          shortMessage: this.shortHttpFetchMessage(response.status),
+          longDetail
+        };
       }
       const contentType = (response.headers?.["content-type"] || "").toLowerCase();
       let text = response.text || "";
@@ -16427,14 +16447,32 @@ var _GraphApiService = class _GraphApiService {
       }
       const trimmed = text.trim();
       if (!trimmed) {
-        throw new Error("No text content could be extracted from this URL");
+        return { ok: false, shortMessage: "No extractable text from this URL" };
       }
       console.debug("[GraphApiService] Extracted text length:", trimmed.length);
-      return trimmed;
-    } catch (error) {
-      console.error("[GraphApiService] extractTextFromUrl exception:", error);
-      throw error;
+      return { ok: true, text: trimmed };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.debug("[GraphApiService] tryExtractTextFromUrl failed:", msg);
+      return { ok: false, shortMessage: msg.slice(0, 200) };
     }
+  }
+  /**
+   * Extract text from a URL locally by fetching the page and stripping HTML.
+   * Throws on failure (short message); use tryExtractTextFromUrl to avoid throws in orchestration.
+   */
+  async extractTextFromUrl(url) {
+    const r = await this.tryExtractTextFromUrl(url);
+    if (r.ok)
+      return r.text;
+    let host = "";
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      host = "";
+    }
+    console.debug(`[GraphApiService] extractTextFromUrl skipped${host ? ` (${host})` : ""}: ${r.shortMessage}`);
+    throw new Error(r.longDetail ?? r.shortMessage);
   }
   htmlToText(html) {
     let text = html;
@@ -26620,18 +26658,28 @@ var _OrchestrationService = class _OrchestrationService {
       onProgress(`Extracting content from ${urls.length} unique link(s)...`, 15);
       for (const url of urls) {
         checkAborted();
-        try {
-          const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
+        const extracted = await this.plugin.graphApiService.tryExtractTextFromUrl(url);
+        if (extracted.ok) {
           ctx += `
 
 === Content from ${url} ===
-${extractedText}`;
-        } catch (e) {
-          console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
+${extracted.text}`;
+        } else {
+          let host = "";
+          try {
+            host = new URL(url).hostname;
+          } catch {
+            host = "";
+          }
+          console.debug(
+            `[OrchestrationService] URL not loaded${host ? ` (${host})` : ""}: ${extracted.shortMessage}`
+          );
           ctx += `
 
-=== Content from ${url} ===
-[Failed to extract content: ${e instanceof Error ? e.message : String(e)}]`;
+=== Linked URL (not loaded) ===
+${url}
+The page could not be fetched automatically (e.g. login required or bot protection). Paste the text you want analyzed into the chat.
+(${extracted.shortMessage})`;
         }
       }
     }
@@ -31978,16 +32026,22 @@ ${ev.details}`;
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
-        console.error("URL extraction error:", error);
         const errorMsg = error instanceof Error ? error.message : String(error);
-        if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
-          statusEl.textContent = "\u274C Request timed out. Try a simpler page.";
-        } else if (errorMsg.includes("429")) {
-          statusEl.textContent = "\u274C Server busy. Please wait and try again.";
+        if (isLikelyExpectedUrlFetchFailure(errorMsg)) {
+          console.debug("URL extraction skipped:", errorMsg.slice(0, 120));
+          statusEl.textContent = "Could not open this link from Obsidian (login or site protection). Copy the page text into the chat instead.";
+          statusEl.style.color = "var(--text-muted)";
         } else {
-          statusEl.textContent = `\u274C ${errorMsg}`;
+          console.error("URL extraction error:", error);
+          if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
+            statusEl.textContent = "\u274C Request timed out. Try a simpler page.";
+          } else if (errorMsg.includes("429")) {
+            statusEl.textContent = "\u274C Server busy. Please wait and try again.";
+          } else {
+            statusEl.textContent = `\u274C ${errorMsg}`;
+          }
+          statusEl.style.color = "var(--text-error)";
         }
-        statusEl.style.color = "var(--text-error)";
         extractBtn.disabled = false;
         cancelBtn.disabled = false;
         extractBtn.textContent = "Extract & generate";
@@ -32149,8 +32203,14 @@ ${ev.details}`;
       new import_obsidian31.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
-      console.error("URL extraction error:", error);
-      new import_obsidian31.Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      const msg = error instanceof Error ? error.message : String(error);
+      if (isLikelyExpectedUrlFetchFailure(msg)) {
+        console.debug("URL extraction skipped:", msg.slice(0, 120));
+        new import_obsidian31.Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
+      } else {
+        console.error("URL extraction error:", error);
+        new import_obsidian31.Notice(`Error extracting URL: ${msg}`);
+      }
       return false;
     } finally {
       this.inputEl.disabled = false;

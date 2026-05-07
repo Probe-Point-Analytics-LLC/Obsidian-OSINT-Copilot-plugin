@@ -134,6 +134,7 @@ describe('OrchestrationService unified path', () => {
             },
             graphApiService: {
                 extractTextFromUrl: vi.fn(),
+                tryExtractTextFromUrl: vi.fn().mockResolvedValue({ ok: true, text: '' }),
                 callRemoteModel: vi.fn().mockResolvedValue(turnJson),
             },
             vaultPromptLoader: {
@@ -193,6 +194,7 @@ describe('OrchestrationService unified path', () => {
             },
             graphApiService: {
                 extractTextFromUrl: vi.fn(),
+                tryExtractTextFromUrl: vi.fn().mockResolvedValue({ ok: true, text: '' }),
                 callRemoteModel: vi.fn().mockResolvedValue(turnJson),
             },
             vaultPromptLoader: {

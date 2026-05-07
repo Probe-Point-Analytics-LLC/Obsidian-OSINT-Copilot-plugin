@@ -211,14 +211,20 @@ export class OrchestrationService {
             onProgress(`Extracting content from ${urls.length} unique link(s)...`, 15);
             for (const url of urls) {
                 checkAborted();
-                try {
-                    const extractedText = await this.plugin.graphApiService.extractTextFromUrl(url);
-                    ctx += `\n\n=== Content from ${url} ===\n${extractedText}`;
-                } catch (e) {
-                    console.error(`[OrchestrationService] Failed to extract from URL ${url}:`, e);
-                    ctx += `\n\n=== Content from ${url} ===\n[Failed to extract content: ${
-                        e instanceof Error ? e.message : String(e)
-                    }]`;
+                const extracted = await this.plugin.graphApiService.tryExtractTextFromUrl(url);
+                if (extracted.ok) {
+                    ctx += `\n\n=== Content from ${url} ===\n${extracted.text}`;
+                } else {
+                    let host = '';
+                    try {
+                        host = new URL(url).hostname;
+                    } catch {
+                        host = '';
+                    }
+                    console.debug(
+                        `[OrchestrationService] URL not loaded${host ? ` (${host})` : ''}: ${extracted.shortMessage}`,
+                    );
+                    ctx += `\n\n=== Linked URL (not loaded) ===\n${url}\nThe page could not be fetched automatically (e.g. login required or bot protection). Paste the text you want analyzed into the chat.\n(${extracted.shortMessage})`;
                 }
             }
         }

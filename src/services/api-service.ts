@@ -38,6 +38,20 @@ export interface ApiHealthResponse {
  */
 export type RetryCallback = (attempt: number, maxAttempts: number, reason: string, nextDelayMs: number) => void;
 
+/** True when failure is normal user/environment (quiet console in ChatView URL flows). */
+export function isLikelyExpectedUrlFetchFailure(message: string): boolean {
+    return (
+        /^HTTP (401|403)\b/.test(message) ||
+        /^Failed to fetch URL \(HTTP (401|403|407|429)\)/.test(message) ||
+        message.includes('Obsidian cannot fetch this URL')
+    );
+}
+
+/** Non-throwing URL fetch + text extraction for orchestration (expected failures are ok:false). */
+export type UrlExtractResult =
+    | { ok: true; text: string }
+    | { ok: false; status?: number; shortMessage: string; /** Longer copy for modal/Notice (401/403). */ longDetail?: string };
+
 // Local interface to avoid circular dependency with main.ts
 export interface ApiSettings {
     apiProvider: 'claude-code';
@@ -101,8 +115,19 @@ export class GraphApiService {
         return this.isOnline;
     }
 
-    /** Human-readable reason when HTTP denies access (no secrets / body in message). */
-    private urlFetchDeniedExplanation(status: number, url: string, headers: Record<string, unknown> | undefined): string {
+    /** One-line status for logs and throw messages (orchestration uses tryExtract; UI may show more). */
+    private shortHttpFetchMessage(status: number): string {
+        if (status === 401 || status === 403) {
+            return `HTTP ${status} (page not loaded — sign-in or site protection may be required)`;
+        }
+        if (status === 429) {
+            return `HTTP ${status} (rate limited)`;
+        }
+        return `HTTP ${status} (page not loaded)`;
+    }
+
+    /** Longer guidance for modal / Notice when extractTextFromUrl throws (optional UI). */
+    urlFetchDeniedExplanationForUi(status: number, url: string, headers: Record<string, unknown> | undefined): string {
         if (status !== 401 && status !== 403) {
             return `Failed to fetch URL (HTTP ${status})`;
         }
@@ -123,21 +148,30 @@ export class GraphApiService {
     }
 
     /**
-     * Extract text from a URL locally by fetching the page and stripping HTML.
+     * Fetch URL and extract text without throwing (for unified orchestration).
      */
-    async extractTextFromUrl(url: string): Promise<string> {
-        console.debug('[GraphApiService] extractTextFromUrl (local) called with:', url);
-
+    async tryExtractTextFromUrl(url: string): Promise<UrlExtractResult> {
+        console.debug('[GraphApiService] tryExtractTextFromUrl:', url);
         try {
             const response = await requestUrl({
                 url,
                 method: 'GET',
                 headers: { 'Accept': 'text/html,application/xhtml+xml,text/plain,*/*' },
-                throw: false
+                throw: false,
             });
 
             if (response.status < 200 || response.status >= 300) {
-                throw new Error(this.urlFetchDeniedExplanation(response.status, url, response.headers as Record<string, unknown> | undefined));
+                const hdrs = response.headers as Record<string, unknown> | undefined;
+                const longDetail =
+                    response.status === 401 || response.status === 403
+                        ? this.urlFetchDeniedExplanationForUi(response.status, url, hdrs)
+                        : undefined;
+                return {
+                    ok: false,
+                    status: response.status,
+                    shortMessage: this.shortHttpFetchMessage(response.status),
+                    longDetail,
+                };
             }
 
             const contentType = (response.headers?.['content-type'] || '').toLowerCase();
@@ -149,15 +183,35 @@ export class GraphApiService {
 
             const trimmed = text.trim();
             if (!trimmed) {
-                throw new Error('No text content could be extracted from this URL');
+                return { ok: false, shortMessage: 'No extractable text from this URL' };
             }
 
             console.debug('[GraphApiService] Extracted text length:', trimmed.length);
-            return trimmed;
-        } catch (error) {
-            console.error('[GraphApiService] extractTextFromUrl exception:', error);
-            throw error;
+            return { ok: true, text: trimmed };
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.debug('[GraphApiService] tryExtractTextFromUrl failed:', msg);
+            return { ok: false, shortMessage: msg.slice(0, 200) };
         }
+    }
+
+    /**
+     * Extract text from a URL locally by fetching the page and stripping HTML.
+     * Throws on failure (short message); use tryExtractTextFromUrl to avoid throws in orchestration.
+     */
+    async extractTextFromUrl(url: string): Promise<string> {
+        const r = await this.tryExtractTextFromUrl(url);
+        if (r.ok) return r.text;
+
+        let host = '';
+        try {
+            host = new URL(url).hostname;
+        } catch {
+            host = '';
+        }
+        console.debug(`[GraphApiService] extractTextFromUrl skipped${host ? ` (${host})` : ''}: ${r.shortMessage}`);
+
+        throw new Error(r.longDetail ?? r.shortMessage);
     }
 
     private htmlToText(html: string): string {

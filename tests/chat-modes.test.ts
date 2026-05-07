@@ -108,6 +108,7 @@ describe('ChatView send routing', () => {
     plugin.graphApiService = {
       processText: vi.fn().mockResolvedValue({ success: true, operations: [] }),
       extractTextFromUrl: vi.fn(),
+      tryExtractTextFromUrl: vi.fn().mockResolvedValue({ ok: true, text: '' }),
       extractTextFromFile: vi.fn(),
       extractTextFromImage: vi.fn(),
       processTextInChunks: vi.fn().mockResolvedValue({ success: true, operations: [] }),

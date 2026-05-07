@@ -35,7 +35,7 @@ import {
 } from './src/entities/types';
 import { EntityManager } from './src/services/entity-manager';
 import { WaybackArchiveService } from './src/services/wayback-archive-service';
-import { GraphApiService } from './src/services/api-service';
+import { GraphApiService, isLikelyExpectedUrlFetchFailure } from './src/services/api-service';
 import { ClaudeCodeService, type ExtractionLogEvent } from './src/services/claude-code-service';
 import {
   ConversationService,
@@ -2882,17 +2882,23 @@ export class ChatView extends ItemView {
         await this.saveCurrentConversation();
 
       } catch (error) {
-        console.error("URL extraction error:", error);
         const errorMsg = error instanceof Error ? error.message : String(error);
-
-        if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
-          statusEl.textContent = "❌ Request timed out. Try a simpler page."; // eslint-disable-line obsidianmd/ui/sentence-case
-        } else if (errorMsg.includes("429")) {
-          statusEl.textContent = "❌ Server busy. Please wait and try again."; // eslint-disable-line obsidianmd/ui/sentence-case
+        if (isLikelyExpectedUrlFetchFailure(errorMsg)) {
+          console.debug("URL extraction skipped:", errorMsg.slice(0, 120));
+          statusEl.textContent =
+            "Could not open this link from Obsidian (login or site protection). Copy the page text into the chat instead."; // eslint-disable-line obsidianmd/ui/sentence-case
+          statusEl.style.color = "var(--text-muted)";
         } else {
-          statusEl.textContent = `❌ ${errorMsg}`;
+          console.error("URL extraction error:", error);
+          if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
+            statusEl.textContent = "❌ Request timed out. Try a simpler page."; // eslint-disable-line obsidianmd/ui/sentence-case
+          } else if (errorMsg.includes("429")) {
+            statusEl.textContent = "❌ Server busy. Please wait and try again."; // eslint-disable-line obsidianmd/ui/sentence-case
+          } else {
+            statusEl.textContent = `❌ ${errorMsg}`;
+          }
+          statusEl.style.color = "var(--text-error)";
         }
-        statusEl.style.color = "var(--text-error)";
 
         // Re-enable buttons
         extractBtn.disabled = false;
@@ -3090,8 +3096,14 @@ export class ChatView extends ItemView {
       new Notice(`Text extracted from URL`);
       return true; // Return true to indicate URL was handled and text replaced
     } catch (error) {
-      console.error("URL extraction error:", error);
-      new Notice(`Error extracting URL: ${error instanceof Error ? error.message : String(error)}`);
+      const msg = error instanceof Error ? error.message : String(error);
+      if (isLikelyExpectedUrlFetchFailure(msg)) {
+        console.debug("URL extraction skipped:", msg.slice(0, 120));
+        new Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
+      } else {
+        console.error("URL extraction error:", error);
+        new Notice(`Error extracting URL: ${msg}`);
+      }
       return false; // Return false to indicate failure/not handled
     } finally {
       this.inputEl.disabled = false;
