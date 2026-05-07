@@ -58,6 +58,10 @@ export interface VaultAgentMeta {
  * Loads editable prompts from the vault with cache invalidation on file changes under the prompts root.
  */
 export class VaultPromptLoader {
+	private static readonly LOGS_EXTENSIONS = new Set(["md", "txt", "log"]);
+	private static readonly LOGS_AUGMENT_MAX_TOTAL_CHARS = 40_000;
+	private static readonly LOGS_AUGMENT_MAX_FILES = 10;
+
 	private cache = new Map<string, string>();
 	private registered = false;
 
@@ -152,6 +156,46 @@ export class VaultPromptLoader {
 		return body.trim();
 	}
 
+	/** Recent text files under prompts/logs/ for unified-agent context (newest first, capped). */
+	private async getRecentLogsAugmentation(): Promise<string> {
+		const logsPath = normalizePath(`${this.root()}/logs`);
+		const folder = this.app.vault.getAbstractFileByPath(logsPath);
+		if (!(folder instanceof TFolder)) return "";
+
+		const files: TFile[] = [];
+		for (const child of folder.children) {
+			if (!(child instanceof TFile)) continue;
+			const ext = (child.extension || "").toLowerCase();
+			if (!VaultPromptLoader.LOGS_EXTENSIONS.has(ext)) continue;
+			files.push(child);
+		}
+		if (files.length === 0) return "";
+
+		files.sort((a, b) => b.stat.mtime - a.stat.mtime);
+
+		let budget = VaultPromptLoader.LOGS_AUGMENT_MAX_TOTAL_CHARS;
+		const chunks: string[] = [];
+		let used = 0;
+		for (const f of files) {
+			if (used >= VaultPromptLoader.LOGS_AUGMENT_MAX_FILES || budget < 120) break;
+			try {
+				const raw = await this.app.vault.read(f);
+				const header = `--- ${f.path} (mtime ${new Date(f.stat.mtime).toISOString()}) ---\n`;
+				const room = budget - header.length;
+				if (room < 40) break;
+				const body = raw.length > room ? raw.slice(0, room) + "\n[…truncated…]" : raw;
+				chunks.push(header + body);
+				const added = header.length + body.length;
+				budget -= added;
+				used++;
+			} catch {
+				// skip unreadable
+			}
+		}
+		if (!chunks.length) return "";
+		return "=== RECENT VAULT LOGS (prompts/logs/) ===\n" + chunks.join("\n\n");
+	}
+
 	/** Concatenated block for orchestration / planner prompts. */
 	async getOrchestrationAugmentation(): Promise<string> {
 		const global = await this.getGlobalRules();
@@ -162,6 +206,8 @@ export class VaultPromptLoader {
 			parts.push(
 				`=== USER VAULT AGENT (${this.getActiveAgentId()}) ===\n` + agent,
 			);
+		const logs = await this.getRecentLogsAugmentation();
+		if (logs) parts.push(logs);
 		return parts.join("\n\n");
 	}
 

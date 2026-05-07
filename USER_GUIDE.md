@@ -126,9 +126,15 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 - Planner tool IDs are exposed as `ENRICH_<id>`.
 - Store secrets in the vault **credentials** folder and reference them with `bearer_vault` / `header_vault` / `query_vault` in the enricher JSON (or use `*_env` types if you manage keys outside the vault). Never paste API keys into chat, skills, or `answer_markdown`.
 
+**LeakCheck-style `query_vault`:** The API key is read from the credential file and appended as a query parameter (`queryParam`, often `key`). If enrichers failed with **Missing credential env var: (unset)** while your JSON already used **`auth.type`: `query_vault`** and a valid **`vaultRelativePath`**, update to the latest plugin — older builds mishandled query-string vault auth. After updating, reload Obsidian and retry.
+
 **Agent-drafted specs (Claude or unified `upsert_enricher`):** The plugin performs enricher HTTP with **Obsidian `requestUrl`** (not your browser tab). Put the **real API hostname** in `allowedDomains` (not only the docs website). Prefer **vault-backed auth** with `vaultRelativePath` for API keys. Avoid APIs that only work with a **logged-in browser cookie**—those will fail the same way authenticated webmail URLs fail for “fetch link” features.
 
 **Unified chat — agent-proposed enricher JSON:** The unified agent can include **`upsert_enricher`** (and optionally **`delete_enricher`**) in **`custom_vault_operations`** alongside **`upsert_skill`**. Invalid specs are discarded before you see them; you still confirm with **Apply selected** in chat, same as skills and credentials. After apply, the new `enrichers/<id>.json` is on disk and the enricher list reloads.
+
+**Review before Apply:** In chat, each proposed vault row can show an expandable **Preview enricher JSON** or **Preview skill** so you read the full draft (not only the one-line summary) before **Apply selected**.
+
+**Debug logs folder:** Under **`OSINTCopilot/custom/prompts/logs/`** (default path; created when you run **Install missing vault prompt files**), add **`.md`**, **`.txt`**, or **`.log`** traces if you want recent file contents merged into **vault augmentation** on the next unified-agent turns (newest files first, size-capped). Claude Code or any vault scan can read that folder too.
 
 **Unified chat — calling enrichers without Bash:** The agent’s JSON response can include `enricher_invocations`, e.g. `[{ "enricher_id": "leakcheck", "query": "user@domain.com" }]`. The plugin then runs those HTTP requests **inside Obsidian** via **`requestUrl`**, so you do not need `curl` or shell approval. Prefer this for APIs like LeakCheck instead of vault skills that tell Claude Code to run terminal commands.
 

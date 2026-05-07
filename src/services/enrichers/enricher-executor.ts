@@ -56,6 +56,8 @@ async function authHeader(
 ): Promise<Record<string, string>> {
   const cfg = spec.auth;
   if (cfg.type === "none") return {};
+  /** Query-string secrets are applied to the URL in executeEnricherHttp before this runs — never treat as header/env. */
+  if (cfg.type === "query_vault" || cfg.type === "query_env") return {};
   if (cfg.type === "bearer_vault" || cfg.type === "header_vault") {
     if (!vault) throw new Error("Vault-backed auth requires Obsidian vault access");
     const rel = cfg.vaultRelativePath || "";

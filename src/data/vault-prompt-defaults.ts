@@ -22,6 +22,7 @@ This folder is **managed by you**. The plugin copies these files once when they 
 | \`rules/global.md\` | Prepended to orchestration planner context (tone, safety, citations). |
 | \`agents/*.md\` | One file per agent; YAML frontmatter \`id\`, \`name\`, \`description\`; body = extra system instructions. |
 | \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (Claude CLI). Edits apply on next extraction after reload. |
+| \`logs/\` | Optional **.md / .txt / .log** traces (enricher debug, run notes). Recent files may be merged into unified-agent **vault augmentation** (size-capped). |
 
 **Task agents** (separate folder, default \`OSINTCopilot/custom/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude — see **Settings → Task agents** and the README inside that folder.
 
@@ -93,6 +94,18 @@ Example:
 **Entity types (examples):** Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
 
 **Rules:** Relationship types in UPPERCASE. Notes should be comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline: true. Create a Location for every place, city, or country mentioned. If there are no entities: {"operations":[]}.
+`,
+	},
+	{
+		path: "logs/README.md",
+		content: `# Vault logs (agent-readable)
+
+Drop debugging traces here as **\`.md\`**, **\`.txt\`**, or **\`.log\`** files (for example enricher errors, excerpts from the Obsidian console).
+
+- The **unified chat agent** may include **recent** snippets from this folder in **vault augmentation** for each turn (newest files first, total size capped).
+- **Claude Code** or other tools scanning your vault can read these files like any other note.
+
+Do **not** store raw API keys here; use \`OSINTCopilot/custom/credentials/\` and enricher \`*_vault\` auth types instead.
 `,
 	},
 ];

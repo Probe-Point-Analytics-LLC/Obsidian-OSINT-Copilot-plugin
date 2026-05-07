@@ -30,6 +30,7 @@ Rules for custom_vault_operations:
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
 - upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side — follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation). HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
+- When fixing or replacing an enricher, every upsert_enricher object MUST include the complete spec in the "spec" field (all fields needed for a working file). Do not describe the new JSON only in answer_markdown — the chat approval UI and Apply step use custom_vault_operations[].spec.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
@@ -72,6 +73,11 @@ export function buildUnifiedAgentUserPrompt(ctx: AgentTurnContext): string {
     if (ctx.vaultAugmentation?.trim()) {
         parts.push('', '=== VAULT RULES / AGENT AUGMENTATION (user-editable) ===', ctx.vaultAugmentation.trim());
     }
+    parts.push(
+        '',
+        '=== VAULT DEBUG LOGS (optional) ===',
+        'Under the vault prompts folder, subdirectory `logs/`, you may use .md, .txt, or .log files for traces (enricher errors, run notes). When such files exist, recent snippets (newest first, size-capped) are merged into the augmentation block above for this turn — use them when diagnosing broken enrichers. External tools scanning the vault can read that folder too.',
+    );
     const folder = ctx.enrichersFolderDisplay?.trim() || 'OSINTCopilot/custom/enrichers';
     const ids = ctx.availableEnricherIds?.filter(Boolean) ?? [];
     if (ids.length > 0) {

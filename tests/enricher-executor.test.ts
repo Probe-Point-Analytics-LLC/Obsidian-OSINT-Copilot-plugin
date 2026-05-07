@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { requestUrl } from 'obsidian';
+import { requestUrl, TFile } from 'obsidian';
 import { executeEnricherHttp } from '../src/services/enrichers/enricher-executor';
 import type { EnricherSpec } from '../src/services/enrichers/enricher-schema';
 
@@ -91,6 +91,46 @@ describe('executeEnricherHttp', () => {
 				body: '{"email":"u@d.com"}',
 				contentType: 'application/json',
 				throw: false,
+			}),
+		);
+	});
+
+	it('query_vault adds API key to URL and does not throw Missing credential env var', async () => {
+		vi.mocked(requestUrl).mockResolvedValue({
+			status: 200,
+			text: '{"ok":true}',
+			headers: {},
+			json: { ok: true },
+			arrayBuffer: new ArrayBuffer(0),
+		} as any);
+
+		const credFile = new TFile() as any;
+		const vaultPath = 'OSINTCopilot/custom/credentials/leakcheck/api-key.txt';
+		const mockVault = {
+			getAbstractFileByPath: (p: string) => (p === vaultPath ? credFile : null),
+			read: async () => 'mysecretkey',
+		};
+
+		const spec = minimalSpec({
+			auth: {
+				type: 'query_vault',
+				queryParam: 'key',
+				vaultRelativePath: 'leakcheck/api-key.txt',
+			},
+		});
+
+		await executeEnricherHttp(
+			spec,
+			'test@example.com',
+			'',
+			undefined,
+			mockVault as any,
+			'OSINTCopilot/custom/credentials',
+		);
+
+		expect(requestUrl).toHaveBeenCalledWith(
+			expect.objectContaining({
+				url: expect.stringContaining('key=mysecretkey'),
 			}),
 		);
 	});

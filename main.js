@@ -25826,6 +25826,8 @@ async function authHeader(spec, vault, credentialsFolder) {
   const cfg = spec.auth;
   if (cfg.type === "none")
     return {};
+  if (cfg.type === "query_vault" || cfg.type === "query_env")
+    return {};
   if (cfg.type === "bearer_vault" || cfg.type === "header_vault") {
     if (!vault)
       throw new Error("Vault-backed auth requires Obsidian vault access");
@@ -26041,6 +26043,7 @@ Rules for custom_vault_operations:
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
 - upsert_skill writes a planner-invokable markdown skill under the vault skills folder (skill_kind vault, YAML frontmatter).
 - upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}} (see executor interpolation). HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
+- When fixing or replacing an enricher, every upsert_enricher object MUST include the complete spec in the "spec" field (all fields needed for a working file). Do not describe the new JSON only in answer_markdown \u2014 the chat approval UI and Apply step use custom_vault_operations[].spec.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 
 Rules for enricher_invocations:
@@ -26078,6 +26081,11 @@ ${m.content}`).join("\n\n---\n\n") : "(no prior messages)";
   if (ctx.vaultAugmentation?.trim()) {
     parts.push("", "=== VAULT RULES / AGENT AUGMENTATION (user-editable) ===", ctx.vaultAugmentation.trim());
   }
+  parts.push(
+    "",
+    "=== VAULT DEBUG LOGS (optional) ===",
+    "Under the vault prompts folder, subdirectory `logs/`, you may use .md, .txt, or .log files for traces (enricher errors, run notes). When such files exist, recent snippets (newest first, size-capped) are merged into the augmentation block above for this turn \u2014 use them when diagnosing broken enrichers. External tools scanning the vault can read that folder too."
+  );
   const folder = ctx.enrichersFolderDisplay?.trim() || "OSINTCopilot/custom/enrichers";
   const ids = ctx.availableEnricherIds?.filter(Boolean) ?? [];
   if (ids.length > 0) {
@@ -27608,7 +27616,7 @@ function parseYamlLike(block) {
   }
   return data;
 }
-var VaultPromptLoader = class {
+var _VaultPromptLoader = class _VaultPromptLoader {
   constructor(app, getPromptsRoot, getActiveAgentId) {
     this.app = app;
     this.getPromptsRoot = getPromptsRoot;
@@ -27701,6 +27709,49 @@ var VaultPromptLoader = class {
     const { body } = parseMarkdownWithFrontmatter(raw);
     return body.trim();
   }
+  /** Recent text files under prompts/logs/ for unified-agent context (newest first, capped). */
+  async getRecentLogsAugmentation() {
+    const logsPath = (0, import_obsidian18.normalizePath)(`${this.root()}/logs`);
+    const folder = this.app.vault.getAbstractFileByPath(logsPath);
+    if (!(folder instanceof import_obsidian18.TFolder))
+      return "";
+    const files = [];
+    for (const child of folder.children) {
+      if (!(child instanceof import_obsidian18.TFile))
+        continue;
+      const ext = (child.extension || "").toLowerCase();
+      if (!_VaultPromptLoader.LOGS_EXTENSIONS.has(ext))
+        continue;
+      files.push(child);
+    }
+    if (files.length === 0)
+      return "";
+    files.sort((a, b) => b.stat.mtime - a.stat.mtime);
+    let budget = _VaultPromptLoader.LOGS_AUGMENT_MAX_TOTAL_CHARS;
+    const chunks = [];
+    let used = 0;
+    for (const f of files) {
+      if (used >= _VaultPromptLoader.LOGS_AUGMENT_MAX_FILES || budget < 120)
+        break;
+      try {
+        const raw = await this.app.vault.read(f);
+        const header = `--- ${f.path} (mtime ${new Date(f.stat.mtime).toISOString()}) ---
+`;
+        const room = budget - header.length;
+        if (room < 40)
+          break;
+        const body = raw.length > room ? raw.slice(0, room) + "\n[\u2026truncated\u2026]" : raw;
+        chunks.push(header + body);
+        const added = header.length + body.length;
+        budget -= added;
+        used++;
+      } catch {
+      }
+    }
+    if (!chunks.length)
+      return "";
+    return "=== RECENT VAULT LOGS (prompts/logs/) ===\n" + chunks.join("\n\n");
+  }
   /** Concatenated block for orchestration / planner prompts. */
   async getOrchestrationAugmentation() {
     const global = await this.getGlobalRules();
@@ -27713,6 +27764,9 @@ var VaultPromptLoader = class {
         `=== USER VAULT AGENT (${this.getActiveAgentId()}) ===
 ` + agent
       );
+    const logs = await this.getRecentLogsAugmentation();
+    if (logs)
+      parts.push(logs);
     return parts.join("\n\n");
   }
   /** List agent files under agents/ (for future UI). */
@@ -27750,6 +27804,10 @@ var VaultPromptLoader = class {
     return out;
   }
 };
+_VaultPromptLoader.LOGS_EXTENSIONS = /* @__PURE__ */ new Set(["md", "txt", "log"]);
+_VaultPromptLoader.LOGS_AUGMENT_MAX_TOTAL_CHARS = 4e4;
+_VaultPromptLoader.LOGS_AUGMENT_MAX_FILES = 10;
+var VaultPromptLoader = _VaultPromptLoader;
 
 // src/services/vault-prompt-bootstrap.ts
 var import_obsidian19 = require("obsidian");
@@ -27769,6 +27827,7 @@ This folder is **managed by you**. The plugin copies these files once when they 
 | \`rules/global.md\` | Prepended to orchestration planner context (tone, safety, citations). |
 | \`agents/*.md\` | One file per agent; YAML frontmatter \`id\`, \`name\`, \`description\`; body = extra system instructions. |
 | \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (Claude CLI). Edits apply on next extraction after reload. |
+| \`logs/\` | Optional **.md / .txt / .log** traces (enricher debug, run notes). Recent files may be merged into unified-agent **vault augmentation** (size-capped). |
 
 **Task agents** (separate folder, default \`OSINTCopilot/custom/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude \u2014 see **Settings \u2192 Task agents** and the README inside that folder.
 
@@ -27840,6 +27899,18 @@ Example:
 **Entity types (examples):** Person (full_name), Event (name, start_date "YYYY-MM-DD HH:mm" REQUIRED, add_to_timeline: true REQUIRED, description), Company (name), Location (address REQUIRED, city REQUIRED, country REQUIRED, latitude, longitude), Email (address), Phone (number), Username (username), Vehicle (model), Website (title).
 
 **Rules:** Relationship types in UPPERCASE. Notes should be comprehensive. Every Event MUST have start_date (never "unknown") and add_to_timeline: true. Create a Location for every place, city, or country mentioned. If there are no entities: {"operations":[]}.
+`
+  },
+  {
+    path: "logs/README.md",
+    content: `# Vault logs (agent-readable)
+
+Drop debugging traces here as **\`.md\`**, **\`.txt\`**, or **\`.log\`** files (for example enricher errors, excerpts from the Obsidian console).
+
+- The **unified chat agent** may include **recent** snippets from this folder in **vault augmentation** for each turn (newest files first, total size capped).
+- **Claude Code** or other tools scanning your vault can read these files like any other note.
+
+Do **not** store raw API keys here; use \`OSINTCopilot/custom/credentials/\` and enricher \`*_vault\` auth types instead.
 `
   }
 ];
@@ -29821,6 +29892,47 @@ var EnricherRegistry = class {
 };
 
 // main.ts
+var VAULT_OP_PREVIEW_MAX_CHARS = 9e4;
+function truncateVaultOpPreviewText(raw) {
+  if (raw.length <= VAULT_OP_PREVIEW_MAX_CHARS)
+    return raw;
+  const overflow = raw.length - VAULT_OP_PREVIEW_MAX_CHARS;
+  return `${raw.slice(0, VAULT_OP_PREVIEW_MAX_CHARS)}
+
+\u2026 [preview truncated: ${overflow} more character(s)]`;
+}
+function appendVaultOpPreviewBlock(parent, op) {
+  if (op.action === "upsert_enricher") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", { text: "Preview enricher JSON (click to expand)" });
+    const pre = details.createEl("pre", {
+      text: truncateVaultOpPreviewText(JSON.stringify(op.spec, null, 2))
+    });
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "11px";
+    pre.style.maxHeight = "420px";
+    pre.style.overflow = "auto";
+    return;
+  }
+  if (op.action === "upsert_skill") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", { text: "Preview skill (name, description, body)" });
+    const combined = `name: ${op.name}
+description: ${op.description}
+
+--- body ---
+${op.body}`;
+    const pre = details.createEl("pre", { text: truncateVaultOpPreviewText(combined) });
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "11px";
+    pre.style.maxHeight = "420px";
+    pre.style.overflow = "auto";
+  }
+}
 var ENTITY_EXTRACTION_MODEL = "claude-code";
 var LOCAL_VAULT_MODEL = "claude-code";
 var DEFAULT_SETTINGS = {
@@ -32885,14 +32997,20 @@ ${ev.details}`;
         listEl.style.marginBottom = "12px";
         const selectedVaultOpIndices = new Set(item.proposedCustomVaultOps.map((_, idx) => idx));
         item.proposedCustomVaultOps.forEach((op, idx) => {
-          const row = listEl.createDiv();
+          const outer = listEl.createDiv();
+          outer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--background-modifier-border);
+          `;
+          const row = outer.createDiv();
           row.style.cssText = `
             display: flex;
             align-items: flex-start;
             gap: 8px;
-            margin-bottom: 6px;
-            padding: 4px;
-            border-bottom: 1px solid var(--background-modifier-border);
+            padding: 4px 0 0 0;
           `;
           const cb = row.createEl("input");
           cb.type = "checkbox";
@@ -32906,6 +33024,7 @@ ${ev.details}`;
             else
               selectedVaultOpIndices.delete(idx);
           });
+          appendVaultOpPreviewBlock(outer, op);
         });
         const vaultActionRow = vaultOpsDiv.createDiv();
         vaultActionRow.style.display = "flex";

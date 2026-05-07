@@ -107,6 +107,44 @@ import {
 } from './src/services/schema-catalog-types';
 import { LEGACY_SCHEMA_NAME_ALIASES } from './src/services/schema-name-aliases';
 
+/** Max chars for enricher/skill preview under proposed vault changes (DOM). */
+const VAULT_OP_PREVIEW_MAX_CHARS = 90_000;
+
+function truncateVaultOpPreviewText(raw: string): string {
+  if (raw.length <= VAULT_OP_PREVIEW_MAX_CHARS) return raw;
+  const overflow = raw.length - VAULT_OP_PREVIEW_MAX_CHARS;
+  return `${raw.slice(0, VAULT_OP_PREVIEW_MAX_CHARS)}\n\n… [preview truncated: ${overflow} more character(s)]`;
+}
+
+function appendVaultOpPreviewBlock(parent: HTMLDivElement, op: CustomVaultOperation): void {
+  if (op.action === "upsert_enricher") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", { text: "Preview enricher JSON (click to expand)" });
+    const pre = details.createEl("pre", {
+      text: truncateVaultOpPreviewText(JSON.stringify(op.spec, null, 2)),
+    });
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "11px";
+    pre.style.maxHeight = "420px";
+    pre.style.overflow = "auto";
+    return;
+  }
+  if (op.action === "upsert_skill") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", { text: "Preview skill (name, description, body)" });
+    const combined = `name: ${op.name}\ndescription: ${op.description}\n\n--- body ---\n${op.body}`;
+    const pre = details.createEl("pre", { text: truncateVaultOpPreviewText(combined) });
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "11px";
+    pre.style.maxHeight = "420px";
+    pre.style.overflow = "auto";
+  }
+}
+
 // ============================================================================
 // INTERFACES & TYPES
 // ============================================================================
@@ -3887,14 +3925,20 @@ export class ChatView extends ItemView {
         const selectedVaultOpIndices = new Set<number>(item.proposedCustomVaultOps.map((_, idx) => idx));
 
         item.proposedCustomVaultOps.forEach((op, idx) => {
-          const row = listEl.createDiv();
+          const outer = listEl.createDiv();
+          outer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--background-modifier-border);
+          `;
+          const row = outer.createDiv();
           row.style.cssText = `
             display: flex;
             align-items: flex-start;
             gap: 8px;
-            margin-bottom: 6px;
-            padding: 4px;
-            border-bottom: 1px solid var(--background-modifier-border);
+            padding: 4px 0 0 0;
           `;
           const cb = row.createEl("input");
           cb.type = "checkbox";
@@ -3906,6 +3950,7 @@ export class ChatView extends ItemView {
             if (cb.checked) selectedVaultOpIndices.add(idx);
             else selectedVaultOpIndices.delete(idx);
           });
+          appendVaultOpPreviewBlock(outer, op);
         });
 
         const vaultActionRow = vaultOpsDiv.createDiv();
