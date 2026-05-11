@@ -9,7 +9,6 @@ import {
     Connection,
     ENTITY_CONFIGS,
     EntityType,
-    getEntityIcon,
     OSINT_CONFIDENCE_LEVELS,
     type OsintConfidence,
 } from '../entities/types';

@@ -7,6 +7,7 @@ import {
 	TFile,
 	WorkspaceLeaf,
 	normalizePath,
+	setIcon,
 } from "obsidian";
 import { BUILT_IN_ORCHESTRATION_TOOLS, DYNAMIC_PLANNER_TOOLS_NOTE } from "../data/built-in-orchestration-tools";
 import type { EnricherRegistry } from "../services/enrichers/enricher-registry";
@@ -250,6 +251,12 @@ export class ToolsSkillsRegistryView extends ItemView {
 	private skillsCol!: HTMLElement;
 	private enrichCol!: HTMLElement;
 
+	/** Built-in tools list starts collapsed to give vault skills/enrichers more space. */
+	private builtInToolsCollapsed = true;
+
+	private readonly builtInToolsBodyDomId =
+		"osint-copilot-built-in-tools-" + Math.random().toString(36).slice(2, 11);
+
 	private async reload(): Promise<void> {
 		this.host.skillRegistry.invalidate();
 		this.host.enricherRegistry.invalidate();
@@ -262,20 +269,57 @@ export class ToolsSkillsRegistryView extends ItemView {
 
 	private renderTools(): void {
 		this.toolsCol.empty();
-		this.toolsCol.createEl("h3", { text: "Built-in tools" });
-		this.toolsCol.createDiv({
+		const wrap = this.toolsCol.createDiv({ cls: "osint-copilot-registry-built-in" });
+		const header = wrap.createDiv({
+			cls: "osint-copilot-registry-built-in-header",
+			attr: {
+				role: "button",
+				tabindex: "0",
+				"aria-expanded": this.builtInToolsCollapsed ? "false" : "true",
+				"aria-controls": this.builtInToolsBodyDomId,
+			},
+		});
+		const chevron = header.createSpan({ cls: "osint-copilot-registry-built-in-chevron" });
+		setIcon(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+		header.createEl("h3", { text: "Built-in tools" });
+
+		const body = wrap.createDiv({
+			cls: "osint-copilot-registry-built-in-body",
+			attr: { id: this.builtInToolsBodyDomId },
+		});
+		body.createDiv({
 			text: "These run inside the plugin or local agent flows. They are not vault files.",
 			cls: "osint-copilot-registry-hint",
 		});
 		for (const t of BUILT_IN_ORCHESTRATION_TOOLS) {
-			const card = this.toolsCol.createDiv({ cls: "osint-copilot-registry-card" });
+			const card = body.createDiv({ cls: "osint-copilot-registry-card" });
 			card.createEl("div", { text: t.title, cls: "osint-copilot-registry-card-title" });
 			card.createEl("code", { text: t.id, cls: "osint-copilot-registry-card-id" });
 			card.createDiv({ text: t.description, cls: "osint-copilot-registry-card-desc" });
 		}
-		this.toolsCol.createDiv({
+		body.createDiv({
 			text: DYNAMIC_PLANNER_TOOLS_NOTE,
 			cls: "osint-copilot-registry-dynamic-note",
+		});
+
+		const sync = (): void => {
+			body.toggleAttribute("hidden", this.builtInToolsCollapsed);
+			header.setAttribute("aria-expanded", this.builtInToolsCollapsed ? "false" : "true");
+			chevron.empty();
+			setIcon(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+		};
+		sync();
+
+		const toggle = (): void => {
+			this.builtInToolsCollapsed = !this.builtInToolsCollapsed;
+			sync();
+		};
+		header.addEventListener("click", toggle);
+		header.addEventListener("keydown", (ev: KeyboardEvent) => {
+			if (ev.key === "Enter" || ev.key === " ") {
+				ev.preventDefault();
+				toggle();
+			}
 		});
 	}
 

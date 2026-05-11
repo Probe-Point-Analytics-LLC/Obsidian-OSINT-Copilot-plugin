@@ -7335,7 +7335,7 @@ var ENTITY_ICONS = {
   // FTM entity types (only non-duplicate ones)
   "LegalEntity": "\u2696\uFE0F",
   "Organization": "\u{1F3DB}\uFE0F",
-  // 'Address': "📍", // Removed
+  "Address": "\u{1F4CD}",
   "BankAccount": "\u{1F3E6}",
   "CryptoWallet": "\u20BF",
   "UserAccount": "\u{1F465}",
@@ -7378,7 +7378,43 @@ var ENTITY_ICONS = {
   "TaxRoll": "\u{1F4B0}",
   "Vessel": "\u{1F6A2}",
   "Video": "\u{1F3AC}",
-  "Workbook": "\u{1F4CA}"
+  "Workbook": "\u{1F4CA}",
+  // OIDSF canonical names (legacy alias targets + common graph types)
+  EmploymentPost: "\u{1F4BC}",
+  IntelObject: "\u{1F5C3}\uFE0F",
+  AnalysisNote: "\u{1F4DD}",
+  IntelIdentity: "\u{1FAAA}",
+  IntelligenceReport: "\u{1F4D1}",
+  GeoLocation: "\u{1F4CD}",
+  CtiBundle: "\u{1F4DA}",
+  ObservableArtifact: "\u{1F9E9}",
+  ObservableFile: "\u{1F4C4}",
+  ObservableProcess: "\u2699\uFE0F",
+  AnalyticObject: "\u{1F52C}",
+  Claim: "\u{1F4CC}",
+  ClaimEvidence: "\u{1F9FE}",
+  Hypothesis: "\u{1F4A1}",
+  ACHEvidenceRow: "\u{1F4CA}",
+  ACHRating: "\u2B50",
+  ACHMatrix: "\u{1F533}",
+  EvidenceChain: "\u26D3\uFE0F",
+  ProvenanceLink: "\u{1F517}",
+  TrackedArtifact: "\u{1F3AF}",
+  MediaAnalysis: "\u{1F3AC}",
+  TimelineEvent: "\u23F1\uFE0F",
+  GraphNode: "\u{1F535}",
+  GraphEdge: "\u2194\uFE0F",
+  InvestigationSummary: "\u{1F4CB}",
+  ClaimContradiction: "\u26A1",
+  CredibilityAssessment: "\u2705",
+  MirrorProject: "\u{1FA9E}",
+  CorpusDocument: "\u{1F4DA}",
+  ExtractedEntityRecord: "\u{1F4C7}",
+  SearchHit: "\u{1F50E}",
+  AnomalyFinding: "\u26A0\uFE0F",
+  ReportTemplate: "\u{1F4C4}",
+  PremortemAnalysis: "\u{1F52E}",
+  ScenarioTree: "\u{1F333}"
 };
 var COMMON_PROPERTIES = ["notes", "source", "image"];
 var OSINT_CONFIDENCE_LEVELS = ["unverified", "low", "medium", "high", "conflicted"];
@@ -7420,6 +7456,42 @@ function getEntityIcon(type) {
   }
   return "\u{1F4E6}";
 }
+function pascalCaseIfAllLower(s) {
+  if (!s || s.length === 0)
+    return s;
+  if (s !== s.toLowerCase())
+    return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function getEntityIconForEntity(entity) {
+  const candidates = [];
+  const push = (raw) => {
+    if (raw === void 0 || raw === null)
+      return;
+    const t = String(raw).trim();
+    if (!t)
+      return;
+    candidates.push(t);
+    candidates.push(canonicalSchemaName(t));
+    const pascal = pascalCaseIfAllLower(t);
+    if (pascal !== t) {
+      candidates.push(pascal);
+      candidates.push(canonicalSchemaName(pascal));
+    }
+  };
+  push(entity.ftmSchema);
+  push(String(entity.type));
+  const seen = /* @__PURE__ */ new Set();
+  for (const k of candidates) {
+    if (seen.has(k))
+      continue;
+    seen.add(k);
+    const hit = ENTITY_ICONS[k];
+    if (hit)
+      return hit;
+  }
+  return getEntityIcon(String(entity.type));
+}
 var GENERIC_ENTITY_NAMES = /* @__PURE__ */ new Set([
   // Legacy entity types
   "Person",
@@ -7437,7 +7509,7 @@ var GENERIC_ENTITY_NAMES = /* @__PURE__ */ new Set([
   // FTM entity types
   "LegalEntity",
   "Organization",
-  /* 'Address', */
+  "Address",
   "BankAccount",
   "CryptoWallet",
   "UserAccount",
@@ -7498,7 +7570,8 @@ var GENERIC_ENTITY_NAMES = /* @__PURE__ */ new Set([
   "websites",
   "document",
   "documents",
-  /* 'address', 'addresses', */
+  "address",
+  "addresses",
   // Very generic terms
   "Entity",
   "entity",
@@ -26060,6 +26133,9 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
   constructor(leaf, host) {
     super(leaf);
     this.host = host;
+    /** Built-in tools list starts collapsed to give vault skills/enrichers more space. */
+    this.builtInToolsCollapsed = true;
+    this.builtInToolsBodyDomId = "osint-copilot-built-in-tools-" + Math.random().toString(36).slice(2, 11);
   }
   getViewType() {
     return TOOLS_SKILLS_REGISTRY_VIEW_TYPE;
@@ -26104,20 +26180,54 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
   }
   renderTools() {
     this.toolsCol.empty();
-    this.toolsCol.createEl("h3", { text: "Built-in tools" });
-    this.toolsCol.createDiv({
+    const wrap = this.toolsCol.createDiv({ cls: "osint-copilot-registry-built-in" });
+    const header = wrap.createDiv({
+      cls: "osint-copilot-registry-built-in-header",
+      attr: {
+        role: "button",
+        tabindex: "0",
+        "aria-expanded": this.builtInToolsCollapsed ? "false" : "true",
+        "aria-controls": this.builtInToolsBodyDomId
+      }
+    });
+    const chevron = header.createSpan({ cls: "osint-copilot-registry-built-in-chevron" });
+    (0, import_obsidian15.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+    header.createEl("h3", { text: "Built-in tools" });
+    const body = wrap.createDiv({
+      cls: "osint-copilot-registry-built-in-body",
+      attr: { id: this.builtInToolsBodyDomId }
+    });
+    body.createDiv({
       text: "These run inside the plugin or local agent flows. They are not vault files.",
       cls: "osint-copilot-registry-hint"
     });
     for (const t of BUILT_IN_ORCHESTRATION_TOOLS) {
-      const card = this.toolsCol.createDiv({ cls: "osint-copilot-registry-card" });
+      const card = body.createDiv({ cls: "osint-copilot-registry-card" });
       card.createEl("div", { text: t.title, cls: "osint-copilot-registry-card-title" });
       card.createEl("code", { text: t.id, cls: "osint-copilot-registry-card-id" });
       card.createDiv({ text: t.description, cls: "osint-copilot-registry-card-desc" });
     }
-    this.toolsCol.createDiv({
+    body.createDiv({
       text: DYNAMIC_PLANNER_TOOLS_NOTE,
       cls: "osint-copilot-registry-dynamic-note"
+    });
+    const sync = () => {
+      body.toggleAttribute("hidden", this.builtInToolsCollapsed);
+      header.setAttribute("aria-expanded", this.builtInToolsCollapsed ? "false" : "true");
+      chevron.empty();
+      (0, import_obsidian15.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+    };
+    sync();
+    const toggle = () => {
+      this.builtInToolsCollapsed = !this.builtInToolsCollapsed;
+      sync();
+    };
+    header.addEventListener("click", toggle);
+    header.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toggle();
+      }
     });
   }
   renderSkills(skills) {
@@ -35221,7 +35331,7 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
     return mergeEnabledFamilies(this.settings.enabledSchemaFamilies);
   }
   getGraphEntityVisual(entity) {
-    const icon = getEntityIcon(entity.type);
+    const icon = getEntityIconForEntity(entity);
     if (this.schemaCatalogService) {
       const { color } = this.schemaCatalogService.getEntityVisualForGraph(entity);
       return { color, icon };

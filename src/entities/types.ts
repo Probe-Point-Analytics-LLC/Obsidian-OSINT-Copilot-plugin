@@ -6,6 +6,7 @@
 import { ftmSchemaService, ResolvedFTMSchema, FTMPropertyDefinition } from '../services/ftm-schema-service';
 import type { OIDSFModalLayers, SchemaFamily } from '../services/schema-catalog-types';
 import { DEFAULT_OIDSF_MODAL_LAYERS } from '../services/schema-catalog-types';
+import { canonicalSchemaName } from '../services/schema-name-aliases';
 
 // Legacy EntityType enum - kept for backward compatibility
 export enum EntityType {
@@ -264,7 +265,7 @@ export const ENTITY_ICONS: Record<string, string> = {
     // FTM entity types (only non-duplicate ones)
     'LegalEntity': "⚖️",
     'Organization': "🏛️",
-    // 'Address': "📍", // Removed
+    'Address': "📍",
     'BankAccount': "🏦",
     'CryptoWallet': "₿",
     'UserAccount': "👥",
@@ -309,7 +310,44 @@ export const ENTITY_ICONS: Record<string, string> = {
     'TaxRoll': "💰",
     'Vessel': "🚢",
     'Video': "🎬",
-    'Workbook': "📊"
+    'Workbook': "📊",
+
+    // OIDSF canonical names (legacy alias targets + common graph types)
+    EmploymentPost: "💼",
+    IntelObject: "🗃️",
+    AnalysisNote: "📝",
+    IntelIdentity: "🪪",
+    IntelligenceReport: "📑",
+    GeoLocation: "📍",
+    CtiBundle: "📚",
+    ObservableArtifact: "🧩",
+    ObservableFile: "📄",
+    ObservableProcess: "⚙️",
+    AnalyticObject: "🔬",
+    Claim: "📌",
+    ClaimEvidence: "🧾",
+    Hypothesis: "💡",
+    ACHEvidenceRow: "📊",
+    ACHRating: "⭐",
+    ACHMatrix: "🔳",
+    EvidenceChain: "⛓️",
+    ProvenanceLink: "🔗",
+    TrackedArtifact: "🎯",
+    MediaAnalysis: "🎬",
+    TimelineEvent: "⏱️",
+    GraphNode: "🔵",
+    GraphEdge: "↔️",
+    InvestigationSummary: "📋",
+    ClaimContradiction: "⚡",
+    CredibilityAssessment: "✅",
+    MirrorProject: "🪞",
+    CorpusDocument: "📚",
+    ExtractedEntityRecord: "📇",
+    SearchHit: "🔎",
+    AnomalyFinding: "⚠️",
+    ReportTemplate: "📄",
+    PremortemAnalysis: "🔮",
+    ScenarioTree: "🌳",
 };
 
 // Common properties for all entities
@@ -524,6 +562,44 @@ export function getEntityIcon(type: EntityType | string): string {
     return "📦";
 }
 
+/** PascalCase when the string is all lowercase (e.g. vault `type: person`). */
+function pascalCaseIfAllLower(s: string): string {
+    if (!s || s.length === 0) return s;
+    if (s !== s.toLowerCase()) return s;
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Icon for graph (and similar) views: considers `ftmSchema`, legacy OIDSF aliases,
+ * and simple case normalization so created entities match ENTITY_ICONS.
+ */
+export function getEntityIconForEntity(entity: Entity): string {
+    const candidates: string[] = [];
+    const push = (raw?: string) => {
+        if (raw === undefined || raw === null) return;
+        const t = String(raw).trim();
+        if (!t) return;
+        candidates.push(t);
+        candidates.push(canonicalSchemaName(t));
+        const pascal = pascalCaseIfAllLower(t);
+        if (pascal !== t) {
+            candidates.push(pascal);
+            candidates.push(canonicalSchemaName(pascal));
+        }
+    };
+    push(entity.ftmSchema);
+    push(String(entity.type));
+
+    const seen = new Set<string>();
+    for (const k of candidates) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const hit = ENTITY_ICONS[k];
+        if (hit) return hit;
+    }
+    return getEntityIcon(String(entity.type));
+}
+
 /**
  * List of generic entity type names that should not be used as entity labels.
  * These are reserved type names that don't represent specific entities.
@@ -534,7 +610,7 @@ const GENERIC_ENTITY_NAMES = new Set([
     'Username', 'Vehicle', 'Website', 'Evidence', 'Image', 'Text',
 
     // FTM entity types
-    'LegalEntity', 'Organization', /* 'Address', */ 'BankAccount', 'CryptoWallet',
+    'LegalEntity', 'Organization', 'Address', 'BankAccount', 'CryptoWallet',
     'UserAccount', 'OnlineAccount', 'Document', 'RealEstate', 'Sanction', 'Passport',
     'Ownership', 'Employment', 'Directorship', 'IP', 'Malware', 'Group', 'Domain',
 
@@ -548,7 +624,7 @@ const GENERIC_ENTITY_NAMES = new Set([
     'person', 'people', 'event', 'events', 'location', 'locations',
     'company', 'companies', 'organization', 'organizations',
     'email', 'emails', 'phone', 'phones', 'vehicle', 'vehicles',
-    'website', 'websites', 'document', 'documents', /* 'address', 'addresses', */
+    'website', 'websites', 'document', 'documents', 'address', 'addresses',
 
     // Very generic terms
     'Entity', 'entity', 'Item', 'item', 'Object', 'object',

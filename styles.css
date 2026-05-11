@@ -2843,6 +2843,60 @@ svg.leaflet-image-layer.leaflet-interactive path {
   font-size: 1em;
 }
 
+/* Built-in tools column: collapsible list (default collapsed) */
+.osint-copilot-registry-built-in {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+}
+
+.osint-copilot-registry-built-in-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.2rem 0.25rem;
+  margin: -0.2rem -0.25rem;
+  border-radius: var(--radius-s, 4px);
+}
+
+.osint-copilot-registry-built-in-header:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.osint-copilot-registry-built-in-header:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.osint-copilot-registry-built-in-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 1em;
+}
+
+.osint-copilot-registry-built-in-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.osint-copilot-registry-built-in-chevron svg {
+  width: 16px;
+  height: 16px;
+}
+
+.osint-copilot-registry-built-in-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
 .osint-copilot-registry-hint {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);

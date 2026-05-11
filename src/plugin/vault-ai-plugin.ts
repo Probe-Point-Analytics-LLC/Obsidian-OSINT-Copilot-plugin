@@ -27,7 +27,7 @@ import {
   ProcessTextResponse,
   validateEntityName,
   getEntityLabel,
-  getEntityIcon,
+  getEntityIconForEntity,
   getEntityColor,
   type GraphWriteContext,
 } from '../entities/types';
@@ -194,7 +194,7 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   getGraphEntityVisual(entity: Entity): { color: string; icon: string } {
-    const icon = getEntityIcon(entity.type);
+    const icon = getEntityIconForEntity(entity);
     if (this.schemaCatalogService) {
       const { color } = this.schemaCatalogService.getEntityVisualForGraph(entity);
       return { color, icon };
