@@ -31,7 +31,7 @@ __export(main_exports, {
   runtimeSettingsVisibility: () => runtimeSettingsVisibility
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian31 = require("obsidian");
+var import_obsidian33 = require("obsidian");
 
 // src/generated/oidsfBundledSchemas.ts
 var OIDSF_BUNDLED_SCHEMAS = {
@@ -24891,6 +24891,7 @@ var MAP_VIEW_TYPE = "graph_copilot-map-view";
 var MapView = class extends import_obsidian13.ItemView {
   constructor(leaf, entityManager, onLocationClick) {
     super(leaf);
+    this.vaultRefreshTimer = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet map instance
     this.map = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet markers
@@ -24925,11 +24926,53 @@ var MapView = class extends import_obsidian13.ItemView {
     });
     await this.loadLeaflet();
     this.initializeMap();
+    const basePrefix = (0, import_obsidian13.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
+    const scheduleRefreshFromPath = (path) => {
+      if (!path.replace(/\\/g, "/").toLowerCase().startsWith(basePrefix))
+        return;
+      if (this.vaultRefreshTimer !== null) {
+        window.clearTimeout(this.vaultRefreshTimer);
+      }
+      this.vaultRefreshTimer = window.setTimeout(() => {
+        this.vaultRefreshTimer = null;
+        void this.refresh();
+      }, 400);
+    };
+    this.registerEvent(
+      this.app.vault.on("modify", (f) => {
+        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (f) => {
+        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (f) => {
+        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (f, oldPath) => {
+        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+          scheduleRefreshFromPath(f.path);
+        if (typeof oldPath === "string")
+          scheduleRefreshFromPath(oldPath);
+      })
+    );
     setTimeout(() => {
       void this.refresh();
     }, 200);
   }
   async onClose() {
+    if (this.vaultRefreshTimer !== null) {
+      window.clearTimeout(this.vaultRefreshTimer);
+      this.vaultRefreshTimer = null;
+    }
     if (this.map && this.map._handlers) {
       this.map._handlers.forEach((handler) => {
         handler.enable();
@@ -24979,7 +25022,7 @@ var MapView = class extends import_obsidian13.ItemView {
     const geolocateBtn = toolbar.createEl("button", { text: "\u{1F4CD} geolocate missing" });
     geolocateBtn.onclick = () => this.showGeolocateMissingDialog();
     const infoSpan = toolbar.createEl("span", {
-      text: "Map shows all location entities with coordinates",
+      text: "Map: Location and Address entities with latitude / longitude",
       cls: "graph_copilot-map-info"
     });
     infoSpan.setCssProps({
@@ -25517,202 +25560,28 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
   }
 };
 
-// src/services/custom-types-service.ts
-var import_obsidian14 = require("obsidian");
-var CustomTypesService = class {
-  constructor(app) {
-    this.customSchemas = /* @__PURE__ */ new Map();
-    this.app = app;
-    this.vault = app.vault;
-  }
-  async initialize() {
-    await this.ensureConfigDir();
-    await this.loadCustomTypes();
-  }
-  async ensureConfigDir() {
-    try {
-      const norm = (0, import_obsidian14.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
-      const parts = norm.split("/").filter(Boolean);
-      let acc = "";
-      for (const p of parts) {
-        acc = acc ? `${acc}/${p}` : p;
-        if (!this.vault.getAbstractFileByPath(acc)) {
-          await this.vault.createFolder(acc);
-        }
-      }
-    } catch (error) {
-      console.error("[CustomTypesService] Failed to create config folder:", error);
-    }
-  }
-  async loadCustomTypes() {
-    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
-    if (await this.vault.adapter.exists(configPath)) {
-      try {
-        const content = await this.vault.adapter.read(configPath);
-        const config = JSON.parse(content);
-        this.customSchemas.clear();
-        if (config.schemas && Array.isArray(config.schemas)) {
-          for (const schema4 of config.schemas) {
-            if (schema4.name) {
-              this.customSchemas.set(schema4.name, schema4);
-              ftmSchemaService.registerSchema(schema4);
-            }
-          }
-        }
-        console.debug(`[CustomTypesService] Loaded ${this.customSchemas.size} custom entity types.`);
-      } catch (e) {
-        console.error("[CustomTypesService] Failed to load custom types:", e);
-        new import_obsidian14.Notice("Failed to load custom entity types config.");
-      }
-    }
-  }
-  async saveCustomTypes() {
-    await this.ensureConfigDir();
-    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
-    const config = {
-      schemas: Array.from(this.customSchemas.values())
-    };
-    try {
-      await this.vault.adapter.write(configPath, JSON.stringify(config, null, 2));
-    } catch (e) {
-      console.error("[CustomTypesService] Failed to save custom types:", e);
-      new import_obsidian14.Notice("Failed to save custom entity types config.");
-    }
-  }
-  async addCustomType(schema4) {
-    if (!schema4.name)
-      throw new Error("Schema name is required");
-    this.customSchemas.set(schema4.name, schema4);
-    ftmSchemaService.registerSchema(schema4);
-    await this.saveCustomTypes();
-    new import_obsidian14.Notice(`Custom entity type '${schema4.label}' added.`);
-  }
-  async updateCustomType(schema4) {
-    if (!schema4.name || !this.customSchemas.has(schema4.name)) {
-      throw new Error(`Custom type ${schema4.name} does not exist`);
-    }
-    await this.addCustomType(schema4);
-  }
-  async deleteCustomType(name) {
-    if (this.customSchemas.delete(name)) {
-      await this.saveCustomTypes();
-      new import_obsidian14.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
-    }
-  }
-  getCustomSchemas() {
-    return Array.from(this.customSchemas.values());
-  }
-  getCustomSchema(name) {
-    return this.customSchemas.get(name);
-  }
-};
-
-// src/services/orchestration-service.ts
-var import_obsidian16 = require("obsidian");
-
-// src/skills/skill-runtime.ts
-var SKILL_PLANNER_PREFIX = "SKILL_";
-function parseVaultSkillPlannerTool(tool) {
-  if (!tool.startsWith(SKILL_PLANNER_PREFIX))
-    return null;
-  const id = tool.slice(SKILL_PLANNER_PREFIX.length).trim();
-  return id || null;
-}
-
-// src/services/enrichers/enricher-executor.ts
+// src/views/tools-skills-registry-view.ts
 var import_obsidian15 = require("obsidian");
 
-// src/services/enrichers/enricher-schema.ts
-function parseId(v) {
-  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-function normalizeEnricherInvocationId(raw) {
-  const id = parseId(raw);
-  return id || null;
-}
-function enrichToolId(id) {
-  return `ENRICH_${id}`;
-}
-function parseEnrichToolId(toolId) {
-  if (!toolId.startsWith("ENRICH_"))
-    return null;
-  const id = parseId(toolId.slice("ENRICH_".length));
-  return id || null;
-}
-function normalizeEnricherSpec(raw) {
-  if (!raw || typeof raw !== "object")
-    return null;
-  const r = raw;
-  const id = parseId(r.id);
-  if (!id)
-    return null;
-  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
-  const timeoutMs = Number(r.limits?.timeoutMs);
-  const retries = Number(r.limits?.retries);
-  const maxResponseChars = Number(r.limits?.maxResponseChars);
-  const authTypeRaw = String(r.auth?.type || "none").trim();
-  const statusRaw = String(r.status || "draft");
-  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
-  const enabled = r.enabled !== false;
-  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
-  const vaultRelRaw = typeof r.auth?.vaultRelativePath === "string" ? String(r.auth.vaultRelativePath).trim() : typeof r.auth?.vault_relative_path === "string" ? String(r.auth.vault_relative_path).trim() : "";
-  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? void 0;
-  const envTypes = ["bearer_env", "header_env", "query_env"];
-  const vaultTypes = ["bearer_vault", "header_vault", "query_vault"];
-  let authType = "none";
-  if (envTypes.includes(authTypeRaw))
-    authType = authTypeRaw;
-  else if (vaultTypes.includes(authTypeRaw)) {
-    if (vaultRelativePath) {
-      authType = authTypeRaw;
-    } else {
-      authType = "none";
-      const hint = vaultRelRaw !== "" ? `vault credential path rejected or unsafe in JSON: "${vaultRelRaw}"` : `${authTypeRaw} requires auth.vaultRelativePath (e.g. leakcheck/api-key.txt)`;
-      console.warn(
-        `[EnricherSchema] enricher "${id}": ${hint}; auth downgraded to none \u2014 requests will not send vault API keys.`
-      );
-    }
+// src/data/built-in-orchestration-tools.ts
+var BUILT_IN_ORCHESTRATION_TOOLS = [
+  {
+    id: "LOCAL_VAULT",
+    title: "Local vault search",
+    description: "Searches markdown notes in the vault for keywords from the user query. Runs inside the plugin during orchestration (no separate vault file)."
+  },
+  {
+    id: "EXTRACT_TO_GRAPH",
+    title: "Extract to graph",
+    description: "Runs local Claude on attachment text to propose graph commands (entities/relationships). Results are reviewed before applying to the vault graph."
+  },
+  {
+    id: "VAULT_GRAPH_INGEST",
+    title: "Vault graph ingest",
+    description: "Batch-reads vault paths and proposes/applies graph operations from note content. Used from dedicated chat flows; not a user-editable file."
   }
-  return {
-    id,
-    name: String(r.name || id).trim() || id,
-    description: String(r.description || "").trim(),
-    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
-    status,
-    enabled,
-    allowedDomains,
-    auth: {
-      type: authType,
-      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
-      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
-      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0,
-      vaultRelativePath
-    },
-    request: {
-      method,
-      urlTemplate: String(r.request?.urlTemplate || "").trim(),
-      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
-        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
-      ) : {},
-      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
-    },
-    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
-    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
-      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
-      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
-    } : void 0,
-    skillInstructions: String(r.skillInstructions || "").trim(),
-    limits: {
-      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
-      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
-      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
-    },
-    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
-  };
-}
-function isEnricherRunnable(spec) {
-  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
-}
+];
+var DYNAMIC_PLANNER_TOOLS_NOTE = "The planner may also call `SKILL_<id>` and `ENRICH_<id>` \u2014 those map to vault markdown skills and enricher JSON files shown in the Skills and Enrichers columns.";
 
 // src/services/custom-vault-operations.ts
 var MAX_CREDENTIAL_FILE_CHARS = 256e3;
@@ -25918,26 +25787,631 @@ function summarizeCustomVaultOperation(op) {
   }
 }
 
+// src/services/enrichers/enricher-schema.ts
+function parseId(v) {
+  return String(v || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function normalizeEnricherInvocationId(raw) {
+  const id = parseId(raw);
+  return id || null;
+}
+function enrichToolId(id) {
+  return `ENRICH_${id}`;
+}
+function parseEnrichToolId(toolId) {
+  if (!toolId.startsWith("ENRICH_"))
+    return null;
+  const id = parseId(toolId.slice("ENRICH_".length));
+  return id || null;
+}
+function normalizeEnricherSpec(raw) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const r = raw;
+  const id = parseId(r.id);
+  if (!id)
+    return null;
+  const method = String(r.request?.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const timeoutMs = Number(r.limits?.timeoutMs);
+  const retries = Number(r.limits?.retries);
+  const maxResponseChars = Number(r.limits?.maxResponseChars);
+  const authTypeRaw = String(r.auth?.type || "none").trim();
+  const statusRaw = String(r.status || "draft");
+  const status = statusRaw === "active" || statusRaw === "disabled" ? statusRaw : "draft";
+  const enabled = r.enabled !== false;
+  const allowedDomains = Array.isArray(r.allowedDomains) ? r.allowedDomains.map((d) => String(d).trim().toLowerCase()).filter(Boolean) : [];
+  const vaultRelRaw = typeof r.auth?.vaultRelativePath === "string" ? String(r.auth.vaultRelativePath).trim() : typeof r.auth?.vault_relative_path === "string" ? String(r.auth.vault_relative_path).trim() : "";
+  const vaultRelativePath = normalizeCredentialsRelativePath(vaultRelRaw) ?? void 0;
+  const envTypes = ["bearer_env", "header_env", "query_env"];
+  const vaultTypes = ["bearer_vault", "header_vault", "query_vault"];
+  let authType = "none";
+  if (envTypes.includes(authTypeRaw))
+    authType = authTypeRaw;
+  else if (vaultTypes.includes(authTypeRaw)) {
+    if (vaultRelativePath) {
+      authType = authTypeRaw;
+    } else {
+      authType = "none";
+      const hint = vaultRelRaw !== "" ? `vault credential path rejected or unsafe in JSON: "${vaultRelRaw}"` : `${authTypeRaw} requires auth.vaultRelativePath (e.g. leakcheck/api-key.txt)`;
+      console.warn(
+        `[EnricherSchema] enricher "${id}": ${hint}; auth downgraded to none \u2014 requests will not send vault API keys.`
+      );
+    }
+  }
+  return {
+    id,
+    name: String(r.name || id).trim() || id,
+    description: String(r.description || "").trim(),
+    documentationUrl: typeof r.documentationUrl === "string" ? r.documentationUrl.trim() : void 0,
+    status,
+    enabled,
+    allowedDomains,
+    auth: {
+      type: authType,
+      envVar: typeof r.auth?.envVar === "string" ? String(r.auth.envVar).trim() : void 0,
+      headerName: typeof r.auth?.headerName === "string" ? String(r.auth.headerName).trim() : void 0,
+      queryParam: typeof r.auth?.queryParam === "string" ? String(r.auth.queryParam).trim() : void 0,
+      vaultRelativePath
+    },
+    request: {
+      method,
+      urlTemplate: String(r.request?.urlTemplate || "").trim(),
+      headers: r.request?.headers && typeof r.request.headers === "object" ? Object.fromEntries(
+        Object.entries(r.request.headers).map(([k, v]) => [String(k), String(v ?? "")])
+      ) : {},
+      bodyTemplate: typeof r.request?.bodyTemplate === "string" ? String(r.request.bodyTemplate) : void 0
+    },
+    inputHints: Array.isArray(r.inputHints) ? r.inputHints.map((v) => String(v)) : [],
+    outputMapping: r.outputMapping && typeof r.outputMapping === "object" ? {
+      summaryPath: typeof r.outputMapping.summaryPath === "string" ? String(r.outputMapping.summaryPath) : void 0,
+      listPath: typeof r.outputMapping.listPath === "string" ? String(r.outputMapping.listPath) : void 0
+    } : void 0,
+    skillInstructions: String(r.skillInstructions || "").trim(),
+    limits: {
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 2e3 ? timeoutMs : 15e3,
+      retries: Number.isFinite(retries) && retries >= 0 ? retries : 1,
+      maxResponseChars: Number.isFinite(maxResponseChars) && maxResponseChars >= 500 ? maxResponseChars : 8e3
+    },
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function isEnricherRunnable(spec) {
+  return spec.status === "active" && spec.enabled && !!spec.request.urlTemplate;
+}
+
+// src/utils/registry-paths.ts
+var import_obsidian14 = require("obsidian");
+function skillMarkdownPathFromId(skillsFolder, rawId) {
+  const id = parseSkillIdForVault(rawId);
+  if (!id || id === "readme")
+    return null;
+  const root = (0, import_obsidian14.normalizePath)(skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+  return (0, import_obsidian14.normalizePath)(`${root}/${id}.md`);
+}
+function enricherJsonPathFromId(enrichersFolder, rawId) {
+  const id = parseSkillIdForVault(rawId);
+  if (!id)
+    return null;
+  const root = (0, import_obsidian14.normalizePath)(enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+  return (0, import_obsidian14.normalizePath)(`${root}/${id}.json`);
+}
+
+// src/views/tools-skills-registry-view.ts
+var TOOLS_SKILLS_REGISTRY_VIEW_TYPE = "osint-copilot-tools-skills-registry";
+function buildDraftEnricherJson(id, name) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const spec = {
+    id,
+    name: name || id,
+    description: "Draft \u2014 edit URL, domains, and auth before setting status to active.",
+    status: "draft",
+    enabled: false,
+    allowedDomains: [],
+    auth: { type: "none" },
+    request: {
+      method: "GET",
+      urlTemplate: "https://example.com/?q={{query}}",
+      headers: {}
+    },
+    inputHints: ["query"],
+    skillInstructions: "",
+    limits: { timeoutMs: 15e3, retries: 1, maxResponseChars: 8e3 },
+    updatedAt: now
+  };
+  return JSON.stringify(spec, null, 2);
+}
+function yamlDoubleQuoted(s) {
+  const oneLine = s.replace(/\r?\n/g, " ").trim();
+  return `"${oneLine.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+async function ensureFolderChain(app, path) {
+  const norm = (0, import_obsidian15.normalizePath)(path);
+  const parts = norm.split("/").filter(Boolean);
+  let acc = "";
+  for (const p of parts) {
+    acc = acc ? `${acc}/${p}` : p;
+    const f = app.vault.getAbstractFileByPath(acc);
+    if (!f) {
+      try {
+        await app.vault.createFolder(acc);
+      } catch (e) {
+        if (e instanceof Error && !e.message.includes("Folder already exists")) {
+          throw e;
+        }
+      }
+    }
+  }
+}
+var AddSkillModal = class extends import_obsidian15.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+    this.idInput = "";
+    this.nameInput = "";
+    this.descInput = "";
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "New vault skill" });
+    contentEl.createDiv({
+      text: "Id becomes the filename (slug). README is reserved.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian15.Setting(contentEl).setName("Skill id").addText((t) => {
+      t.setPlaceholder("my_skill");
+      t.onChange((v) => {
+        this.idInput = v;
+      });
+    });
+    new import_obsidian15.Setting(contentEl).setName("Display name").addText((t) => {
+      t.setPlaceholder("My skill");
+      t.onChange((v) => {
+        this.nameInput = v;
+      });
+    });
+    new import_obsidian15.Setting(contentEl).setName("Description").addTextArea((t) => {
+      t.setPlaceholder("Short line for the planner tool list");
+      t.inputEl.rows = 3;
+      t.onChange((v) => {
+        this.descInput = v;
+      });
+    });
+    new import_obsidian15.Setting(contentEl).addButton((b) => {
+      b.setButtonText("Create").setCta();
+      b.onClick(() => {
+        void (async () => {
+          const id = parseSkillIdForVault(this.idInput);
+          if (!id || id === "readme") {
+            new import_obsidian15.Notice("Enter a valid skill id (letters, numbers, _ and -).");
+            return;
+          }
+          const name = this.nameInput.trim() || id;
+          const description = this.descInput.trim() || "New vault skill";
+          await this.onSubmit(id, name, description);
+          this.close();
+        })();
+      });
+    });
+    new import_obsidian15.Setting(contentEl).addButton((b) => {
+      b.setButtonText("Cancel");
+      b.onClick(() => this.close());
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var AddEnricherDraftModal = class extends import_obsidian15.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+    this.idInput = "";
+    this.nameInput = "";
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "New enricher draft" });
+    contentEl.createDiv({
+      text: "Creates a disabled draft JSON. Edit domains and URL before enabling.",
+      cls: "setting-item-description"
+    });
+    new import_obsidian15.Setting(contentEl).setName("Enricher id").addText((t) => {
+      t.setPlaceholder("my_enricher");
+      t.onChange((v) => {
+        this.idInput = v;
+      });
+    });
+    new import_obsidian15.Setting(contentEl).setName("Display name").addText((t) => {
+      t.setPlaceholder("My enricher");
+      t.onChange((v) => {
+        this.nameInput = v;
+      });
+    });
+    new import_obsidian15.Setting(contentEl).addButton((b) => {
+      b.setButtonText("Create draft").setCta();
+      b.onClick(() => {
+        void (async () => {
+          const id = parseSkillIdForVault(this.idInput);
+          if (!id) {
+            new import_obsidian15.Notice("Enter a valid enricher id.");
+            return;
+          }
+          const name = this.nameInput.trim() || id;
+          await this.onSubmit(id, name);
+          this.close();
+        })();
+      });
+    });
+    new import_obsidian15.Setting(contentEl).addButton((b) => {
+      b.setButtonText("Cancel");
+      b.onClick(() => this.close());
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
+  constructor(leaf, host) {
+    super(leaf);
+    this.host = host;
+  }
+  getViewType() {
+    return TOOLS_SKILLS_REGISTRY_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "OSINT Copilot tools & skills";
+  }
+  getIcon() {
+    return "layout-list";
+  }
+  async onOpen() {
+    const root = this.containerEl.children[1];
+    root.empty();
+    root.addClass("osint-copilot-registry-root");
+    const toolbar = root.createDiv({ cls: "osint-copilot-registry-toolbar" });
+    const refreshBtn = toolbar.createEl("button", { text: "Refresh", cls: "mod-cta" });
+    refreshBtn.addEventListener("click", () => {
+      void this.reload();
+    });
+    const addSkillBtn = toolbar.createEl("button", { text: "Add skill" });
+    addSkillBtn.addEventListener("click", () => {
+      new AddSkillModal(this.app, (id, name, description) => this.createSkillFile(id, name, description)).open();
+    });
+    const addEnrichBtn = toolbar.createEl("button", { text: "Add enricher draft" });
+    addEnrichBtn.addEventListener("click", () => {
+      new AddEnricherDraftModal(this.app, (id, name) => this.createEnricherDraft(id, name)).open();
+    });
+    const grid = root.createDiv({ cls: "osint-copilot-registry-grid" });
+    this.toolsCol = grid.createDiv({ cls: "osint-copilot-registry-column" });
+    this.skillsCol = grid.createDiv({ cls: "osint-copilot-registry-column" });
+    this.enrichCol = grid.createDiv({ cls: "osint-copilot-registry-column" });
+    await this.reload();
+  }
+  async reload() {
+    this.host.skillRegistry.invalidate();
+    this.host.enricherRegistry.invalidate();
+    const skills = await this.host.skillRegistry.listVaultSkills();
+    const enrichers = await this.host.enricherRegistry.listAll();
+    this.renderTools();
+    this.renderSkills(skills);
+    this.renderEnrichers(enrichers);
+  }
+  renderTools() {
+    this.toolsCol.empty();
+    this.toolsCol.createEl("h3", { text: "Built-in tools" });
+    this.toolsCol.createDiv({
+      text: "These run inside the plugin or local agent flows. They are not vault files.",
+      cls: "osint-copilot-registry-hint"
+    });
+    for (const t of BUILT_IN_ORCHESTRATION_TOOLS) {
+      const card = this.toolsCol.createDiv({ cls: "osint-copilot-registry-card" });
+      card.createEl("div", { text: t.title, cls: "osint-copilot-registry-card-title" });
+      card.createEl("code", { text: t.id, cls: "osint-copilot-registry-card-id" });
+      card.createDiv({ text: t.description, cls: "osint-copilot-registry-card-desc" });
+    }
+    this.toolsCol.createDiv({
+      text: DYNAMIC_PLANNER_TOOLS_NOTE,
+      cls: "osint-copilot-registry-dynamic-note"
+    });
+  }
+  renderSkills(skills) {
+    this.skillsCol.empty();
+    this.skillsCol.createEl("h3", { text: "Vault skills" });
+    this.skillsCol.createDiv({
+      text: `Folder: ${(0, import_obsidian15.normalizePath)(this.host.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER)}`,
+      cls: "osint-copilot-registry-hint"
+    });
+    if (skills.length === 0) {
+      this.skillsCol.createDiv({ text: "No skills found.", cls: "osint-copilot-registry-empty" });
+      return;
+    }
+    for (const s of skills) {
+      const row = this.skillsCol.createDiv({ cls: "osint-copilot-registry-row" });
+      row.createEl("div", { text: s.name, cls: "osint-copilot-registry-row-title" });
+      row.createEl("code", { text: s.id, cls: "osint-copilot-registry-row-id" });
+      const actions = row.createDiv({ cls: "osint-copilot-registry-row-actions" });
+      const openBtn = actions.createEl("button", { text: "Open note" });
+      openBtn.addEventListener("click", () => void this.openPath(s.sourcePath));
+      const delBtn = actions.createEl("button", { text: "Delete", cls: "mod-warning" });
+      delBtn.addEventListener("click", () => this.confirmTrashSkill(s));
+    }
+  }
+  renderEnrichers(list) {
+    this.enrichCol.empty();
+    this.enrichCol.createEl("h3", { text: "HTTP enrichers" });
+    this.enrichCol.createDiv({
+      text: `Folder: ${(0, import_obsidian15.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}`,
+      cls: "osint-copilot-registry-hint"
+    });
+    if (list.length === 0) {
+      this.enrichCol.createDiv({ text: "No enricher JSON files found.", cls: "osint-copilot-registry-empty" });
+      return;
+    }
+    for (const e of list) {
+      const row = this.enrichCol.createDiv({ cls: "osint-copilot-registry-row" });
+      const title = row.createEl("div", { cls: "osint-copilot-registry-row-title" });
+      title.setText(e.name);
+      const runnable = isEnricherRunnable(e);
+      row.createEl("code", {
+        text: `${e.id} \xB7 ${e.status} \xB7 ${e.enabled ? "enabled" : "disabled"} \xB7 ${runnable ? "runnable" : "not runnable"}`,
+        cls: "osint-copilot-registry-row-id"
+      });
+      const path = enricherJsonPathFromId(this.host.settings.enrichersFolder, e.id) ?? (0, import_obsidian15.normalizePath)(`${(0, import_obsidian15.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}/${e.id}.json`);
+      const actions = row.createDiv({ cls: "osint-copilot-registry-row-actions" });
+      const openBtn = actions.createEl("button", { text: "Open file" });
+      openBtn.addEventListener("click", () => void this.openPath(path));
+      const delBtn = actions.createEl("button", { text: "Delete", cls: "mod-warning" });
+      delBtn.addEventListener("click", () => this.confirmTrashEnricher(e, path));
+    }
+  }
+  async openPath(vaultPath) {
+    const f = this.app.vault.getAbstractFileByPath((0, import_obsidian15.normalizePath)(vaultPath));
+    if (!(f instanceof import_obsidian15.TFile)) {
+      new import_obsidian15.Notice("File not found: " + vaultPath);
+      return;
+    }
+    await this.app.workspace.getLeaf(false).openFile(f);
+  }
+  confirmTrashSkill(s) {
+    new ConfirmModal(
+      this.app,
+      "Move skill to trash?",
+      `Move "${s.name}" (${s.sourcePath}) to trash?`,
+      () => {
+        void this.trashByPath(s.sourcePath, "skill");
+      },
+      void 0,
+      true,
+      void 0,
+      "Move to trash"
+    ).open();
+  }
+  confirmTrashEnricher(e, path) {
+    new ConfirmModal(
+      this.app,
+      "Move enricher to trash?",
+      `Move enricher "${e.name}" (${path}) to trash?`,
+      () => {
+        void this.trashByPath(path, "enricher");
+      },
+      void 0,
+      true,
+      void 0,
+      "Move to trash"
+    ).open();
+  }
+  async trashByPath(vaultPath, kind) {
+    const norm = (0, import_obsidian15.normalizePath)(vaultPath);
+    const f = this.app.vault.getAbstractFileByPath(norm);
+    if (!(f instanceof import_obsidian15.TFile)) {
+      new import_obsidian15.Notice("File not found.");
+      return;
+    }
+    try {
+      await this.app.fileManager.trashFile(f);
+    } catch (err) {
+      console.error(err);
+      new import_obsidian15.Notice("Could not move file to trash.");
+      return;
+    }
+    if (kind === "skill")
+      this.host.skillRegistry.invalidate();
+    else
+      this.host.enricherRegistry.invalidate();
+    new import_obsidian15.Notice("Moved to trash.");
+    await this.reload();
+  }
+  async createSkillFile(id, name, description) {
+    const rel = skillMarkdownPathFromId(this.host.settings.skillsFolder, id);
+    if (!rel) {
+      new import_obsidian15.Notice("Invalid skill id.");
+      return;
+    }
+    const existing = this.app.vault.getAbstractFileByPath(rel);
+    if (existing) {
+      new import_obsidian15.Notice("A file already exists at " + rel);
+      return;
+    }
+    const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    if (parent)
+      await ensureFolderChain(this.app, parent);
+    const body = `---
+skill_kind: vault
+id: ${id}
+name: ${yamlDoubleQuoted(name)}
+description: ${yamlDoubleQuoted(description)}
+---
+
+Edit the body with instructions used when this skill runs (local agent).
+`;
+    try {
+      await this.app.vault.create(rel, body);
+    } catch (e) {
+      console.error(e);
+      new import_obsidian15.Notice("Could not create skill file.");
+      return;
+    }
+    this.host.skillRegistry.invalidate();
+    new import_obsidian15.Notice("Skill created.");
+    await this.reload();
+  }
+  async createEnricherDraft(id, name) {
+    const rel = enricherJsonPathFromId(this.host.settings.enrichersFolder, id);
+    if (!rel) {
+      new import_obsidian15.Notice("Invalid enricher id.");
+      return;
+    }
+    const existing = this.app.vault.getAbstractFileByPath(rel);
+    if (existing) {
+      new import_obsidian15.Notice("A file already exists at " + rel);
+      return;
+    }
+    const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    if (parent)
+      await ensureFolderChain(this.app, parent);
+    const json = buildDraftEnricherJson(id, name);
+    try {
+      await this.app.vault.create(rel, json);
+    } catch (e) {
+      console.error(e);
+      new import_obsidian15.Notice("Could not create enricher file.");
+      return;
+    }
+    this.host.enricherRegistry.invalidate();
+    new import_obsidian15.Notice("Enricher draft created.");
+    await this.reload();
+  }
+  async onClose() {
+    this.containerEl.children[1].empty();
+  }
+};
+
+// src/services/custom-types-service.ts
+var import_obsidian16 = require("obsidian");
+var CustomTypesService = class {
+  constructor(app) {
+    this.customSchemas = /* @__PURE__ */ new Map();
+    this.app = app;
+    this.vault = app.vault;
+  }
+  async initialize() {
+    await this.ensureConfigDir();
+    await this.loadCustomTypes();
+  }
+  async ensureConfigDir() {
+    try {
+      const norm = (0, import_obsidian16.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
+      const parts = norm.split("/").filter(Boolean);
+      let acc = "";
+      for (const p of parts) {
+        acc = acc ? `${acc}/${p}` : p;
+        if (!this.vault.getAbstractFileByPath(acc)) {
+          await this.vault.createFolder(acc);
+        }
+      }
+    } catch (error) {
+      console.error("[CustomTypesService] Failed to create config folder:", error);
+    }
+  }
+  async loadCustomTypes() {
+    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
+    if (await this.vault.adapter.exists(configPath)) {
+      try {
+        const content = await this.vault.adapter.read(configPath);
+        const config = JSON.parse(content);
+        this.customSchemas.clear();
+        if (config.schemas && Array.isArray(config.schemas)) {
+          for (const schema4 of config.schemas) {
+            if (schema4.name) {
+              this.customSchemas.set(schema4.name, schema4);
+              ftmSchemaService.registerSchema(schema4);
+            }
+          }
+        }
+        console.debug(`[CustomTypesService] Loaded ${this.customSchemas.size} custom entity types.`);
+      } catch (e) {
+        console.error("[CustomTypesService] Failed to load custom types:", e);
+        new import_obsidian16.Notice("Failed to load custom entity types config.");
+      }
+    }
+  }
+  async saveCustomTypes() {
+    await this.ensureConfigDir();
+    const configPath = `${CUSTOM_TYPES_CONFIG_DIR}/${CUSTOM_TYPES_FILE_NAME}`;
+    const config = {
+      schemas: Array.from(this.customSchemas.values())
+    };
+    try {
+      await this.vault.adapter.write(configPath, JSON.stringify(config, null, 2));
+    } catch (e) {
+      console.error("[CustomTypesService] Failed to save custom types:", e);
+      new import_obsidian16.Notice("Failed to save custom entity types config.");
+    }
+  }
+  async addCustomType(schema4) {
+    if (!schema4.name)
+      throw new Error("Schema name is required");
+    this.customSchemas.set(schema4.name, schema4);
+    ftmSchemaService.registerSchema(schema4);
+    await this.saveCustomTypes();
+    new import_obsidian16.Notice(`Custom entity type '${schema4.label}' added.`);
+  }
+  async updateCustomType(schema4) {
+    if (!schema4.name || !this.customSchemas.has(schema4.name)) {
+      throw new Error(`Custom type ${schema4.name} does not exist`);
+    }
+    await this.addCustomType(schema4);
+  }
+  async deleteCustomType(name) {
+    if (this.customSchemas.delete(name)) {
+      await this.saveCustomTypes();
+      new import_obsidian16.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
+    }
+  }
+  getCustomSchemas() {
+    return Array.from(this.customSchemas.values());
+  }
+  getCustomSchema(name) {
+    return this.customSchemas.get(name);
+  }
+};
+
+// src/services/orchestration-service.ts
+var import_obsidian18 = require("obsidian");
+
+// src/skills/skill-runtime.ts
+var SKILL_PLANNER_PREFIX = "SKILL_";
+function parseVaultSkillPlannerTool(tool) {
+  if (!tool.startsWith(SKILL_PLANNER_PREFIX))
+    return null;
+  const id = tool.slice(SKILL_PLANNER_PREFIX.length).trim();
+  return id || null;
+}
+
 // src/services/enrichers/enricher-executor.ts
+var import_obsidian17 = require("obsidian");
 var ENRICHER_INVOCATION_SPACING_MS = 500;
 function pathIsUnderPrefix(path, prefix) {
-  const p = (0, import_obsidian15.normalizePath)(path);
-  const pre = (0, import_obsidian15.normalizePath)(prefix);
+  const p = (0, import_obsidian17.normalizePath)(path);
+  const pre = (0, import_obsidian17.normalizePath)(prefix);
   return p === pre || p.startsWith(pre + "/");
 }
 async function readVaultCredential(vault, credentialsFolder, vaultRelativePath) {
-  const root = (0, import_obsidian15.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+  const root = (0, import_obsidian17.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
   const rel = normalizeCredentialsRelativePath(vaultRelativePath);
   if (!rel) {
     throw new Error(
       `Invalid vault credential path "${vaultRelativePath}". Use a path relative to **Settings \u2192 OSINT Copilot \u2192 Credentials folder** (no leading /, no .. segments), e.g. leakcheck/api-key.txt.`
     );
   }
-  const full = (0, import_obsidian15.normalizePath)(`${root}/${rel}`);
+  const full = (0, import_obsidian17.normalizePath)(`${root}/${rel}`);
   if (!pathIsUnderPrefix(full, root))
     throw new Error("Credential path escapes credentials folder");
   const file = vault.getAbstractFileByPath(full);
-  if (!(file instanceof import_obsidian15.TFile)) {
+  if (!(file instanceof import_obsidian17.TFile)) {
     throw new Error(
       `Credential file not found in vault at: ${full}
 (credentials folder "${root}" + "${rel}"). Check that **Credentials folder** in plugin settings matches where chat **Apply** wrote the file, and that the note exists in this vault.`
@@ -26059,7 +26533,7 @@ async function executeEnricherHttp(spec, query, attachmentsContext, signal, vaul
       const urlStr = url.toString();
       const postBody = method === "POST" ? body : void 0;
       const contentType = method === "POST" && postBody ? postBody.trimStart().startsWith("{") || postBody.trimStart().startsWith("[") ? "application/json" : "text/plain; charset=utf-8" : void 0;
-      const runRequest = () => (0, import_obsidian15.requestUrl)({
+      const runRequest = () => (0, import_obsidian17.requestUrl)({
         url: urlStr,
         method,
         headers: strHeaders,
@@ -26180,7 +26654,7 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
   "version": "${AGENT_TURN_SCHEMA_VERSION}",
   "answer_markdown": "string \u2014 Markdown answer for the user",
   "retrieval_hits": [ { "path": "vault-relative/path.md", "snippet": "optional short excerpt" } ],
-  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...] } ],
+  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...], "updates": [ { "type": "Person", "current_label": "Alice", "new_properties": { "notes": "..." } } ] } ],
   "custom_vault_operations": [
     { "action": "upsert_skill", "id": "skill_id", "name": "Title", "description": "Planner description", "body": "Markdown body instructions for the skill" },
     { "action": "delete_skill", "id": "skill_id" },
@@ -26196,6 +26670,10 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
 
 Rules for graph_operations:
 - Use the same structure as OSINT graph extraction: entities have "type" and "properties"; connections use numeric "from"/"to" indices into the entities array in the SAME operation object, plus "relationship" (UPPER_SNAKE_CASE).
+- Optional **updates** (same operation object or alongside creates): array of { "type", "current_label", "new_properties" } to **merge** fields onto an existing entity after the user applies graph changes. **current_label** should match how the entity is labeled in the vault/graph; **type** disambiguates if multiple entities share a label. Omit updates when only creating new nodes/links.
+- **action** may be "create" (default) or "update"; "update" still uses **updates** for property merges \u2014 do not rely on updates alone without a clear target label (and type when needed).
+- **Graph / map / timeline:** New entities appear in the **default** graph workspace until the user adds them to another workspace in the graph UI. **Timeline** shows notes whose YAML **type** is Event (any casing) with at least one usable date in properties: **start_date**, **first_seen**, **date**, **published**, **first_observed**, or **modified** (ISO-8601 or YYYY-MM-DD). **Map** shows **Location** and **Address** entities that have **latitude** and **longitude** in properties (numeric or parseable strings); without both, no map pin.
+- For **FTM / OIDSF** schema types, use the exact **type** string expected by the vault schema (same as graph extraction); the apply path supports FTM-shaped creates when the user confirms.
 - Only include graph_operations when the user wants new intelligence mapped into the graph; otherwise use an empty array.
 - Use your local agent skills and tools (file search, codebase/vault tools, web if available) to search the user's vault / context before answering.
 - retrieval_hits should list the main vault note paths you relied on (if any).
@@ -26717,6 +27195,23 @@ function aiOperationsToGraphCommands(operations) {
         );
       });
     }
+    if (op.updates?.length) {
+      for (const u of op.updates) {
+        if (!u || typeof u !== "object")
+          continue;
+        if (!u.current_label || typeof u.current_label !== "string")
+          continue;
+        if (!u.new_properties || typeof u.new_properties !== "object")
+          continue;
+        commands.push(
+          `@@update_entity ${JSON.stringify({
+            type: u.type,
+            current_label: u.current_label,
+            new_properties: u.new_properties
+          })}`
+        );
+      }
+    }
     if (op.connections) {
       op.connections.forEach((conn) => {
         let fromLabel = conn.from_label;
@@ -26750,6 +27245,28 @@ var ORCHESTRATION_TOOL_DISPLAY_NAMES = {
   LOCAL_VAULT: "Local Search",
   EXTRACT_TO_GRAPH: "Extract to graph"
 };
+function findEntityForGraphUpdate(em, data) {
+  if (data.id) {
+    const byId = em.getEntity(data.id);
+    if (byId)
+      return byId;
+  }
+  if (data.type && data.current_label) {
+    const wantType = String(data.type).trim().toLowerCase();
+    const wantLabel = data.current_label.trim().toLowerCase();
+    for (const e of em.getAllEntities()) {
+      if (String(e.type).trim().toLowerCase() !== wantType)
+        continue;
+      const el = e.label != null ? String(e.label).trim().toLowerCase() : "";
+      if (el === wantLabel)
+        return e;
+    }
+  }
+  if (data.current_label) {
+    return em.findEntityByLabel(data.current_label);
+  }
+  return void 0;
+}
 var _OrchestrationService = class _OrchestrationService {
   constructor(plugin) {
     this.plugin = plugin;
@@ -27051,7 +27568,7 @@ ${msg}`,
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian16.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian18.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -27401,6 +27918,26 @@ ${r.summary || ""}
               lines.push(`\u2713 Removed entity: **${name}**`);
             }
           }
+        } else if (command.startsWith("@@update_entity")) {
+          const jsonStr = command.replace("@@update_entity", "").trim();
+          const data = JSON.parse(jsonStr);
+          if (data.new_properties && typeof data.new_properties === "object") {
+            const entity = findEntityForGraphUpdate(this.plugin.entityManager, data);
+            if (!entity) {
+              lines.push(
+                `\u26A0 Skipped update: no entity matched id/type+label/label (${JSON.stringify({ id: data.id, type: data.type, current_label: data.current_label })})`
+              );
+            } else if (entity.filePath && this.plugin.vaultLockService?.isPathLocked(entity.filePath)) {
+              lines.push(`\u26A0 Skipped update (locked): **${entity.label}**`);
+            } else {
+              const updated = await this.plugin.entityManager.updateEntity(entity.id, data.new_properties);
+              if (updated) {
+                lines.push(`\u2713 Updated **${updated.label}** (${String(updated.type)})`);
+              } else {
+                lines.push(`\u26A0 Update failed for **${entity.label}**`);
+              }
+            }
+          }
         } else if (command.startsWith("@@create_link")) {
           const jsonStr = command.replace("@@create_link", "").trim();
           const data = JSON.parse(jsonStr);
@@ -27461,7 +27998,7 @@ ${r.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian16.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian18.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -27470,54 +28007,64 @@ ${r.summary || ""}
   async executeGraphModifications(commands, execOptions) {
     if (!commands || commands.length === 0)
       return;
-    const checkboxItems = [];
-    commands.forEach((cmd, idx) => {
-      let labelText = `\u2753 Unknown: ${cmd}`;
-      try {
-        if (cmd.startsWith("@@create_entity")) {
-          const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
-          const name = data.label || getEntityLabel(data.type, data.properties || {});
-          labelText = `\u2795 Create ${data.type || "Entity"}: **${name}**`;
-        } else if (cmd.startsWith("@@delete_entity")) {
-          const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
-          const entity = this.plugin.entityManager.getEntity(data.id);
-          const name = entity ? entity.label : `ID: ${data.id}`;
-          labelText = `\u{1F5D1}\uFE0F Delete Entity: **${name}**`;
-        } else if (cmd.startsWith("@@create_link")) {
-          const data = JSON.parse(cmd.replace("@@create_link", "").trim());
-          const fromEnt = this.plugin.entityManager.getEntity(data.from);
-          const toEnt = this.plugin.entityManager.getEntity(data.to);
-          const fromName = fromEnt ? fromEnt.label : data.from;
-          const toName = toEnt ? toEnt.label : data.to;
-          labelText = `\u{1F517} Connect: [**${fromName}**] \u2500\u2500(${data.relationship})\u2500\u2500> [**${toName}**]`;
-        } else if (cmd.startsWith("@@delete_link")) {
-          const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
-          labelText = `\u2702\uFE0F Delete Link (ID: ${data.id})`;
+    let cmdsToExecute;
+    if (execOptions?.skipConfirmation) {
+      cmdsToExecute = commands;
+    } else {
+      const checkboxItems = [];
+      commands.forEach((cmd, idx) => {
+        let labelText = `\u2753 Unknown: ${cmd}`;
+        try {
+          if (cmd.startsWith("@@create_entity")) {
+            const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
+            const name = data.label || getEntityLabel(data.type, data.properties || {});
+            labelText = `\u2795 Create ${data.type || "Entity"}: **${name}**`;
+          } else if (cmd.startsWith("@@delete_entity")) {
+            const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
+            const entity = this.plugin.entityManager.getEntity(data.id);
+            const name = entity ? entity.label : `ID: ${data.id}`;
+            labelText = `\u{1F5D1}\uFE0F Delete Entity: **${name}**`;
+          } else if (cmd.startsWith("@@update_entity")) {
+            const data = JSON.parse(cmd.replace("@@update_entity", "").trim());
+            const entity = findEntityForGraphUpdate(this.plugin.entityManager, data);
+            const name = entity ? entity.label : data.current_label || data.id || "?";
+            labelText = `\u270F\uFE0F Update entity: **${name}**`;
+          } else if (cmd.startsWith("@@create_link")) {
+            const data = JSON.parse(cmd.replace("@@create_link", "").trim());
+            const fromEnt = this.plugin.entityManager.getEntity(data.from);
+            const toEnt = this.plugin.entityManager.getEntity(data.to);
+            const fromName = fromEnt ? fromEnt.label : data.from;
+            const toName = toEnt ? toEnt.label : data.to;
+            labelText = `\u{1F517} Connect: [**${fromName}**] \u2500\u2500(${data.relationship})\u2500\u2500> [**${toName}**]`;
+          } else if (cmd.startsWith("@@delete_link")) {
+            const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
+            labelText = `\u2702\uFE0F Delete Link (ID: ${data.id})`;
+          }
+        } catch {
+          labelText = `\u26A0\uFE0F Raw Data: ${cmd}`;
         }
-      } catch (e) {
-        labelText = `\u26A0\uFE0F Raw Data: ${cmd}`;
+        checkboxItems.push({ label: labelText, value: idx.toString(), checked: true });
+      });
+      const confirmedValues = await new Promise((resolve) => {
+        new ConfirmModal(
+          this.plugin.app,
+          "Confirm Graph Modifications",
+          `The agent wants to make the following changes. Uncheck those you wish to ignore:`,
+          (selectedValues) => resolve(selectedValues),
+          () => resolve(void 0),
+          false,
+          checkboxItems
+        ).open();
+      });
+      if (!confirmedValues) {
+        new import_obsidian18.Notice("Graph modifications cancelled by user.");
+        return;
       }
-      checkboxItems.push({ label: labelText, value: idx.toString(), checked: true });
-    });
-    const confirmedValues = await new Promise((resolve) => {
-      new ConfirmModal(
-        this.plugin.app,
-        "Confirm Graph Modifications",
-        `The agent wants to make the following changes. Uncheck those you wish to ignore:`,
-        (selectedValues) => resolve(selectedValues),
-        () => resolve(void 0),
-        false,
-        checkboxItems
-      ).open();
-    });
-    if (!confirmedValues) {
-      new import_obsidian16.Notice("Graph modifications cancelled by user.");
-      return;
-    }
-    const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
-    if (cmdsToExecute.length === 0) {
-      new import_obsidian16.Notice("No graph modifications selected.");
-      return;
+      cmdsToExecute = commands.filter((_, idx) => confirmedValues.includes(idx.toString()));
+      if (cmdsToExecute.length === 0) {
+        new import_obsidian18.Notice("No graph modifications selected.");
+        return;
+      }
     }
     const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, {
       showErrorNotices: true,
@@ -27525,7 +28072,8 @@ ${r.summary || ""}
     });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian16.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian18.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      await this.plugin.refreshOpenInsightViews();
     }
   }
   async generateFinalResponse(plan, toolResults, query, graphState, conversationMemory) {
@@ -27596,7 +28144,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian16.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian18.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -27618,7 +28166,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -27632,7 +28180,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian17.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian19.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -27659,7 +28207,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian17.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian19.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -27686,7 +28234,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian17.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian19.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -27716,7 +28264,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian17.requestUrl)({ url });
+      const response = await (0, import_obsidian19.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -27750,7 +28298,7 @@ var UpdaterService = class {
 };
 
 // src/services/vault-prompt-loader.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 function parseMarkdownWithFrontmatter(raw) {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed.startsWith("---")) {
@@ -27804,10 +28352,10 @@ var _VaultPromptLoader = class _VaultPromptLoader {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian18.normalizePath)(this.getPromptsRoot().trim());
+      const root = (0, import_obsidian20.normalizePath)(this.getPromptsRoot().trim());
       if (!root)
         return;
-      const norm = (0, import_obsidian18.normalizePath)(p);
+      const norm = (0, import_obsidian20.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.invalidateAll();
       }
@@ -27819,10 +28367,10 @@ var _VaultPromptLoader = class _VaultPromptLoader {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian18.normalizePath)(this.getPromptsRoot().trim());
+          const root = (0, import_obsidian20.normalizePath)(this.getPromptsRoot().trim());
           if (!root)
             return;
-          const op = (0, import_obsidian18.normalizePath)(oldPath);
+          const op = (0, import_obsidian20.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.invalidateAll();
           }
@@ -27835,15 +28383,15 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian18.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
+    return (0, import_obsidian20.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
-    const path = (0, import_obsidian18.normalizePath)(`${this.root()}/${relativePath}`);
+    const path = (0, import_obsidian20.normalizePath)(`${this.root()}/${relativePath}`);
     const hit = this.cache.get(path);
     if (hit !== void 0)
       return hit;
     const f = this.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof import_obsidian18.TFile)) {
+    if (!(f instanceof import_obsidian20.TFile)) {
       this.cache.set(path, "");
       return null;
     }
@@ -27882,13 +28430,13 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   /** Recent text files under prompts/logs/ for unified-agent context (newest first, capped). */
   async getRecentLogsAugmentation() {
-    const logsPath = (0, import_obsidian18.normalizePath)(`${this.root()}/logs`);
+    const logsPath = (0, import_obsidian20.normalizePath)(`${this.root()}/logs`);
     const folder = this.app.vault.getAbstractFileByPath(logsPath);
-    if (!(folder instanceof import_obsidian18.TFolder))
+    if (!(folder instanceof import_obsidian20.TFolder))
       return "";
     const files = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian18.TFile))
+      if (!(child instanceof import_obsidian20.TFile))
         continue;
       const ext = (child.extension || "").toLowerCase();
       if (!_VaultPromptLoader.LOGS_EXTENSIONS.has(ext))
@@ -27942,13 +28490,13 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   /** List agent files under agents/ (for future UI). */
   async listAgents() {
-    const agentsPath = (0, import_obsidian18.normalizePath)(`${this.root()}/agents`);
+    const agentsPath = (0, import_obsidian20.normalizePath)(`${this.root()}/agents`);
     const folder = this.app.vault.getAbstractFileByPath(agentsPath);
-    if (!(folder instanceof import_obsidian18.TFolder))
+    if (!(folder instanceof import_obsidian20.TFolder))
       return [];
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian18.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian20.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -27981,7 +28529,7 @@ _VaultPromptLoader.LOGS_AUGMENT_MAX_FILES = 10;
 var VaultPromptLoader = _VaultPromptLoader;
 
 // src/services/vault-prompt-bootstrap.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/data/vault-prompt-defaults.ts
 var VAULT_PROMPT_DEFAULT_FILES = [
@@ -28093,11 +28641,11 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian19.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
+    const root = (0, import_obsidian21.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
-      const path = (0, import_obsidian19.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian21.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian19.TFile)
+      if (existing instanceof import_obsidian21.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -28106,7 +28654,7 @@ var VaultPromptBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian19.normalizePath)(path);
+    const norm = (0, import_obsidian21.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -28126,7 +28674,7 @@ var VaultPromptBootstrapService = class {
 };
 
 // src/task-agents/task-agent-registry.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/task-agents/normalize-vault-path.ts
 function normalizeVaultPath(p) {
@@ -28204,10 +28752,10 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+      const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian20.normalizePath)(p);
+      const norm = (0, import_obsidian22.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -28219,10 +28767,10 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+          const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian20.normalizePath)(oldPath);
+          const op = (0, import_obsidian22.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -28236,15 +28784,15 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian20.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+    const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian20.TFolder)) {
+    if (!(folder instanceof import_obsidian22.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian20.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian22.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -28268,11 +28816,11 @@ var TaskAgentRegistry = class {
 };
 
 // src/task-agents/context-assembler.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 async function assembleTaskAgentContext(app, contextRoots, pluginIndex, maxNotes, maxChars, query) {
   if (contextRoots.length === 0)
     return "";
-  const roots = contextRoots.map((r) => (0, import_obsidian21.normalizePath)(r.trim())).filter(Boolean);
+  const roots = contextRoots.map((r) => (0, import_obsidian23.normalizePath)(r.trim())).filter(Boolean);
   const queryTerms = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   const candidates = [];
   for (const [, note] of pluginIndex) {
@@ -28452,7 +29000,7 @@ function parseVaultFilesJson(raw) {
 }
 
 // src/task-agents/write-applier.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 function buildNoteContent(entry) {
   const fm = (entry.frontmatter || "").trim();
   if (fm) {
@@ -28475,7 +29023,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
       result.errors.push("Skipping entry: missing path");
       continue;
     }
-    const rel = (0, import_obsidian22.normalizePath)(file.path.replace(/\\/g, "/"));
+    const rel = (0, import_obsidian24.normalizePath)(file.path.replace(/\\/g, "/"));
     if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
       result.errors.push(`Not allowed: ${rel}`);
       continue;
@@ -28487,7 +29035,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
     const content = buildNoteContent(file);
     try {
       const existing = app.vault.getAbstractFileByPath(rel);
-      if (existing instanceof import_obsidian22.TFile) {
+      if (existing instanceof import_obsidian24.TFile) {
         await app.vault.modify(existing, content);
         result.updated.push(rel);
       } else if (existing) {
@@ -28519,10 +29067,10 @@ function formatApplyNotice(res) {
   if (res.errors.length)
     parts.push(`Errors: ${res.errors.length}`);
   if (parts.length === 0) {
-    new import_obsidian22.Notice("Task agent: no files applied.");
+    new import_obsidian24.Notice("Task agent: no files applied.");
     return;
   }
-  new import_obsidian22.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
+  new import_obsidian24.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
   if (res.errors.length) {
     console.warn("[TaskAgent] apply errors:", res.errors);
   }
@@ -28635,7 +29183,7 @@ ${paths.map((p) => `- \`${p}\``).join("\n")}`;
 };
 
 // src/task-agents/task-agent-bootstrap.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/data/task-agent-defaults.ts
 var TASK_AGENT_DEFAULT_FILES = [
@@ -28767,13 +29315,13 @@ var TaskAgentBootstrapService = class {
     this.getTaskAgentsRoot = getTaskAgentsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian23.normalizePath)(
+    const root = (0, import_obsidian25.normalizePath)(
       this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
-      const path = (0, import_obsidian23.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian25.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian23.TFile)
+      if (existing instanceof import_obsidian25.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -28782,7 +29330,7 @@ var TaskAgentBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian23.normalizePath)(path);
+    const norm = (0, import_obsidian25.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -28814,7 +29362,7 @@ function isTaskAgentRunnable(manifest, settings) {
 }
 
 // src/skills/skill-registry.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 
 // src/skills/parse-skill-markdown.ts
 function parseSkillMarkdown(raw, sourcePath) {
@@ -28852,10 +29400,10 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+      const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian24.normalizePath)(p);
+      const norm = (0, import_obsidian26.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -28867,10 +29415,10 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+          const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian24.normalizePath)(oldPath);
+          const op = (0, import_obsidian26.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -28884,15 +29432,15 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian24.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian24.TFolder)) {
+    if (!(folder instanceof import_obsidian26.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian24.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian26.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -28916,7 +29464,7 @@ var SkillRegistry = class {
 };
 
 // src/skills/skill-bootstrap.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian27 = require("obsidian");
 
 // src/data/skill-defaults.ts
 var SKILL_DEFAULT_FILES = [
@@ -28964,11 +29512,11 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian25.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian27.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
-      const path = (0, import_obsidian25.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian27.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian25.TFile)
+      if (existing instanceof import_obsidian27.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -28977,7 +29525,7 @@ var SkillBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian25.normalizePath)(path);
+    const norm = (0, import_obsidian27.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -29037,36 +29585,36 @@ async function getChatRuntimeAvailability(plugin, forceRefresh = false) {
 }
 
 // src/services/custom-vault-writer.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian28 = require("obsidian");
 function pathIsUnderPrefix2(path, prefix) {
-  const p = (0, import_obsidian26.normalizePath)(path);
-  const pre = (0, import_obsidian26.normalizePath)(prefix);
+  const p = (0, import_obsidian28.normalizePath)(path);
+  const pre = (0, import_obsidian28.normalizePath)(prefix);
   return p === pre || p.startsWith(pre + "/");
 }
 function assertPathUnderCustomRoot(resolvedPath, purpose) {
-  const p = (0, import_obsidian26.normalizePath)(resolvedPath);
-  const root = (0, import_obsidian26.normalizePath)(OSINT_COPILOT_CUSTOM_ROOT);
+  const p = (0, import_obsidian28.normalizePath)(resolvedPath);
+  const root = (0, import_obsidian28.normalizePath)(OSINT_COPILOT_CUSTOM_ROOT);
   if (!pathIsUnderPrefix2(p, root)) {
     throw new Error(`${purpose}: path must stay under ${root}`);
   }
 }
 function skillsRoot(plugin) {
-  return (0, import_obsidian26.normalizePath)(plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+  return (0, import_obsidian28.normalizePath)(plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
 }
 function credentialsRoot(plugin) {
-  return (0, import_obsidian26.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+  return (0, import_obsidian28.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
 }
 function enrichersRoot(plugin) {
-  return (0, import_obsidian26.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+  return (0, import_obsidian28.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
 }
 function scriptsRoot(plugin) {
-  return (0, import_obsidian26.normalizePath)(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
+  return (0, import_obsidian28.normalizePath)(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
 }
 function resolveSkillMarkdownPath(plugin, skillId) {
   const id = parseSkillIdForVault(skillId);
   if (!id || id === "readme")
     throw new Error("Invalid skill id");
-  const file = (0, import_obsidian26.normalizePath)(`${skillsRoot(plugin)}/${id}.md`);
+  const file = (0, import_obsidian28.normalizePath)(`${skillsRoot(plugin)}/${id}.md`);
   assertPathUnderCustomRoot(file, "Skill file");
   return file;
 }
@@ -29075,7 +29623,7 @@ function resolveCredentialFilePath(plugin, relativePath) {
   if (!rel)
     throw new Error("Invalid credentials relative path");
   const root = credentialsRoot(plugin);
-  const file = (0, import_obsidian26.normalizePath)(`${root}/${rel}`);
+  const file = (0, import_obsidian28.normalizePath)(`${root}/${rel}`);
   assertPathUnderCustomRoot(file, "Credentials file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Credential path escapes credentials folder");
@@ -29088,7 +29636,7 @@ function resolveEnricherJsonPath(plugin, enricherId) {
     throw new Error("Invalid enricher id");
   const root = enrichersRoot(plugin);
   assertPathUnderCustomRoot(root, "Enrichers root");
-  const file = (0, import_obsidian26.normalizePath)(`${root}/${id}.json`);
+  const file = (0, import_obsidian28.normalizePath)(`${root}/${id}.json`);
   assertPathUnderCustomRoot(file, "Enricher file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Enricher path escapes enrichers folder");
@@ -29102,7 +29650,7 @@ function resolveScriptFilePath(plugin, relativePath) {
   }
   const root = scriptsRoot(plugin);
   assertPathUnderCustomRoot(root, "Scripts root");
-  const file = (0, import_obsidian26.normalizePath)(`${root}/${rel}`);
+  const file = (0, import_obsidian28.normalizePath)(`${root}/${rel}`);
   assertPathUnderCustomRoot(file, "Script file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Script path escapes scripts folder");
@@ -29115,8 +29663,8 @@ The unified agent can propose **create / update / delete** for text files in thi
 
 Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
 `;
-async function ensureFolderChain(app, filePath) {
-  const parts = (0, import_obsidian26.normalizePath)(filePath).split("/").slice(0, -1);
+async function ensureFolderChain2(app, filePath) {
+  const parts = (0, import_obsidian28.normalizePath)(filePath).split("/").slice(0, -1);
   let current = "";
   for (const p of parts) {
     current = current ? `${current}/${p}` : p;
@@ -29152,10 +29700,10 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "upsert_skill": {
           const path = resolveSkillMarkdownPath(plugin, op.id);
           skillsTouched = true;
-          await ensureFolderChain(plugin.app, path);
+          await ensureFolderChain2(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
           const body = buildSkillMarkdown(op);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.modify(existing, body);
           } else {
             await plugin.app.vault.create(path, body);
@@ -29167,7 +29715,7 @@ async function applyCustomVaultOperations(plugin, ops) {
           const path = resolveSkillMarkdownPath(plugin, op.id);
           skillsTouched = true;
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29175,9 +29723,9 @@ async function applyCustomVaultOperations(plugin, ops) {
         }
         case "put_credentials": {
           const path = resolveCredentialFilePath(plugin, op.relativePath);
-          await ensureFolderChain(plugin.app, path);
+          await ensureFolderChain2(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.modify(existing, op.content);
           } else {
             await plugin.app.vault.create(path, op.content);
@@ -29188,7 +29736,7 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "delete_credentials": {
           const path = resolveCredentialFilePath(plugin, op.relativePath);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29197,10 +29745,10 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "upsert_enricher": {
           const path = resolveEnricherJsonPath(plugin, op.id);
           enrichersTouched = true;
-          await ensureFolderChain(plugin.app, path);
+          await ensureFolderChain2(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
           const body = JSON.stringify(op.spec, null, 2);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.modify(existing, body);
           } else {
             await plugin.app.vault.create(path, body);
@@ -29212,7 +29760,7 @@ async function applyCustomVaultOperations(plugin, ops) {
           const path = resolveEnricherJsonPath(plugin, op.id);
           enrichersTouched = true;
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29220,9 +29768,9 @@ async function applyCustomVaultOperations(plugin, ops) {
         }
         case "upsert_script": {
           const path = resolveScriptFilePath(plugin, op.relativePath);
-          await ensureFolderChain(plugin.app, path);
+          await ensureFolderChain2(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.modify(existing, op.content);
           } else {
             await plugin.app.vault.create(path, op.content);
@@ -29233,7 +29781,7 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "delete_script": {
           const path = resolveScriptFilePath(plugin, op.relativePath);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian26.TFile) {
+          if (existing instanceof import_obsidian28.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29260,7 +29808,7 @@ async function ensureCredentialsFolder(plugin) {
   const f = plugin.app.vault.getAbstractFileByPath(root);
   if (!f) {
     await plugin.app.vault.createFolder(root);
-  } else if (!(f instanceof import_obsidian26.TFolder)) {
+  } else if (!(f instanceof import_obsidian28.TFolder)) {
     console.warn("[custom-vault-writer] credentials path is not a folder:", root);
   }
 }
@@ -29270,13 +29818,13 @@ async function ensureScriptsFolder(plugin) {
   const f = plugin.app.vault.getAbstractFileByPath(root);
   if (!f) {
     await plugin.app.vault.createFolder(root);
-  } else if (!(f instanceof import_obsidian26.TFolder)) {
+  } else if (!(f instanceof import_obsidian28.TFolder)) {
     console.warn("[custom-vault-writer] scripts path is not a folder:", root);
   }
 }
 async function ensureScriptsDefaultsInstalled(plugin) {
   await ensureScriptsFolder(plugin);
-  const readme = (0, import_obsidian26.normalizePath)(`${scriptsRoot(plugin)}/README.md`);
+  const readme = (0, import_obsidian28.normalizePath)(`${scriptsRoot(plugin)}/README.md`);
   if (!plugin.app.vault.getAbstractFileByPath(readme)) {
     await plugin.app.vault.create(readme, DEFAULT_SCRIPTS_README);
   }
@@ -29583,7 +30131,7 @@ function renderScriptSideBySideTable(parent, rows, opts) {
 }
 
 // src/services/vault-lock-service.ts
-var import_obsidian27 = require("obsidian");
+var import_obsidian29 = require("obsidian");
 var VaultLockService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -29592,12 +30140,12 @@ var VaultLockService = class {
   /** Call after loadSettings(). */
   initializeFromSettings() {
     const paths = this.plugin.settings.lockedVaultPaths ?? [];
-    this.locked = new Set(paths.map((p) => (0, import_obsidian27.normalizePath)(p)));
+    this.locked = new Set(paths.map((p) => (0, import_obsidian29.normalizePath)(p)));
   }
   isPathLocked(path) {
     if (!path)
       return false;
-    return this.locked.has((0, import_obsidian27.normalizePath)(path));
+    return this.locked.has((0, import_obsidian29.normalizePath)(path));
   }
   /**
    * Add paths to the lock set. Returns count of newly added paths.
@@ -29607,7 +30155,7 @@ var VaultLockService = class {
     for (const p of paths) {
       if (!p)
         continue;
-      const np = (0, import_obsidian27.normalizePath)(p);
+      const np = (0, import_obsidian29.normalizePath)(p);
       if (!this.locked.has(np)) {
         this.locked.add(np);
         n++;
@@ -29618,7 +30166,7 @@ var VaultLockService = class {
     return n;
   }
   unlockPath(path) {
-    const np = (0, import_obsidian27.normalizePath)(path);
+    const np = (0, import_obsidian29.normalizePath)(path);
     if (!this.locked.has(np))
       return;
     this.locked.delete(np);
@@ -29638,11 +30186,11 @@ var VaultLockService = class {
   }
   /** Migrate lock entry when a file is renamed (same as Note Locker). */
   onVaultRename(_file, oldPath) {
-    const op = (0, import_obsidian27.normalizePath)(oldPath);
+    const op = (0, import_obsidian29.normalizePath)(oldPath);
     if (!this.locked.has(op))
       return;
     this.locked.delete(op);
-    this.locked.add((0, import_obsidian27.normalizePath)(_file.path));
+    this.locked.add((0, import_obsidian29.normalizePath)(_file.path));
     this.persist();
   }
   persist() {
@@ -29652,7 +30200,7 @@ var VaultLockService = class {
 };
 
 // src/services/schema-bootstrap-service.ts
-var import_obsidian28 = require("obsidian");
+var import_obsidian30 = require("obsidian");
 
 // src/data/schema-vault-defaults.ts
 var SCHEMA_VAULT_DEFAULT_FILES = [
@@ -29960,11 +30508,11 @@ var SchemaBootstrapService = class {
     this.getEntityBasePath = getEntityBasePath;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian28.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
+    const root = (0, import_obsidian30.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
     for (const def of SCHEMA_VAULT_DEFAULT_FILES) {
-      const path = (0, import_obsidian28.normalizePath)(`${root}/${def.path}`);
+      const path = (0, import_obsidian30.normalizePath)(`${root}/${def.path}`);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian28.TFile)
+      if (existing instanceof import_obsidian30.TFile)
         continue;
       const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
       if (parent)
@@ -29973,7 +30521,7 @@ var SchemaBootstrapService = class {
     }
   }
   async ensureFolderChain(path) {
-    const norm = (0, import_obsidian28.normalizePath)(path);
+    const norm = (0, import_obsidian30.normalizePath)(path);
     const parts = norm.split("/").filter(Boolean);
     let acc = "";
     for (const p of parts) {
@@ -29993,7 +30541,7 @@ var SchemaBootstrapService = class {
 };
 
 // src/services/schema-catalog-service.ts
-var import_obsidian29 = require("obsidian");
+var import_obsidian31 = require("obsidian");
 
 // src/services/schema-definition-loader.ts
 function normalizeProperties(raw) {
@@ -30149,12 +30697,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultStix2() {
-    const base = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
+    const base = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "stix2");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "stix2");
   }
   async loadVaultMitre() {
-    const base = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
+    const base = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "mitre");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "mitre");
   }
@@ -30195,12 +30743,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultUser() {
-    const dir = (0, import_obsidian29.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
+    const dir = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
     const folder = this.app.vault.getAbstractFileByPath(dir);
-    if (!folder || !(folder instanceof import_obsidian29.TFolder))
+    if (!folder || !(folder instanceof import_obsidian31.TFolder))
       return;
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian29.TFile))
+      if (!(child instanceof import_obsidian31.TFile))
         continue;
       const lower = child.name.toLowerCase();
       if (!lower.endsWith(".yaml") && !lower.endsWith(".yml"))
@@ -30349,7 +30897,7 @@ function mergeEnabledFamilies(partial) {
 }
 
 // src/services/enrichers/enricher-registry.ts
-var import_obsidian30 = require("obsidian");
+var import_obsidian32 = require("obsidian");
 var EnricherRegistry = class {
   constructor(app, getFolder) {
     this.app = app;
@@ -30358,7 +30906,7 @@ var EnricherRegistry = class {
     this.registered = false;
   }
   root() {
-    return (0, import_obsidian30.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
+    return (0, import_obsidian32.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
   }
   registerVaultEvents(plugin) {
     if (this.registered)
@@ -30368,7 +30916,7 @@ var EnricherRegistry = class {
       if (!file)
         return;
       const root = this.root();
-      const p = (0, import_obsidian30.normalizePath)(file.path);
+      const p = (0, import_obsidian32.normalizePath)(file.path);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     };
@@ -30380,7 +30928,7 @@ var EnricherRegistry = class {
       if (!oldPath)
         return;
       const root = this.root();
-      const p = (0, import_obsidian30.normalizePath)(oldPath);
+      const p = (0, import_obsidian32.normalizePath)(oldPath);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     }));
@@ -30392,13 +30940,13 @@ var EnricherRegistry = class {
     if (this.cache)
       return this.cache;
     const folder = this.app.vault.getAbstractFileByPath(this.root());
-    if (!(folder instanceof import_obsidian30.TFolder)) {
+    if (!(folder instanceof import_obsidian32.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian30.TFile) || child.extension !== "json")
+      if (!(child instanceof import_obsidian32.TFile) || child.extension !== "json")
         continue;
       try {
         const raw = await this.app.vault.read(child);
@@ -30433,6 +30981,18 @@ function truncateVaultOpPreviewText(raw) {
 
 \u2026 [preview truncated: ${overflow} more character(s)]`;
 }
+function entityHasMapCoordinates(entity) {
+  const lat = entity.properties?.latitude;
+  const lng = entity.properties?.longitude;
+  if (lat == null || lng == null)
+    return false;
+  if (typeof lat === "number" && typeof lng === "number" && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+    return true;
+  }
+  const ls = String(lat).trim();
+  const cs = String(lng).trim();
+  return ls.length > 0 && cs.length > 0;
+}
 async function appendVaultOpPreviewBlock(plugin, parent, op) {
   if (op.action === "upsert_script" || op.action === "delete_script") {
     const details = parent.createEl("details");
@@ -30445,7 +31005,7 @@ async function appendVaultOpPreviewBlock(plugin, parent, op) {
     try {
       const path = resolveScriptFilePath(plugin, op.relativePath);
       const f = plugin.app.vault.getAbstractFileByPath(path);
-      if (f instanceof import_obsidian31.TFile) {
+      if (f instanceof import_obsidian33.TFile) {
         current = await plugin.app.vault.cachedRead(f);
       }
     } catch {
@@ -30531,7 +31091,7 @@ var DEFAULT_SETTINGS = {
   oidsfModalLayers: { ...DEFAULT_OIDSF_MODAL_LAYERS }
 };
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var VaultAIPlugin = class extends import_obsidian31.Plugin {
+var VaultAIPlugin = class extends import_obsidian33.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -30707,9 +31267,14 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       MAP_VIEW_TYPE,
       (leaf) => new MapView(leaf, this.entityManager, (entityId) => this.onEntityClick(entityId))
     );
+    this.registerView(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, (leaf) => new ToolsSkillsRegistryView(leaf, this));
     const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
       void this.openChatView(forceNew);
+    });
+    this.addRibbonIcon("layout-list", "OSINT Copilot tools & skills registry (Ctrl+click for new pane)", (evt) => {
+      const forceNew = evt.ctrlKey || evt.metaKey;
+      void this.openToolsSkillsRegistryView(forceNew);
     });
     if (this.settings.enableGraphFeatures) {
       const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", (evt) => {
@@ -30728,21 +31293,21 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian31.TFile) {
+        if (file instanceof import_obsidian33.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian31.TFile) {
+        if (file instanceof import_obsidian33.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian31.TFile) {
+        if (file instanceof import_obsidian33.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -30756,21 +31321,21 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path) => {
-      const base = (0, import_obsidian31.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
-      const prefix = (0, import_obsidian31.normalizePath)(`${base}/schemas`);
-      const p = (0, import_obsidian31.normalizePath)(path);
+      const base = (0, import_obsidian33.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const prefix = (0, import_obsidian33.normalizePath)(`${base}/schemas`);
+      const p = (0, import_obsidian33.normalizePath)(path);
       return p === prefix || p.startsWith(`${prefix}/`);
     };
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian31.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian33.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian31.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian33.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
@@ -30832,6 +31397,20 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       }
     });
     this.addCommand({
+      id: "open-tools-skills-registry",
+      name: "Open tools & skills registry",
+      callback: () => {
+        void this.openToolsSkillsRegistryView();
+      }
+    });
+    this.addCommand({
+      id: "open-tools-skills-registry-new-pane",
+      name: "Open tools & skills registry in new pane",
+      callback: () => {
+        void this.openToolsSkillsRegistryView(true);
+      }
+    });
+    this.addCommand({
       id: "export-investigation",
       name: "Export current investigation",
       callback: () => {
@@ -30845,10 +31424,10 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
           a.download = `osint-investigation-${timestamp2}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian31.Notice("Investigation exported successfully");
+          new import_obsidian33.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian31.Notice("Failed to export investigation");
+          new import_obsidian33.Notice("Failed to export investigation");
         }
       }
     });
@@ -30864,7 +31443,7 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       name: "Reindex vault",
       callback: () => {
         void this.buildIndex().then(() => {
-          new import_obsidian31.Notice("Vault reindexed successfully.");
+          new import_obsidian33.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -30873,7 +31452,7 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian31.Notice("Entities reloaded from notes.");
+          new import_obsidian33.Notice("Entities reloaded from notes.");
         });
       }
     });
@@ -30891,14 +31470,14 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
         void (async () => {
           try {
             const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
-            new import_obsidian31.Notice(
+            new import_obsidian33.Notice(
               `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
               9e3
             );
             await this.entityManager.loadEntitiesFromNotes();
             await this.refreshOrOpenGraphView();
           } catch (e) {
-            new import_obsidian31.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
+            new import_obsidian33.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
           }
         })();
       }
@@ -30912,7 +31491,7 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
         this.skillRegistry?.invalidate();
         this.enricherRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new import_obsidian31.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
+        new import_obsidian33.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
       }
     });
     this.addCommand({
@@ -30934,9 +31513,9 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
             this.skillRegistry?.invalidate();
             this.enricherRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new import_obsidian31.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
+            new import_obsidian33.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
           } catch (e) {
-            new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+            new import_obsidian33.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
           }
         })();
       }
@@ -30979,7 +31558,7 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
     const stamped = `- ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `;
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian31.TFile) {
+    if (existing instanceof import_obsidian33.TFile) {
       const prev = await this.app.vault.read(existing);
       await this.app.vault.modify(existing, prev + stamped);
       return;
@@ -30997,12 +31576,12 @@ var VaultAIPlugin = class extends import_obsidian31.Plugin {
   async draftHttpEnricherFromUserDetails() {
     const docUrl = (window.prompt("API documentation URL for this enricher:") || "").trim();
     if (!docUrl) {
-      new import_obsidian31.Notice("Cancelled: API documentation URL is required.");
+      new import_obsidian33.Notice("Cancelled: API documentation URL is required.");
       return;
     }
     const details = (window.prompt("What should this enricher search and return? Include required params.") || "").trim();
     if (!details) {
-      new import_obsidian31.Notice("Cancelled: integration details are required.");
+      new import_obsidian33.Notice("Cancelled: integration details are required.");
       return;
     }
     const system = [
@@ -31070,7 +31649,7 @@ ${details}`;
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
     if (!draft) {
-      new import_obsidian31.Notice("Failed to build enricher draft.");
+      new import_obsidian33.Notice("Failed to build enricher draft.");
       return;
     }
     const enricherPath = `${this.settings.enrichersFolder}/${draft.id}.json`;
@@ -31115,13 +31694,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
             await ensureFolder(enricherPath);
             await ensureFolder(skillPath);
             const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
-            if (existingSpec instanceof import_obsidian31.TFile) {
+            if (existingSpec instanceof import_obsidian33.TFile) {
               await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
             } else {
               await this.app.vault.create(enricherPath, JSON.stringify(draft, null, 2));
             }
             const existingSkill = this.app.vault.getAbstractFileByPath(skillPath);
-            if (existingSkill instanceof import_obsidian31.TFile) {
+            if (existingSkill instanceof import_obsidian33.TFile) {
               await this.app.vault.modify(existingSkill, skillMd);
             } else {
               await this.app.vault.create(skillPath, skillMd);
@@ -31129,13 +31708,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
             this.enricherRegistry.invalidate();
             this.skillRegistry.invalidate();
             await this.appendEnricherAuditLine(`approved create_or_update id=${draft.id} doc=${docUrl}`);
-            new import_obsidian31.Notice(`Enricher ${draft.name} saved and activated.`);
+            new import_obsidian33.Notice(`Enricher ${draft.name} saved and activated.`);
           } catch (e) {
-            new import_obsidian31.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+            new import_obsidian33.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
           }
         })();
       },
-      () => new import_obsidian31.Notice("Enricher draft cancelled."),
+      () => new import_obsidian33.Notice("Enricher draft cancelled."),
       false,
       void 0,
       "Install",
@@ -31149,19 +31728,19 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     const nextRaw = (window.prompt("Set state: active or disabled") || "").trim().toLowerCase();
     const nextStatus = nextRaw === "disabled" ? "disabled" : nextRaw === "active" ? "active" : "";
     if (!nextStatus) {
-      new import_obsidian31.Notice("Cancelled: state must be 'active' or 'disabled'.");
+      new import_obsidian33.Notice("Cancelled: state must be 'active' or 'disabled'.");
       return;
     }
     const path = `${this.settings.enrichersFolder}/${idInput}.json`;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian31.TFile)) {
-      new import_obsidian31.Notice(`Enricher not found: ${path}`);
+    if (!(file instanceof import_obsidian33.TFile)) {
+      new import_obsidian33.Notice(`Enricher not found: ${path}`);
       return;
     }
     const raw = await this.app.vault.read(file);
     const parsed = normalizeEnricherSpec(JSON.parse(raw));
     if (!parsed) {
-      new import_obsidian31.Notice("Invalid enricher spec JSON.");
+      new import_obsidian33.Notice("Invalid enricher spec JSON.");
       return;
     }
     const nextEnabled = nextStatus === "active";
@@ -31178,10 +31757,10 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
           await this.app.vault.modify(file, JSON.stringify(parsed, null, 2));
           this.enricherRegistry.invalidate();
           await this.appendEnricherAuditLine(`approved set_state id=${parsed.id} status=${nextStatus}`);
-          new import_obsidian31.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
+          new import_obsidian33.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
         })();
       },
-      () => new import_obsidian31.Notice("State change cancelled.")
+      () => new import_obsidian33.Notice("State change cancelled.")
     ).open();
   }
   onunload() {
@@ -31343,7 +31922,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian31.MarkdownView)
+          if (leaf.view instanceof import_obsidian33.MarkdownView)
             update(leaf);
         });
       })
@@ -31360,12 +31939,12 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       })
     );
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (leaf.view instanceof import_obsidian31.MarkdownView)
+      if (leaf.view instanceof import_obsidian33.MarkdownView)
         update(leaf);
     });
   }
   updateVaultLockLeafMode(leaf) {
-    if (!leaf || !(leaf.view instanceof import_obsidian31.MarkdownView))
+    if (!leaf || !(leaf.view instanceof import_obsidian33.MarkdownView))
       return;
     const path = leaf.view.file?.path;
     if (!path || path.endsWith(".canvas"))
@@ -31416,12 +31995,12 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     const btn = document.createElement("div");
     btn.addClass("view-action", "clickable-icon", "osint-copilot-vault-unlock-btn");
     btn.setAttribute("aria-label", "Locked \u2014 click to unlock");
-    (0, import_obsidian31.setIcon)(btn, "lock");
+    (0, import_obsidian33.setIcon)(btn, "lock");
     btn.addEventListener("click", () => {
       new VaultUnlockModal(this.app, () => {
         this.vaultLockService.unlockPath(path);
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian31.MarkdownView && leaf.view.file?.path === path) {
+          if (leaf.view instanceof import_obsidian33.MarkdownView && leaf.view.file?.path === path) {
             this.updateVaultLockLeafMode(leaf);
           }
         });
@@ -31445,7 +32024,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * @returns A workspace leaf in the main editor area
    */
   getMainEditorLeaf(viewType, forceNew) {
-    const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE];
+    const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE, TOOLS_SKILLS_REGISTRY_VIEW_TYPE];
     const mainLeaves = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
       const root = leaf.getRoot();
@@ -31474,7 +32053,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault() {
-    const base = (0, import_obsidian31.normalizePath)(this.settings.entityBasePath);
+    const base = (0, import_obsidian33.normalizePath)(this.settings.entityBasePath);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + "/"));
     let updated = 0;
     for (const file of files) {
@@ -31507,7 +32086,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     if (this.schemaCatalogService) {
       await this.schemaCatalogService.rebuild();
     }
-    new import_obsidian31.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
+    new import_obsidian33.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
   }
   /**
    * Open the Graph View in the main editor area.
@@ -31516,7 +32095,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    */
   async openGraphView(forceNew = false) {
     if (!this.settings.enableGraphFeatures) {
-      new import_obsidian31.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian33.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -31553,14 +32132,46 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Refresh the graph view if it's currently open.
    * This is called after entity creation operations complete.
    */
-  async refreshGraphView() {
+  async refreshGraphView(options) {
     const existing = this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE);
     if (existing.length > 0) {
       const graphView = existing[0].view;
       if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
-        new import_obsidian31.Notice("Graph view updated with new entities");
+        if (!options?.silent) {
+          new import_obsidian33.Notice("Graph view updated with new entities");
+        }
+      }
+    }
+  }
+  /**
+   * Reload open Graph, Timeline, and Map views from the vault (after graph writes).
+   * Timeline may also refresh from its own vault listeners; this ensures consistency when those views are open.
+   * @param options.skipGraph — when true, do not refresh graph leaves (e.g. graph was just refreshed by {@link refreshOrOpenGraphView}).
+   */
+  async refreshOpenInsightViews(options) {
+    if (!this.settings.enableGraphFeatures) {
+      return;
+    }
+    if (!options?.skipGraph) {
+      for (const leaf of this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE)) {
+        const graphView = leaf.view;
+        if (graphView && typeof graphView.refreshWithSavedPositions === "function") {
+          await graphView.refreshWithSavedPositions();
+        }
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(TIMELINE_VIEW_TYPE)) {
+      const timelineView = leaf.view;
+      if (timelineView && typeof timelineView.refresh === "function") {
+        await timelineView.refresh();
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(MAP_VIEW_TYPE)) {
+      const mapView = leaf.view;
+      if (mapView && typeof mapView.refresh === "function") {
+        void mapView.refresh();
       }
     }
   }
@@ -31581,7 +32192,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       if (this.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian31.Notice("Graph view opened with new entities");
+        new import_obsidian33.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -31619,25 +32230,41 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       void this.app.workspace.revealLeaf(leaf);
     }
   }
+  /**
+   * Open the tools / skills / enrichers registry in the main editor area.
+   */
+  async openToolsSkillsRegistryView(forceNew = false) {
+    const existing = this.app.workspace.getLeavesOfType(TOOLS_SKILLS_REGISTRY_VIEW_TYPE);
+    if (!forceNew && existing.length > 0) {
+      void this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.getMainEditorLeaf(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, forceNew);
+    if (leaf) {
+      await leaf.setViewState({ type: TOOLS_SKILLS_REGISTRY_VIEW_TYPE, active: true });
+      void this.app.workspace.revealLeaf(leaf);
+    }
+  }
   onEntityClick(entityId) {
     void this.entityManager.openEntityNote(entityId);
   }
   /**
-   * Show a Location entity on the map view.
-   * Opens the map view if not already open and focuses on the location.
+   * Show an entity on the map view when it has coordinates (Location, Address, or any type with lat/lng).
+   * Opens the map view if not already open and focuses on the marker.
    */
   async showEntityOnMap(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian31.Notice("Entity not found");
+      new import_obsidian33.Notice("Entity not found");
       return;
     }
-    if (entity.type !== "Location") {
-      new import_obsidian31.Notice("Only location entities can be shown on the map");
+    const mapCapable = entity.type === "Location" /* Location */ || entity.type === "Address" || entityHasMapCoordinates(entity);
+    if (!mapCapable) {
+      new import_obsidian33.Notice("Map needs a Location or Address entity, or latitude/longitude on the entity.");
       return;
     }
-    if (!entity.properties.latitude || !entity.properties.longitude) {
-      new import_obsidian31.Notice("Location has no coordinates. Please add latitude and longitude.");
+    if (!entityHasMapCoordinates(entity)) {
+      new import_obsidian33.Notice("Entity has no coordinates. Add latitude and longitude (e.g. in frontmatter) to show it on the map.");
       return;
     }
     await this.openMapView();
@@ -32031,7 +32658,7 @@ ${additionalContext}
     }
   }
 };
-var AskModal = class extends import_obsidian31.Modal {
+var AskModal = class extends import_obsidian33.Modal {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -32059,7 +32686,7 @@ var AskModal = class extends import_obsidian31.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian31.Notice("Please enter a question.");
+      new import_obsidian33.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -32075,7 +32702,7 @@ var AskModal = class extends import_obsidian31.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian31.Notice("Answer copied to clipboard.");
+        new import_obsidian33.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -32086,7 +32713,7 @@ var AskModal = class extends import_obsidian31.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian31.TFile) {
+              if (file instanceof import_obsidian33.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -32106,7 +32733,7 @@ var AskModal = class extends import_obsidian31.Modal {
     contentEl.empty();
   }
 };
-var RenameConversationModal = class extends import_obsidian31.Modal {
+var RenameConversationModal = class extends import_obsidian33.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -32172,7 +32799,7 @@ function runtimeSettingsVisibility(selectedRuntimeId) {
     showSelectedCustomSettings: isCustom
   };
 }
-var _ChatView = class _ChatView extends import_obsidian31.ItemView {
+var _ChatView = class _ChatView extends import_obsidian33.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -32256,7 +32883,7 @@ ${ev.details}`;
     if (fallback && fallback !== cur) {
       this.plugin.settings.agentRuntimeProvider = fallback;
       await this.plugin.saveSettings();
-      new import_obsidian31.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
+      new import_obsidian33.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
   buildRuntimeHeaderRow(buttonGroup, av) {
@@ -32281,7 +32908,7 @@ ${ev.details}`;
       });
       return;
     }
-    new import_obsidian31.Setting(wrap).setName("Runtime").addDropdown((dd) => {
+    new import_obsidian33.Setting(wrap).setName("Runtime").addDropdown((dd) => {
       for (const rt of available) {
         dd.addOption(rt.id, rt.displayName);
       }
@@ -32536,18 +33163,18 @@ ${ev.details}`;
           "files =",
           draggable.files?.length
         );
-        if (draggable.file instanceof import_obsidian31.TFolder) {
+        if (draggable.file instanceof import_obsidian33.TFolder) {
           await this.handleDroppedFolder(draggable.file);
           handled = true;
-        } else if (draggable.file instanceof import_obsidian31.TFile) {
+        } else if (draggable.file instanceof import_obsidian33.TFile) {
           await this.handleDroppedAbstractFile(draggable.file);
           handled = true;
         }
         if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian31.TFolder)
+            if (f instanceof import_obsidian33.TFolder)
               await this.handleDroppedFolder(f);
-            else if (f instanceof import_obsidian31.TFile)
+            else if (f instanceof import_obsidian33.TFile)
               await this.handleDroppedAbstractFile(f);
           }
           handled = true;
@@ -32556,10 +33183,10 @@ ${ev.details}`;
           const info = draggable.info;
           if (typeof info === "string") {
             const resolved = this.app.vault.getAbstractFileByPath(info);
-            if (resolved instanceof import_obsidian31.TFolder) {
+            if (resolved instanceof import_obsidian33.TFolder) {
               await this.handleDroppedFolder(resolved);
               handled = true;
-            } else if (resolved instanceof import_obsidian31.TFile) {
+            } else if (resolved instanceof import_obsidian33.TFile) {
               await this.handleDroppedAbstractFile(resolved);
               handled = true;
             }
@@ -32570,10 +33197,10 @@ ${ev.details}`;
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian31.TFolder) {
+          if (abstractFile instanceof import_obsidian33.TFolder) {
             await this.handleDroppedFolder(abstractFile);
             handled = true;
-          } else if (abstractFile instanceof import_obsidian31.TFile) {
+          } else if (abstractFile instanceof import_obsidian33.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             handled = true;
           }
@@ -32716,7 +33343,7 @@ ${ev.details}`;
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian31.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian33.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -32760,12 +33387,12 @@ ${ev.details}`;
     target.value = "";
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian31.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian33.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian31.Notice(`Attached: ${file.name}`);
+    new import_obsidian33.Notice(`Attached: ${file.name}`);
   }
   static isImageFile(name) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -32776,12 +33403,12 @@ ${ev.details}`;
       return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian31.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
+      new import_obsidian33.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian31.Notice(`Attached: ${file.name}`);
+    new import_obsidian33.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
@@ -32795,12 +33422,12 @@ ${ev.details}`;
       return;
     const ext = (file.extension || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian31.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian33.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian31.Notice(`Attached: ${file.name}`);
+    new import_obsidian33.Notice(`Attached: ${file.name}`);
   }
   /**
    * Handle a dropped folder — recursively collect all allowed files and attach them.
@@ -32810,24 +33437,24 @@ ${ev.details}`;
       return;
     const files = this.collectFilesFromFolder(folder);
     if (files.length === 0) {
-      new import_obsidian31.Notice(`No supported files found in folder "${folder.name}"`);
+      new import_obsidian33.Notice(`No supported files found in folder "${folder.name}"`);
       return;
     }
     for (const file of files) {
       this.attachedFiles.push({ file, extracted: false });
     }
     this.renderAttachments();
-    new import_obsidian31.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+    new import_obsidian33.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
   }
   collectFilesFromFolder(folder) {
     const results = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian31.TFile) {
+      if (child instanceof import_obsidian33.TFile) {
         const ext = (child.extension || "").toLowerCase();
         if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
           results.push(child);
         }
-      } else if (child instanceof import_obsidian31.TFolder) {
+      } else if (child instanceof import_obsidian33.TFolder) {
         results.push(...this.collectFilesFromFolder(child));
       }
     }
@@ -32891,19 +33518,19 @@ ${ev.details}`;
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian31.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian33.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian31.Notice(`Text extracted from URL`);
+      new import_obsidian33.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (isLikelyExpectedUrlFetchFailure(msg)) {
         console.debug("URL extraction skipped:", msg.slice(0, 120));
-        new import_obsidian31.Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
+        new import_obsidian33.Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
       } else {
         console.error("URL extraction error:", error);
-        new import_obsidian31.Notice(`Error extracting URL: ${msg}`);
+        new import_obsidian33.Notice(`Error extracting URL: ${msg}`);
       }
       return false;
     } finally {
@@ -32918,7 +33545,7 @@ ${ev.details}`;
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian31.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian33.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -33090,7 +33717,7 @@ ${ev.details}`;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian31.Notice("Failed to load conversation");
+      new import_obsidian33.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -33103,7 +33730,7 @@ ${ev.details}`;
     this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian31.Notice("Started new conversation");
+    new import_obsidian33.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -33119,9 +33746,9 @@ ${ev.details}`;
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian31.Notice("Conversation deleted");
+          new import_obsidian33.Notice("Conversation deleted");
         } else {
-          new import_obsidian31.Notice("Failed to delete conversation");
+          new import_obsidian33.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -33139,7 +33766,7 @@ ${ev.details}`;
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian31.Notice("Conversation renamed");
+          new import_obsidian33.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -33163,7 +33790,7 @@ ${ev.details}`;
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian31.MarkdownRenderer.render(
+      await import_obsidian33.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -33290,7 +33917,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian31.TFile) {
+              if (file instanceof import_obsidian33.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -33340,10 +33967,10 @@ ${ev.details}`;
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian31.TFile) {
+                if (file instanceof import_obsidian33.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian31.Notice("Linked note file not found");
+                  new import_obsidian33.Notice("Linked note file not found");
                 }
               })();
             }
@@ -33406,7 +34033,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian31.TFile) {
+              if (file instanceof import_obsidian33.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -33634,11 +34261,11 @@ ${ev.details}`;
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian31.TFile) {
+            if (file instanceof import_obsidian33.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian31.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian33.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian31.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian33.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -33740,7 +34367,7 @@ ${ev.details}`;
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian31.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian33.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -33958,7 +34585,7 @@ ${ev.details}`;
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian31.Notice("Task cancelled");
+        new import_obsidian33.Notice("Task cancelled");
       },
       () => {
       },
@@ -33989,7 +34616,7 @@ ${ev.details}`;
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian31.Notice("Operation cancelled");
+        new import_obsidian33.Notice("Operation cancelled");
       },
       () => {
       },
@@ -34011,7 +34638,7 @@ ${ev.details}`;
     }
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
     if (sendRuntimeAvailability.availableIds.length === 0) {
-      new import_obsidian31.Notice(
+      new import_obsidian33.Notice(
         "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8e3
       );
@@ -34086,21 +34713,21 @@ ${ev.details}`;
             text = attachment.content;
           } else if (isImage) {
             let absolutePath;
-            if (attachment.file instanceof import_obsidian31.TFile) {
+            if (attachment.file instanceof import_obsidian33.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
-              const evidencePath = (0, import_obsidian31.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              const evidencePath = (0, import_obsidian33.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
               const folder = this.app.vault.getAbstractFileByPath(evidencePath);
               if (!folder) {
                 await this.app.vault.createFolder(evidencePath);
               }
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
-              const destPath = (0, import_obsidian31.normalizePath)(`${evidencePath}/${safeName}`);
+              const destPath = (0, import_obsidian33.normalizePath)(`${evidencePath}/${safeName}`);
               const buffer = await attachment.file.arrayBuffer();
               const existing = this.app.vault.getAbstractFileByPath(destPath);
               let tFile;
-              if (existing instanceof import_obsidian31.TFile) {
+              if (existing instanceof import_obsidian33.TFile) {
                 tFile = existing;
               } else {
                 tFile = await this.app.vault.createBinary(destPath, buffer);
@@ -34116,7 +34743,7 @@ ${ev.details}`;
                 rawCli: this.plugin.settings.extractionDebugRawCli
               }
             );
-          } else if (attachment.file instanceof import_obsidian31.TFile) {
+          } else if (attachment.file instanceof import_obsidian33.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
@@ -34150,7 +34777,7 @@ ${text}`);
           } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian31.Notice(userMessage, 8e3);
+          new import_obsidian33.Notice(userMessage, 8e3);
         }
       }
       this.activeAbortControllers.delete(extractionMsgIndex);
@@ -34190,9 +34817,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian31.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian33.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian31.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian33.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -34556,13 +35183,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian31.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian33.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian31.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian33.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -34607,7 +35234,10 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     if (cmdsToExecute.length === 0)
       return;
     const graphWriteContext = this.buildGraphWriteContextFromSavedQuery(item.savedQuery);
-    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute, { graphWriteContext });
+    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute, {
+      graphWriteContext,
+      skipConfirmation: true
+    });
     item.proposedModifications = void 0;
     await this.renderMessages();
     await this.saveCurrentConversation();
@@ -34622,12 +35252,12 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     try {
       const { applied, errors } = await applyCustomVaultOperations(this.plugin, ops);
       if (errors.length) {
-        new import_obsidian31.Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8e3);
+        new import_obsidian33.Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8e3);
       } else {
-        new import_obsidian31.Notice(`Applied ${applied} vault change(s).`);
+        new import_obsidian33.Notice(`Applied ${applied} vault change(s).`);
       }
     } catch (e) {
-      new import_obsidian31.Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+      new import_obsidian33.Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8e3);
     }
     item.proposedCustomVaultOps = void 0;
     await this.renderMessages();
@@ -34785,7 +35415,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian31.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian33.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -34902,7 +35532,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian31.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian33.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -35080,6 +35710,7 @@ ${notesText}`;
 
 \u{1F3F7}\uFE0F **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
         await this.plugin.refreshOrOpenGraphView();
+        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
       }
     }
     await this.renderMessages();
@@ -35274,6 +35905,7 @@ ${aiResponse}`;
         const successContent = this.chatHistory[assistantIndex].content || "";
         this.chatHistory[assistantIndex].content = successContent + resultMsg;
         await this.plugin.refreshOrOpenGraphView();
+        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
       } else {
         this.chatHistory[assistantIndex].progress = void 0;
         const noEntitiesContent = this.chatHistory[assistantIndex].content || "";
@@ -35314,7 +35946,7 @@ _ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
   "ico"
 ]);
 var ChatView = _ChatView;
-var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /**
@@ -35362,47 +35994,47 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian31.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian31.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc("Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code.").addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian31.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian33.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian31.Notice("Update successful! Reloading plugin...");
+            new import_obsidian33.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian31.Notice("Failed to download update. Check console for details.");
+            new import_obsidian33.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian31.Notice("An error occurred during update.");
+          new import_obsidian33.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Graph note lock").setHeading();
-    new import_obsidian31.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Graph note lock").setHeading();
+    new import_obsidian33.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
       "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths."
     ).addButton(
       (btn) => btn.setButtonText("Unlock all").onClick(async () => {
         if (!confirm("Unlock all notes locked from the graph?"))
           return;
         this.plugin.vaultLockService.unlockAll();
-        new import_obsidian31.Notice("All graph locks cleared.");
+        new import_obsidian33.Notice("All graph locks cleared.");
         this.display();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian33.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -35411,7 +36043,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         }
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian33.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -35419,20 +36051,20 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
       text.inputEl.rows = 4;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian31.Setting(containerEl).setName("Vault prompts").setHeading();
-    new import_obsidian31.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
+    new import_obsidian33.Setting(containerEl).setName("Vault prompts").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
       (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
         this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
+    new import_obsidian33.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
       (text) => text.setPlaceholder("default").setValue(this.plugin.settings.activeAgentId).onChange(async (value) => {
         this.plugin.settings.activeAgentId = value.trim() || "default";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
@@ -35449,14 +36081,14 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
           this.plugin.skillRegistry?.invalidate();
           this.plugin.enricherRegistry?.invalidate();
           this.plugin.attachVaultSkillFromVault();
-          new import_obsidian31.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
+          new import_obsidian33.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
         } catch (e) {
-          new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian33.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Skills (vault)").setHeading();
-    new import_obsidian31.Setting(containerEl).setName("Skills folder").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Skills (vault)").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Skills folder").setDesc(
       "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (same flow can propose enricher *.json under the enrichers folder; enricher HTTP tools use companion skills here)."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
@@ -35465,14 +36097,14 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
+    new import_obsidian33.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
       (text) => text.setPlaceholder(DEFAULT_ENRICHERS_FOLDER).setValue(this.plugin.settings.enrichersFolder).onChange(async (value) => {
         this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
         this.plugin.enricherRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Credentials folder").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Credentials folder").setDesc(
       "Plain-text secrets the unified agent may propose storing (e.g. API keys). Paths must stay under OSINTCopilot/custom/. Use bearer_vault / header_vault / query_vault in enricher JSON to read a file here."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_CREDENTIALS_FOLDER).setValue(this.plugin.settings.credentialsFolder).onChange(async (value) => {
@@ -35480,7 +36112,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Scripts folder").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Scripts folder").setDesc(
       "Text scripts (e.g. .py, .sh, .ts) the unified agent may propose via upsert_script / delete_script. Review the side-by-side diff in chat; the plugin does not execute scripts."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SCRIPTS_FOLDER).setValue(this.plugin.settings.scriptsFolder).onChange(async (value) => {
@@ -35488,21 +36120,21 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Task agents (vault)").setHeading();
-    new import_obsidian31.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
+    new import_obsidian33.Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Enable task agents").setDesc("In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.").addToggle(
       (t) => t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
         this.plugin.settings.taskAgentsEnabled = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
+    new import_obsidian33.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
       (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
         this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
+    new import_obsidian33.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
       text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
@@ -35510,21 +36142,21 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
       text.inputEl.rows = 3;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian31.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           this.plugin.taskAgentRegistry?.invalidate();
-          new import_obsidian31.Notice("Task-agent defaults installed where missing.");
+          new import_obsidian33.Notice("Task-agent defaults installed where missing.");
           this.display();
         } catch (e) {
-          new import_obsidian31.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian33.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
-    new import_obsidian31.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian33.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
         this.plugin.settings.conversationFolder = folder;
@@ -35533,7 +36165,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Unified chat agent").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
       text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description"
@@ -35543,7 +36175,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
       (rt) => rt.id === selectedRuntimeId
     );
     const visibility = runtimeSettingsVisibility(selectedRuntimeId);
-    new import_obsidian31.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
+    new import_obsidian33.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown(
       (dd) => {
         const options = getConfiguredRuntimeOptions(this.plugin);
         for (const option of options)
@@ -35558,26 +36190,26 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
       }
     );
     if (visibility.showHermesSettings) {
-      new import_obsidian31.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
+      new import_obsidian33.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
         (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
           this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
+      new import_obsidian33.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
         (text) => text.setPlaceholder("").setValue(this.plugin.settings.hermesAgentExtraArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentExtraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
+      new import_obsidian33.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
         (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs)).setValue(String(this.plugin.settings.hermesAgentTimeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           this.plugin.settings.hermesAgentTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
+      new import_obsidian33.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
         (text) => text.setPlaceholder("--version").setValue(this.plugin.settings.hermesAgentHealthCheckArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
@@ -35589,34 +36221,34 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         text: "Claude runtime selected. Claude CLI/model and extraction diagnostics are configured in the \u201CGraph extraction (Claude Code)\u201D section below.",
         cls: "setting-item-description"
       });
-      new import_obsidian31.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
+      new import_obsidian33.Setting(containerEl).setName("Claude runtime quick view").setDesc(`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`);
     }
-    new import_obsidian31.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
-          new import_obsidian31.Notice(
+          new import_obsidian33.Notice(
             ok ? `${this.runtimeLabel(provider.id)} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
           );
         } catch (e) {
-          new import_obsidian31.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+          new import_obsidian33.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Custom runtimes").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Custom runtimes").setHeading();
     containerEl.createEl("p", {
       text: "Manage Hermes-compatible local CLIs. Edit fields appear only when a custom runtime is selected as Agent runtime.",
       cls: "setting-item-description"
     });
-    new import_obsidian31.Setting(containerEl).setName("Configured custom runtimes").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Configured custom runtimes").setDesc(
       this.plugin.settings.customAgentRuntimes.length > 0 ? this.plugin.settings.customAgentRuntimes.map((rt) => `${rt.displayName} (${rt.id})`).join(", ") : "No custom runtime configured yet."
     );
-    new import_obsidian31.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
       (btn) => btn.setButtonText("Add runtime").onClick(async () => {
         const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
         this.plugin.settings.customAgentRuntimes.push(next);
@@ -35627,7 +36259,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     if (visibility.showSelectedCustomSettings && selectedCustomRuntime) {
       const i = this.plugin.settings.customAgentRuntimes.findIndex((rt2) => rt2.id === selectedCustomRuntime.id);
       const rt = selectedCustomRuntime;
-      new import_obsidian31.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
+      new import_obsidian33.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
         (btn) => btn.setButtonText("Remove selected").setWarning().onClick(async () => {
           if (i < 0)
             return;
@@ -35640,13 +36272,13 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Display name").addText(
+      new import_obsidian33.Setting(containerEl).setName("Display name").addText(
         (text) => text.setValue(rt.displayName).onChange(async (value) => {
           rt.displayName = value.trim() || `Custom ${i + 1}`;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
+      new import_obsidian33.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
         (text) => text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
           const nextId = this.uniqueCustomRuntimeId(value, rt.id);
           const prevId = rt.id;
@@ -35658,7 +36290,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Enabled").addToggle(
+      new import_obsidian33.Setting(containerEl).setName("Enabled").addToggle(
         (toggle) => toggle.setValue(rt.enabled).onChange(async (value) => {
           rt.enabled = value;
           if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
@@ -35668,50 +36300,50 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("CLI path").addText(
+      new import_obsidian33.Setting(containerEl).setName("CLI path").addText(
         (text) => text.setValue(rt.cliPath).onChange(async (value) => {
           rt.cliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Extra CLI args").addText(
+      new import_obsidian33.Setting(containerEl).setName("Extra CLI args").addText(
         (text) => text.setValue(rt.extraArgs).onChange(async (value) => {
           rt.extraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Request timeout (ms)").addText(
+      new import_obsidian33.Setting(containerEl).setName("Request timeout (ms)").addText(
         (text) => text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           rt.timeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 12e4;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian31.Setting(containerEl).setName("Health-check args").addText(
+      new import_obsidian33.Setting(containerEl).setName("Health-check args").addText(
         (text) => text.setValue(rt.healthCheckArgs).onChange(async (value) => {
           rt.healthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian31.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
       text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description"
     });
-    new import_obsidian31.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+    new import_obsidian33.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
       (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
         this.plugin.settings.claudeCodeCliPath = value || "claude";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+    new import_obsidian33.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Claude Code extra CLI args").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Claude Code extra CLI args").setDesc(
       "Whitespace-separated flags appended after --max-turns for every Claude Code invocation (chat, extraction, skills). Example: --permission-mode bypassPermissions (disables interactive Bash approval \u2014 dangerous: the model may run shell without prompts). Prefer vault enricher JSON + enricher_invocations in the agent JSON for HTTP APIs instead of curl."
     ).addText(
       (text) => text.setPlaceholder("").setValue(this.plugin.settings.claudeCodeExtraArgs).onChange(async (value) => {
@@ -35719,19 +36351,19 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
+    new import_obsidian33.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
       (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
         this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
+    new import_obsidian33.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.extractionDebugRawCli).onChange(async (value) => {
         this.plugin.settings.extractionDebugRawCli = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
+    new import_obsidian33.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc("Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.").addButton(
       (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
@@ -35747,28 +36379,28 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
           });
           const ok = await svc.isAvailable();
           if (!ok) {
-            new import_obsidian31.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
+            new import_obsidian33.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
             btn.setButtonText("Test Claude binary");
             btn.setDisabled(false);
             return;
           }
           await svc.chat("", "Reply with exactly the single word: OK", void 0, void 0, 1);
-          new import_obsidian31.Notice("Claude CLI is available and responded to a test request.", 6e3);
+          new import_obsidian33.Notice("Claude CLI is available and responded to a test request.", 6e3);
         } catch (e) {
           const msg = e?.message || String(e);
-          new import_obsidian31.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
+          new import_obsidian33.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
         }
         btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian31.Setting(containerEl).setName("Schema families in type pickers").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian33.Setting(containerEl).setName("Schema families in type pickers").setDesc(
       "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/."
     );
     const fam = this.plugin.settings.enabledSchemaFamilies;
     const addFamToggle = (key, name) => {
-      new import_obsidian31.Setting(containerEl).setName(name).addToggle(
+      new import_obsidian33.Setting(containerEl).setName(name).addToggle(
         (toggle) => toggle.setValue(fam[key]).onChange(async (value) => {
           fam[key] = value;
           await this.plugin.saveSettings();
@@ -35779,12 +36411,12 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     addFamToggle("stix2", "STIX 2 (vault YAML)");
     addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
     addFamToggle("user", "User YAML (schemas/user)");
-    new import_obsidian31.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
+    new import_obsidian33.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
       "Filter the bundled ontology (OIDSF) in FTM pickers: World (default entities), Links (relationship/interval types), Cyber (STIX-aligned), Analysis (claims/ACH/etc.). Graph still resolves any type already in the vault."
     );
     const layers = this.plugin.settings.oidsfModalLayers;
     const addLayerToggle = (key, caption) => {
-      new import_obsidian31.Setting(containerEl).setName(caption).addToggle(
+      new import_obsidian33.Setting(containerEl).setName(caption).addToggle(
         (toggle) => toggle.setValue(layers[key]).onChange(async (value) => {
           layers[key] = value;
           await this.plugin.saveSettings();
@@ -35795,13 +36427,13 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     addLayerToggle("links", "Links (relationship / interval types)");
     addLayerToggle("cyber", "Cyber (STIX / CTI-aligned entities)");
     addLayerToggle("analysis", "Analysis (claims, ACH, evidence chains, \u2026)");
-    new import_obsidian31.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian33.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian31.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian33.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
@@ -35826,7 +36458,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
       }
       for (const a of list) {
         const runnable = isTaskAgentRunnable(a, this.plugin.settings);
-        new import_obsidian31.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
+        new import_obsidian33.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
           t.setValue(runnable);
           t.onChange(async (v) => {
             if (v) {

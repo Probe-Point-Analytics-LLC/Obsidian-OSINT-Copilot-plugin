@@ -49,6 +49,7 @@ import {
 import { GraphView, GRAPH_VIEW_TYPE } from './src/views/graph-view';
 import { TimelineView, TIMELINE_VIEW_TYPE } from './src/views/timeline-view';
 import { MapView, MAP_VIEW_TYPE } from './src/views/map-view';
+import { ToolsSkillsRegistryView, TOOLS_SKILLS_REGISTRY_VIEW_TYPE } from './src/views/tools-skills-registry-view';
 import { ConfirmModal } from './src/modals/confirm-modal';
 import { CustomTypesService } from './src/services/custom-types-service';
 import {
@@ -125,6 +126,18 @@ function truncateVaultOpPreviewText(raw: string): string {
   if (raw.length <= VAULT_OP_PREVIEW_MAX_CHARS) return raw;
   const overflow = raw.length - VAULT_OP_PREVIEW_MAX_CHARS;
   return `${raw.slice(0, VAULT_OP_PREVIEW_MAX_CHARS)}\n\n… [preview truncated: ${overflow} more character(s)]`;
+}
+
+function entityHasMapCoordinates(entity: Entity): boolean {
+  const lat = entity.properties?.latitude;
+  const lng = entity.properties?.longitude;
+  if (lat == null || lng == null) return false;
+  if (typeof lat === 'number' && typeof lng === 'number' && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+    return true;
+  }
+  const ls = String(lat).trim();
+  const cs = String(lng).trim();
+  return ls.length > 0 && cs.length > 0;
 }
 
 async function appendVaultOpPreviewBlock(
@@ -574,11 +587,18 @@ export default class VaultAIPlugin extends Plugin {
       (leaf) => new MapView(leaf, this.entityManager, (entityId) => this.onEntityClick(entityId))
     );
 
+    this.registerView(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, (leaf) => new ToolsSkillsRegistryView(leaf, this));
+
     // Add ribbon icons for all OSINT Copilot features (grouped together)
     // Ctrl/Cmd+click opens a new instance in a split pane for side-by-side viewing
     const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt: MouseEvent) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
       void this.openChatView(forceNew);
+    });
+
+    this.addRibbonIcon("layout-list", "OSINT Copilot tools & skills registry (Ctrl+click for new pane)", (evt: MouseEvent) => {
+      const forceNew = evt.ctrlKey || evt.metaKey;
+      void this.openToolsSkillsRegistryView(forceNew);
     });
 
     // Graph features icons (Entity Graph, Timeline, Map) - shown when graph features are enabled
@@ -703,6 +723,18 @@ export default class VaultAIPlugin extends Plugin {
       id: "open-map-view-new-pane",
       name: "Open location map in new pane",
       callback: () => { void this.openMapView(true); },
+    });
+
+    this.addCommand({
+      id: "open-tools-skills-registry",
+      name: "Open tools & skills registry",
+      callback: () => { void this.openToolsSkillsRegistryView(); },
+    });
+
+    this.addCommand({
+      id: "open-tools-skills-registry-new-pane",
+      name: "Open tools & skills registry in new pane",
+      callback: () => { void this.openToolsSkillsRegistryView(true); },
     });
 
     this.addCommand({
@@ -1350,7 +1382,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    */
   private getMainEditorLeaf(viewType: string, forceNew: boolean): WorkspaceLeaf | null {
     // Check for existing OSINT views in the main area
-    const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE];
+    const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE, TOOLS_SKILLS_REGISTRY_VIEW_TYPE];
 
     // Find all leaves in the main editor area (not sidebars)
     const mainLeaves: WorkspaceLeaf[] = [];
@@ -1483,14 +1515,47 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Refresh the graph view if it's currently open.
    * This is called after entity creation operations complete.
    */
-  async refreshGraphView() {
+  async refreshGraphView(options?: { silent?: boolean }) {
     const existing = this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE);
     if (existing.length > 0) {
       const graphView = existing[0].view as GraphView;
       if (graphView && typeof graphView.refreshWithSavedPositions === 'function') {
         console.debug('[OSINT Copilot] Refreshing graph view with new entities...');
         await graphView.refreshWithSavedPositions();
-        new Notice('Graph view updated with new entities');
+        if (!options?.silent) {
+          new Notice('Graph view updated with new entities');
+        }
+      }
+    }
+  }
+
+  /**
+   * Reload open Graph, Timeline, and Map views from the vault (after graph writes).
+   * Timeline may also refresh from its own vault listeners; this ensures consistency when those views are open.
+   * @param options.skipGraph — when true, do not refresh graph leaves (e.g. graph was just refreshed by {@link refreshOrOpenGraphView}).
+   */
+  async refreshOpenInsightViews(options?: { skipGraph?: boolean }): Promise<void> {
+    if (!this.settings.enableGraphFeatures) {
+      return;
+    }
+    if (!options?.skipGraph) {
+      for (const leaf of this.app.workspace.getLeavesOfType(GRAPH_VIEW_TYPE)) {
+        const graphView = leaf.view as GraphView;
+        if (graphView && typeof graphView.refreshWithSavedPositions === 'function') {
+          await graphView.refreshWithSavedPositions();
+        }
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(TIMELINE_VIEW_TYPE)) {
+      const timelineView = leaf.view as TimelineView;
+      if (timelineView && typeof timelineView.refresh === 'function') {
+        await timelineView.refresh();
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(MAP_VIEW_TYPE)) {
+      const mapView = leaf.view as MapView;
+      if (mapView && typeof mapView.refresh === 'function') {
+        void mapView.refresh();
       }
     }
   }
@@ -1567,14 +1632,33 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     }
   }
 
+  /**
+   * Open the tools / skills / enrichers registry in the main editor area.
+   */
+  async openToolsSkillsRegistryView(forceNew: boolean = false) {
+    const existing = this.app.workspace.getLeavesOfType(TOOLS_SKILLS_REGISTRY_VIEW_TYPE);
+
+    if (!forceNew && existing.length > 0) {
+      void this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+
+    const leaf = this.getMainEditorLeaf(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, forceNew);
+
+    if (leaf) {
+      await leaf.setViewState({ type: TOOLS_SKILLS_REGISTRY_VIEW_TYPE, active: true });
+      void this.app.workspace.revealLeaf(leaf);
+    }
+  }
+
   onEntityClick(entityId: string) {
     // Open the entity's note when clicked in graph/timeline/map
     void this.entityManager.openEntityNote(entityId);
   }
 
   /**
-   * Show a Location entity on the map view.
-   * Opens the map view if not already open and focuses on the location.
+   * Show an entity on the map view when it has coordinates (Location, Address, or any type with lat/lng).
+   * Opens the map view if not already open and focuses on the marker.
    */
   async showEntityOnMap(entityId: string) {
     const entity = this.entityManager.getEntity(entityId);
@@ -1583,13 +1667,18 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       return;
     }
 
-    if (entity.type !== 'Location') {
-      new Notice('Only location entities can be shown on the map');
+    const mapCapable =
+      entity.type === EntityType.Location ||
+      entity.type === 'Address' ||
+      entityHasMapCoordinates(entity);
+
+    if (!mapCapable) {
+      new Notice('Map needs a Location or Address entity, or latitude/longitude on the entity.');
       return;
     }
 
-    if (!entity.properties.latitude || !entity.properties.longitude) {
-      new Notice('Location has no coordinates. Please add latitude and longitude.');
+    if (!entityHasMapCoordinates(entity)) {
+      new Notice('Entity has no coordinates. Add latitude and longitude (e.g. in frontmatter) to show it on the map.');
       return;
     }
 
@@ -5210,7 +5299,10 @@ export class ChatView extends ItemView {
     if (cmdsToExecute.length === 0) return;
 
     const graphWriteContext = this.buildGraphWriteContextFromSavedQuery(item.savedQuery);
-    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute, { graphWriteContext });
+    await this.plugin.orchestrationService.executeGraphModifications(cmdsToExecute, {
+      graphWriteContext,
+      skipConfirmation: true,
+    });
     item.proposedModifications = undefined; // Clear after applying
     await this.renderMessages();
     await this.saveCurrentConversation();
@@ -5782,6 +5874,7 @@ export class ChatView extends ItemView {
         this.chatHistory[assistantIndex].content = currentContent +
           `\n\n🏷️ **Graph updated from vault:** ${entitiesCreated} entities, ${connectionsCreated} relationships added.`;
         await this.plugin.refreshOrOpenGraphView();
+        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
       }
     }
     await this.renderMessages();
@@ -6044,6 +6137,7 @@ export class ChatView extends ItemView {
 
         // Refresh or open graph view after entity creation
         await this.plugin.refreshOrOpenGraphView();
+        await this.plugin.refreshOpenInsightViews({ skipGraph: this.plugin.settings.autoRefreshGraph });
       } else {
         this.chatHistory[assistantIndex].progress = undefined; // Clear progress bar
         const noEntitiesContent = this.chatHistory[assistantIndex].content || "";

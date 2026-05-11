@@ -3,7 +3,7 @@
  * Map View for visualizing Location entities using Leaflet.
  */
 
-import { App, ItemView, WorkspaceLeaf, Notice, Modal, Menu } from 'obsidian';
+import { App, ItemView, WorkspaceLeaf, Notice, Modal, Menu, TFile, normalizePath } from 'obsidian';
 import { Entity, EntityType, ENTITY_CONFIGS } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
 import { EntityCreationModal } from '../modals/entity-modal';
@@ -30,6 +30,7 @@ interface MapLocation {
 
 export class MapView extends ItemView {
     private entityManager: EntityManager;
+    private vaultRefreshTimer: number | null = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet map instance
     private map: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Leaflet markers
@@ -83,6 +84,41 @@ export class MapView extends ItemView {
         await this.loadLeaflet();
         this.initializeMap();
 
+        const basePrefix = normalizePath(this.entityManager.getBasePath()).toLowerCase() + '/';
+
+        const scheduleRefreshFromPath = (path: string): void => {
+            if (!path.replace(/\\/g, '/').toLowerCase().startsWith(basePrefix)) return;
+            if (this.vaultRefreshTimer !== null) {
+                window.clearTimeout(this.vaultRefreshTimer);
+            }
+            this.vaultRefreshTimer = window.setTimeout(() => {
+                this.vaultRefreshTimer = null;
+                void this.refresh();
+            }, 400);
+        };
+
+        this.registerEvent(
+            this.app.vault.on('modify', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('create', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('delete', (f) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+            }),
+        );
+        this.registerEvent(
+            this.app.vault.on('rename', (f, oldPath) => {
+                if (f instanceof TFile && f.extension === 'md') scheduleRefreshFromPath(f.path);
+                if (typeof oldPath === 'string') scheduleRefreshFromPath(oldPath);
+            }),
+        );
+
         // Wait for map to be ready before refreshing
         setTimeout(() => {
             void this.refresh();
@@ -90,6 +126,10 @@ export class MapView extends ItemView {
     }
 
     async onClose(): Promise<void> {
+        if (this.vaultRefreshTimer !== null) {
+            window.clearTimeout(this.vaultRefreshTimer);
+            this.vaultRefreshTimer = null;
+        }
         // Initialize handlers
         if (this.map && this.map._handlers) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Accessing internal Leaflet handlers
@@ -157,7 +197,7 @@ export class MapView extends ItemView {
 
         // Info label
         const infoSpan = toolbar.createEl('span', {
-            text: 'Map shows all location entities with coordinates',
+            text: 'Map: Location and Address entities with latitude / longitude',
             cls: 'graph_copilot-map-info'
         });
         infoSpan.setCssProps({

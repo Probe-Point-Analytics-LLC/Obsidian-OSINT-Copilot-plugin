@@ -2793,3 +2793,119 @@ svg.leaflet-image-layer.leaflet-interactive path {
   border-radius: 8px;
   pointer-events: none;
 }
+
+/* OSINT Copilot — tools / skills / enrichers registry view */
+.osint-copilot-registry-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+}
+
+.osint-copilot-registry-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+.osint-copilot-registry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (max-width: 900px) {
+  .osint-copilot-registry-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.osint-copilot-registry-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 6px);
+  background: var(--background-primary);
+}
+
+.osint-copilot-registry-column h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1em;
+}
+
+.osint-copilot-registry-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.osint-copilot-registry-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.osint-copilot-registry-card {
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.osint-copilot-registry-card-title {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.osint-copilot-registry-card-id {
+  display: block;
+  font-size: var(--font-ui-smaller);
+  margin-bottom: 0.35rem;
+}
+
+.osint-copilot-registry-card-desc {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  line-height: 1.35;
+}
+
+.osint-copilot-registry-dynamic-note {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 0.35rem;
+}
+
+.osint-copilot-registry-row {
+  padding: 0.45rem 0.5rem;
+  border-radius: var(--radius-s, 4px);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.osint-copilot-registry-row-title {
+  font-weight: 500;
+}
+
+.osint-copilot-registry-row-id {
+  display: block;
+  font-size: var(--font-ui-smaller);
+  margin: 0.2rem 0;
+  word-break: break-word;
+}
+
+.osint-copilot-registry-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}

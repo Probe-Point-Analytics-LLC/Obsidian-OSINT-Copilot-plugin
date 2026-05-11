@@ -70,6 +70,26 @@ describe('aiOperationsToGraphCommands', () => {
         expect(cmds.some((c) => c.startsWith('@@create_entity'))).toBe(true);
         expect(cmds.some((c) => c.startsWith('@@create_link'))).toBe(true);
     });
+
+    it('emits update_entity from updates array', () => {
+        const ops: AIOperation[] = [
+            {
+                action: 'update',
+                updates: [{ type: 'Person', current_label: 'Alice', new_properties: { notes: 'seen' } }],
+            },
+        ];
+        const cmds = aiOperationsToGraphCommands(ops);
+        expect(cmds).toHaveLength(1);
+        expect(cmds[0].startsWith('@@update_entity')).toBe(true);
+        const payload = JSON.parse(cmds[0].replace('@@update_entity', '').trim()) as {
+            type: string;
+            current_label: string;
+            new_properties: { notes: string };
+        };
+        expect(payload.type).toBe('Person');
+        expect(payload.current_label).toBe('Alice');
+        expect(payload.new_properties.notes).toBe('seen');
+    });
 });
 
 describe('createAgentProvider', () => {

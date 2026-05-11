@@ -3,6 +3,7 @@ import { App, Notice, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
 import {
     AIOperation,
+    Entity,
     EntityType,
     getEntityLabel,
     isFTMSchema,
@@ -68,6 +69,36 @@ export interface ProcessRequestOptions {
 export interface ExecuteGraphCommandsOptions {
     showErrorNotices: boolean;
     graphWriteContext?: GraphWriteContext;
+}
+
+/** Resolve target entity for @@update_entity (id preferred, else type+label, else label-only). */
+function findEntityForGraphUpdate(
+    em: { getEntity: (id: string) => Entity | undefined; getAllEntities: () => Entity[]; findEntityByLabel: (l: string) => Entity | undefined },
+    data: { id?: string; type?: string; current_label?: string },
+): Entity | undefined {
+    if (data.id) {
+        const byId = em.getEntity(data.id);
+        if (byId) return byId;
+    }
+    if (data.type && data.current_label) {
+        const wantType = String(data.type).trim().toLowerCase();
+        const wantLabel = data.current_label.trim().toLowerCase();
+        for (const e of em.getAllEntities()) {
+            if (String(e.type).trim().toLowerCase() !== wantType) continue;
+            const el = e.label != null ? String(e.label).trim().toLowerCase() : '';
+            if (el === wantLabel) return e;
+        }
+    }
+    if (data.current_label) {
+        return em.findEntityByLabel(data.current_label);
+    }
+    return undefined;
+}
+
+export interface ExecuteGraphModificationsOptions {
+    graphWriteContext?: GraphWriteContext;
+    /** Chat UI already confirmed per-row checkboxes — skip second ConfirmModal. */
+    skipConfirmation?: boolean;
 }
 
 export class OrchestrationService {
@@ -843,6 +874,31 @@ export class OrchestrationService {
                             lines.push(`✓ Removed entity: **${name}**`);
                         }
                     }
+                } else if (command.startsWith("@@update_entity")) {
+                    const jsonStr = command.replace("@@update_entity", "").trim();
+                    const data = JSON.parse(jsonStr) as {
+                        id?: string;
+                        type?: string;
+                        current_label?: string;
+                        new_properties?: Record<string, unknown>;
+                    };
+                    if (data.new_properties && typeof data.new_properties === "object") {
+                        const entity = findEntityForGraphUpdate(this.plugin.entityManager, data);
+                        if (!entity) {
+                            lines.push(
+                                `⚠ Skipped update: no entity matched id/type+label/label (${JSON.stringify({ id: data.id, type: data.type, current_label: data.current_label })})`,
+                            );
+                        } else if (entity.filePath && this.plugin.vaultLockService?.isPathLocked(entity.filePath)) {
+                            lines.push(`⚠ Skipped update (locked): **${entity.label}**`);
+                        } else {
+                            const updated = await this.plugin.entityManager.updateEntity(entity.id, data.new_properties);
+                            if (updated) {
+                                lines.push(`✓ Updated **${updated.label}** (${String(updated.type)})`);
+                            } else {
+                                lines.push(`⚠ Update failed for **${entity.label}**`);
+                            }
+                        }
+                    }
                 } else if (command.startsWith("@@create_link")) {
                     const jsonStr = command.replace("@@create_link", "").trim();
                     const data = JSON.parse(jsonStr);
@@ -916,62 +972,72 @@ export class OrchestrationService {
 
     public async executeGraphModifications(
         commands: string[],
-        execOptions?: { graphWriteContext?: GraphWriteContext },
+        execOptions?: ExecuteGraphModificationsOptions,
     ): Promise<void> {
         if (!commands || commands.length === 0) return;
 
-        const checkboxItems: { label: string, value: string, checked: boolean }[] = [];
-        commands.forEach((cmd, idx) => {
-            let labelText = `❓ Unknown: ${cmd}`;
-            try {
-                if (cmd.startsWith("@@create_entity")) {
-                    const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
-                    const name = data.label || getEntityLabel(data.type as EntityType, data.properties || {});
-                    labelText = `➕ Create ${data.type || 'Entity'}: **${name}**`;
-                } else if (cmd.startsWith("@@delete_entity")) {
-                    const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
-                    const entity = this.plugin.entityManager.getEntity(data.id);
-                    const name = entity ? entity.label : `ID: ${data.id}`;
-                    labelText = `🗑️ Delete Entity: **${name}**`;
-                } else if (cmd.startsWith("@@create_link")) {
-                    const data = JSON.parse(cmd.replace("@@create_link", "").trim());
-                    const fromEnt = this.plugin.entityManager.getEntity(data.from);
-                    const toEnt = this.plugin.entityManager.getEntity(data.to);
-                    const fromName = fromEnt ? fromEnt.label : data.from;
-                    const toName = toEnt ? toEnt.label : data.to;
-                    labelText = `🔗 Connect: [**${fromName}**] ──(${data.relationship})──> [**${toName}**]`;
-                } else if (cmd.startsWith("@@delete_link")) {
-                    const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
-                    labelText = `✂️ Delete Link (ID: ${data.id})`;
+        let cmdsToExecute: string[];
+
+        if (execOptions?.skipConfirmation) {
+            cmdsToExecute = commands;
+        } else {
+            const checkboxItems: { label: string; value: string; checked: boolean }[] = [];
+            commands.forEach((cmd, idx) => {
+                let labelText = `❓ Unknown: ${cmd}`;
+                try {
+                    if (cmd.startsWith("@@create_entity")) {
+                        const data = JSON.parse(cmd.replace("@@create_entity", "").trim());
+                        const name = data.label || getEntityLabel(data.type as EntityType, data.properties || {});
+                        labelText = `➕ Create ${data.type || "Entity"}: **${name}**`;
+                    } else if (cmd.startsWith("@@delete_entity")) {
+                        const data = JSON.parse(cmd.replace("@@delete_entity", "").trim());
+                        const entity = this.plugin.entityManager.getEntity(data.id);
+                        const name = entity ? entity.label : `ID: ${data.id}`;
+                        labelText = `🗑️ Delete Entity: **${name}**`;
+                    } else if (cmd.startsWith("@@update_entity")) {
+                        const data = JSON.parse(cmd.replace("@@update_entity", "").trim());
+                        const entity = findEntityForGraphUpdate(this.plugin.entityManager, data);
+                        const name = entity ? entity.label : data.current_label || data.id || "?";
+                        labelText = `✏️ Update entity: **${name}**`;
+                    } else if (cmd.startsWith("@@create_link")) {
+                        const data = JSON.parse(cmd.replace("@@create_link", "").trim());
+                        const fromEnt = this.plugin.entityManager.getEntity(data.from);
+                        const toEnt = this.plugin.entityManager.getEntity(data.to);
+                        const fromName = fromEnt ? fromEnt.label : data.from;
+                        const toName = toEnt ? toEnt.label : data.to;
+                        labelText = `🔗 Connect: [**${fromName}**] ──(${data.relationship})──> [**${toName}**]`;
+                    } else if (cmd.startsWith("@@delete_link")) {
+                        const data = JSON.parse(cmd.replace("@@delete_link", "").trim());
+                        labelText = `✂️ Delete Link (ID: ${data.id})`;
+                    }
+                } catch {
+                    labelText = `⚠️ Raw Data: ${cmd}`;
                 }
-            } catch (e) {
-                labelText = `⚠️ Raw Data: ${cmd}`;
+                checkboxItems.push({ label: labelText, value: idx.toString(), checked: true });
+            });
+
+            const confirmedValues = await new Promise<string[] | undefined>((resolve) => {
+                new ConfirmModal(
+                    this.plugin.app,
+                    "Confirm Graph Modifications",
+                    `The agent wants to make the following changes. Uncheck those you wish to ignore:`,
+                    (selectedValues) => resolve(selectedValues),
+                    () => resolve(undefined),
+                    false,
+                    checkboxItems,
+                ).open();
+            });
+
+            if (!confirmedValues) {
+                new Notice("Graph modifications cancelled by user.");
+                return;
             }
-            checkboxItems.push({ label: labelText, value: idx.toString(), checked: true });
-        });
 
-        // 1. Dry Run / User Confirmation using ConfirmModal
-        const confirmedValues = await new Promise<string[] | undefined>((resolve) => {
-            new ConfirmModal(
-                this.plugin.app,
-                "Confirm Graph Modifications",
-                `The agent wants to make the following changes. Uncheck those you wish to ignore:`,
-                (selectedValues) => resolve(selectedValues),
-                () => resolve(undefined),
-                false,
-                checkboxItems
-            ).open();
-        });
-
-        if (!confirmedValues) {
-            new Notice("Graph modifications cancelled by user.");
-            return;
-        }
-
-        const cmdsToExecute = commands.filter((cmd, idx) => confirmedValues.includes(idx.toString()));
-        if (cmdsToExecute.length === 0) {
-            new Notice("No graph modifications selected.");
-            return;
+            cmdsToExecute = commands.filter((_, idx) => confirmedValues.includes(idx.toString()));
+            if (cmdsToExecute.length === 0) {
+                new Notice("No graph modifications selected.");
+                return;
+            }
         }
 
         const lines = await this.executeGraphCommandsImmediate(cmdsToExecute, {
@@ -982,6 +1048,7 @@ export class OrchestrationService {
 
         if (successCount > 0) {
             new Notice(`Successfully executed ${successCount} graph modification(s).`);
+            await this.plugin.refreshOpenInsightViews();
         }
     }
 

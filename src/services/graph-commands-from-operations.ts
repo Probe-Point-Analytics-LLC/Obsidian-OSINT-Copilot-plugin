@@ -19,6 +19,20 @@ export function aiOperationsToGraphCommands(operations: AIOperation[]): string[]
                 );
             });
         }
+        if (op.updates?.length) {
+            for (const u of op.updates) {
+                if (!u || typeof u !== 'object') continue;
+                if (!u.current_label || typeof u.current_label !== 'string') continue;
+                if (!u.new_properties || typeof u.new_properties !== 'object') continue;
+                commands.push(
+                    `@@update_entity ${JSON.stringify({
+                        type: u.type,
+                        current_label: u.current_label,
+                        new_properties: u.new_properties,
+                    })}`,
+                );
+            }
+        }
         if (op.connections) {
             op.connections.forEach((conn) => {
                 let fromLabel = conn.from_label;

@@ -67,7 +67,7 @@ Copy `main.js`, `manifest.json`, and `styles.css` from the repo root into your v
 
 ### Verify installation
 
-- Ribbon icons for **chat**, **graph**, **timeline**, **map** (when graph features are enabled)  
+- Ribbon icons for **chat**, **tools & skills registry**, **graph**, **timeline**, **map** (when graph features are enabled)  
 - **Command Palette** (`Ctrl/Cmd + P`) — commands starting with **OSINT Copilot**  
 - **Settings → OSINT Copilot**
 
@@ -162,6 +162,8 @@ Default `**OSINTCopilot/custom/skills`**. On first run the plugin creates `**REA
 Each file uses YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description`) plus a body. The unified agent can propose creating or updating skills via `**custom_vault_operations**` (confirm in chat); HTTP enrichers also use companion skills in this folder.
 
 **Settings:** **Skills folder** under **OSINT Copilot**.
+
+**Tools & skills registry:** Command **OSINT Copilot: Open tools & skills registry** (or the ribbon **layout-list** icon) opens a tab with three columns: **built-in orchestration tools** (read-only reference), **vault skills** from your skills folder (open note, add, delete to trash), and **HTTP enrichers** from your enrichers folder (open JSON, add a disabled draft, delete to trash). Built-in tools are not files; planner calls like `SKILL_<id>` and `ENRICH_<id>` map to the vault files listed in the other columns.
 
 ### 3b. Custom YAML types (Person, Company, relationships)
 

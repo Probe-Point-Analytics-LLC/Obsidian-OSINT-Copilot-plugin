@@ -5,7 +5,7 @@ const JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markd
   "version": "${AGENT_TURN_SCHEMA_VERSION}",
   "answer_markdown": "string — Markdown answer for the user",
   "retrieval_hits": [ { "path": "vault-relative/path.md", "snippet": "optional short excerpt" } ],
-  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...] } ],
+  "graph_operations": [ { "action": "create", "entities": [...], "connections": [...], "updates": [ { "type": "Person", "current_label": "Alice", "new_properties": { "notes": "..." } } ] } ],
   "custom_vault_operations": [
     { "action": "upsert_skill", "id": "skill_id", "name": "Title", "description": "Planner description", "body": "Markdown body instructions for the skill" },
     { "action": "delete_skill", "id": "skill_id" },
@@ -21,6 +21,10 @@ const JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markd
 
 Rules for graph_operations:
 - Use the same structure as OSINT graph extraction: entities have "type" and "properties"; connections use numeric "from"/"to" indices into the entities array in the SAME operation object, plus "relationship" (UPPER_SNAKE_CASE).
+- Optional **updates** (same operation object or alongside creates): array of { "type", "current_label", "new_properties" } to **merge** fields onto an existing entity after the user applies graph changes. **current_label** should match how the entity is labeled in the vault/graph; **type** disambiguates if multiple entities share a label. Omit updates when only creating new nodes/links.
+- **action** may be "create" (default) or "update"; "update" still uses **updates** for property merges — do not rely on updates alone without a clear target label (and type when needed).
+- **Graph / map / timeline:** New entities appear in the **default** graph workspace until the user adds them to another workspace in the graph UI. **Timeline** shows notes whose YAML **type** is Event (any casing) with at least one usable date in properties: **start_date**, **first_seen**, **date**, **published**, **first_observed**, or **modified** (ISO-8601 or YYYY-MM-DD). **Map** shows **Location** and **Address** entities that have **latitude** and **longitude** in properties (numeric or parseable strings); without both, no map pin.
+- For **FTM / OIDSF** schema types, use the exact **type** string expected by the vault schema (same as graph extraction); the apply path supports FTM-shaped creates when the user confirms.
 - Only include graph_operations when the user wants new intelligence mapped into the graph; otherwise use an empty array.
 - Use your local agent skills and tools (file search, codebase/vault tools, web if available) to search the user's vault / context before answering.
 - retrieval_hits should list the main vault note paths you relied on (if any).
