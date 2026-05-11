@@ -16,6 +16,9 @@ export const DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`
 /** API keys and other secrets the user approves storing as vault files (plain text). */
 export const DEFAULT_CREDENTIALS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/credentials`;
 
+/** Agent-proposable scripts (Python, shell, etc.); `upsert_script` / `delete_script` target this tree. */
+export const DEFAULT_SCRIPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/scripts`;
+
 /** Global allowlist prefixes for task-agent vault writes (newline-separated). */
 export const DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/\nResearch/`;
 

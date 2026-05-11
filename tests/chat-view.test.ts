@@ -4,6 +4,7 @@ import { App, WorkspaceLeaf } from 'obsidian';
 import {
 	DEFAULT_CREDENTIALS_FOLDER,
 	DEFAULT_PROMPTS_FOLDER,
+	DEFAULT_SCRIPTS_FOLDER,
 	DEFAULT_SKILLS_FOLDER,
 	DEFAULT_TASK_AGENTS_FOLDER,
 	DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
@@ -38,6 +39,7 @@ describe('ChatView', () => {
             skillsFolder: DEFAULT_SKILLS_FOLDER,
             enrichersFolder: "OSINTCopilot/custom/enrichers",
             credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
+            scriptsFolder: DEFAULT_SCRIPTS_FOLDER,
             apiProvider: 'claude-code',
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',

@@ -14258,6 +14258,7 @@ var DEFAULT_SKILLS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/skills`;
 var DEFAULT_TASK_AGENTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/task-agents`;
 var DEFAULT_ENRICHERS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/enrichers`;
 var DEFAULT_CREDENTIALS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/credentials`;
+var DEFAULT_SCRIPTS_FOLDER = `${OSINT_COPILOT_CUSTOM_ROOT}/scripts`;
 var DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST = `${OSINT_COPILOT_CUSTOM_ROOT}/outputs/
 Research/`;
 var GRAPH_NODE_POSITIONS_FILE = `${OSINT_COPILOT_VAULT_ROOT}/graph-positions.json`;
@@ -25715,7 +25716,40 @@ function isEnricherRunnable(spec) {
 
 // src/services/custom-vault-operations.ts
 var MAX_CREDENTIAL_FILE_CHARS = 256e3;
+var MAX_SCRIPT_FILE_CHARS = 256e3;
 var MAX_ENRICHER_SPEC_JSON_CHARS = 2e5;
+var SCRIPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "py",
+  "pyi",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+  "tsx",
+  "jsx",
+  "sh",
+  "bash",
+  "zsh",
+  "sql",
+  "yaml",
+  "yml",
+  "toml",
+  "md",
+  "txt",
+  "json",
+  "rs",
+  "go",
+  "pl",
+  "rb",
+  "ps1"
+]);
+function relativePathHasAllowedScriptExtension(relativePath) {
+  const base = relativePath.split("/").pop() || "";
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0)
+    return false;
+  return SCRIPT_FILE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+}
 function parseSkillIdForVault(raw) {
   return String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -25808,6 +25842,21 @@ function pushDeleteEnricher(out, o) {
     return;
   out.push({ action: "delete_enricher", id });
 }
+function pushUpsertScript(out, o) {
+  const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+  if (!relativePath || !relativePathHasAllowedScriptExtension(relativePath))
+    return;
+  const content = typeof o.content === "string" ? o.content : "";
+  if (content.length > MAX_SCRIPT_FILE_CHARS)
+    return;
+  out.push({ action: "upsert_script", relativePath, content });
+}
+function pushDeleteScript(out, o) {
+  const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+  if (!relativePath || !relativePathHasAllowedScriptExtension(relativePath))
+    return;
+  out.push({ action: "delete_script", relativePath });
+}
 function normalizeCustomVaultOperations(raw) {
   if (!Array.isArray(raw))
     return [];
@@ -25836,6 +25885,12 @@ function normalizeCustomVaultOperations(raw) {
       case "delete_enricher":
         pushDeleteEnricher(out, o);
         break;
+      case "upsert_script":
+        pushUpsertScript(out, o);
+        break;
+      case "delete_script":
+        pushDeleteScript(out, o);
+        break;
       default:
         break;
     }
@@ -25856,6 +25911,10 @@ function summarizeCustomVaultOperation(op) {
       return `Upsert enricher "${op.id}" (${op.spec.name})`;
     case "delete_enricher":
       return `Delete enricher "${op.id}"`;
+    case "upsert_script":
+      return `Upsert script "${op.relativePath}" (${op.content.length} chars)`;
+    case "delete_script":
+      return `Delete script "${op.relativePath}"`;
   }
 }
 
@@ -26128,7 +26187,9 @@ var JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markdow
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
     { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" },
     { "action": "upsert_enricher", "id": "enricher_slug", "spec": { "id": "enricher_slug", "name": "API title", "description": "...", "status": "active", "enabled": true, "allowedDomains": ["api.vendor.com"], "auth": { "type": "bearer_vault", "vaultRelativePath": "vendor/secret.txt" }, "request": { "method": "GET", "urlTemplate": "https://api.vendor.com/v1?q={{query}}" }, "inputHints": [], "skillInstructions": "", "limits": { "timeoutMs": 15000, "retries": 1, "maxResponseChars": 8000 }, "updatedAt": "ISO-8601" } },
-    { "action": "delete_enricher", "id": "enricher_slug" }
+    { "action": "delete_enricher", "id": "enricher_slug" },
+    { "action": "upsert_script", "relativePath": "tools/example.py", "content": "# full file body as plain text" },
+    { "action": "delete_script", "relativePath": "tools/old_helper.sh" }
   ],
   "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
@@ -26140,7 +26201,7 @@ Rules for graph_operations:
 - retrieval_hits should list the main vault note paths you relied on (if any).
 
 Rules for custom_vault_operations:
-- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, or to store API keys/secrets under the vault custom area.
+- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, text scripts under the vault scripts folder, or to store API keys/secrets under the vault custom area.
 - Use an empty array when no vault file changes are requested.
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
@@ -26148,6 +26209,10 @@ Rules for custom_vault_operations:
 - upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side \u2014 follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}}: the executor applies URL encoding (encodeURIComponent) to those values in urlTemplate only; bodyTemplate receives raw strings for JSON. HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
 - When fixing or replacing an enricher, every upsert_enricher object MUST include the complete spec in the "spec" field (all fields needed for a working file). Do not describe the new JSON only in answer_markdown \u2014 the chat approval UI and Apply step use custom_vault_operations[].spec.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
+- upsert_script / delete_script target **text scripts** under the vault **scripts** folder (Settings \u2192 Scripts folder; default OSINTCopilot/custom/scripts). relativePath is only the path **inside** that folder: forward slashes, no ".." segments, and the filename must use an allowed text extension (e.g. py, sh, ts, md, json \u2014 not binary types).
+- For upsert_script you MUST include the **entire file** in the "content" string. Do not store secrets or API keys in script content \u2014 use put_credentials and enricher *_vault auth instead.
+- Do not claim the plugin will **run** or execute proposed scripts inside Obsidian; the user reviews the side-by-side diff and applies writes, then runs code in their own terminal or Claude Code if they choose.
+- delete_script removes the file at scripts_folder/relativePath when the user asks to delete a script.
 
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them inside Obsidian using requestUrl (same class of outbound HTTP as other plugin features \u2014 not a separate Node server, not the user's browser, so CORS as in a web page does not apply the same way; still use public/token APIs suitable for server-style requests).
@@ -26162,7 +26227,7 @@ Important:
 - Prefer concise, investigative Markdown in answer_markdown.
 - Cite vault paths inline where useful.
 - Do not fabricate retrieval_hits; only list sources you actually used.
-- Proposed vault file edits require user confirmation in the UI before anything is written.
+- Proposed vault file edits (including scripts) require user confirmation in the UI before anything is written.
 - Do not claim curl/Bash was "blocked at the permission gate" unless you are certain shell was invoked; for HTTP APIs use enricher_invocations with ids listed under REGISTERED HTTP ENRICHERS in the user prompt (never instruct raw curl when enrichers apply).`;
 }
 function buildUnifiedAgentUserPrompt(ctx) {
@@ -28994,6 +29059,9 @@ function credentialsRoot(plugin) {
 function enrichersRoot(plugin) {
   return (0, import_obsidian26.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
 }
+function scriptsRoot(plugin) {
+  return (0, import_obsidian26.normalizePath)(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
+}
 function resolveSkillMarkdownPath(plugin, skillId) {
   const id = parseSkillIdForVault(skillId);
   if (!id || id === "readme")
@@ -29027,6 +29095,26 @@ function resolveEnricherJsonPath(plugin, enricherId) {
   }
   return file;
 }
+function resolveScriptFilePath(plugin, relativePath) {
+  const rel = normalizeCredentialsRelativePath(relativePath);
+  if (!rel || !relativePathHasAllowedScriptExtension(rel)) {
+    throw new Error("Invalid script relative path");
+  }
+  const root = scriptsRoot(plugin);
+  assertPathUnderCustomRoot(root, "Scripts root");
+  const file = (0, import_obsidian26.normalizePath)(`${root}/${rel}`);
+  assertPathUnderCustomRoot(file, "Script file");
+  if (!pathIsUnderPrefix2(file, root)) {
+    throw new Error("Script path escapes scripts folder");
+  }
+  return file;
+}
+var DEFAULT_SCRIPTS_README = `# Vault scripts (coding assets)
+
+The unified agent can propose **create / update / delete** for text files in this folder. Review changes in chat and use **Apply selected** \u2014 the plugin does **not** run these scripts. Run them in your own terminal or Claude Code when you trust the code.
+
+Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
+`;
 async function ensureFolderChain(app, filePath) {
   const parts = (0, import_obsidian26.normalizePath)(filePath).split("/").slice(0, -1);
   let current = "";
@@ -29130,6 +29218,27 @@ async function applyCustomVaultOperations(plugin, ops) {
           }
           break;
         }
+        case "upsert_script": {
+          const path = resolveScriptFilePath(plugin, op.relativePath);
+          await ensureFolderChain(plugin.app, path);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.modify(existing, op.content);
+          } else {
+            await plugin.app.vault.create(path, op.content);
+          }
+          applied++;
+          break;
+        }
+        case "delete_script": {
+          const path = resolveScriptFilePath(plugin, op.relativePath);
+          const existing = plugin.app.vault.getAbstractFileByPath(path);
+          if (existing instanceof import_obsidian26.TFile) {
+            await plugin.app.vault.delete(existing);
+            applied++;
+          }
+          break;
+        }
         default:
           break;
       }
@@ -29153,6 +29262,323 @@ async function ensureCredentialsFolder(plugin) {
     await plugin.app.vault.createFolder(root);
   } else if (!(f instanceof import_obsidian26.TFolder)) {
     console.warn("[custom-vault-writer] credentials path is not a folder:", root);
+  }
+}
+async function ensureScriptsFolder(plugin) {
+  const root = scriptsRoot(plugin);
+  assertPathUnderCustomRoot(root, "Scripts root");
+  const f = plugin.app.vault.getAbstractFileByPath(root);
+  if (!f) {
+    await plugin.app.vault.createFolder(root);
+  } else if (!(f instanceof import_obsidian26.TFolder)) {
+    console.warn("[custom-vault-writer] scripts path is not a folder:", root);
+  }
+}
+async function ensureScriptsDefaultsInstalled(plugin) {
+  await ensureScriptsFolder(plugin);
+  const readme = (0, import_obsidian26.normalizePath)(`${scriptsRoot(plugin)}/README.md`);
+  if (!plugin.app.vault.getAbstractFileByPath(readme)) {
+    await plugin.app.vault.create(readme, DEFAULT_SCRIPTS_README);
+  }
+}
+
+// node_modules/diff/libesm/diff/base.js
+var Diff = class {
+  diff(oldStr, newStr, options = {}) {
+    let callback;
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    } else if ("callback" in options) {
+      callback = options.callback;
+    }
+    const oldString = this.castInput(oldStr, options);
+    const newString = this.castInput(newStr, options);
+    const oldTokens = this.removeEmpty(this.tokenize(oldString, options));
+    const newTokens = this.removeEmpty(this.tokenize(newString, options));
+    return this.diffWithOptionsObj(oldTokens, newTokens, options, callback);
+  }
+  diffWithOptionsObj(oldTokens, newTokens, options, callback) {
+    var _a;
+    const done = (value) => {
+      value = this.postProcess(value, options);
+      if (callback) {
+        setTimeout(function() {
+          callback(value);
+        }, 0);
+        return void 0;
+      } else {
+        return value;
+      }
+    };
+    const newLen = newTokens.length, oldLen = oldTokens.length;
+    let editLength = 1;
+    let maxEditLength = newLen + oldLen;
+    if (options.maxEditLength != null) {
+      maxEditLength = Math.min(maxEditLength, options.maxEditLength);
+    }
+    const maxExecutionTime = (_a = options.timeout) !== null && _a !== void 0 ? _a : Infinity;
+    const abortAfterTimestamp = Date.now() + maxExecutionTime;
+    const bestPath = [{ oldPos: -1, lastComponent: void 0 }];
+    let newPos = this.extractCommon(bestPath[0], newTokens, oldTokens, 0, options);
+    if (bestPath[0].oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
+      return done(this.buildValues(bestPath[0].lastComponent, newTokens, oldTokens));
+    }
+    let minDiagonalToConsider = -Infinity, maxDiagonalToConsider = Infinity;
+    const execEditLength = () => {
+      for (let diagonalPath = Math.max(minDiagonalToConsider, -editLength); diagonalPath <= Math.min(maxDiagonalToConsider, editLength); diagonalPath += 2) {
+        let basePath;
+        const removePath = bestPath[diagonalPath - 1], addPath = bestPath[diagonalPath + 1];
+        if (removePath) {
+          bestPath[diagonalPath - 1] = void 0;
+        }
+        let canAdd = false;
+        if (addPath) {
+          const addPathNewPos = addPath.oldPos - diagonalPath;
+          canAdd = addPath && 0 <= addPathNewPos && addPathNewPos < newLen;
+        }
+        const canRemove = removePath && removePath.oldPos + 1 < oldLen;
+        if (!canAdd && !canRemove) {
+          bestPath[diagonalPath] = void 0;
+          continue;
+        }
+        if (!canRemove || canAdd && removePath.oldPos < addPath.oldPos) {
+          basePath = this.addToPath(addPath, true, false, 0, options);
+        } else {
+          basePath = this.addToPath(removePath, false, true, 1, options);
+        }
+        newPos = this.extractCommon(basePath, newTokens, oldTokens, diagonalPath, options);
+        if (basePath.oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
+          return done(this.buildValues(basePath.lastComponent, newTokens, oldTokens)) || true;
+        } else {
+          bestPath[diagonalPath] = basePath;
+          if (basePath.oldPos + 1 >= oldLen) {
+            maxDiagonalToConsider = Math.min(maxDiagonalToConsider, diagonalPath - 1);
+          }
+          if (newPos + 1 >= newLen) {
+            minDiagonalToConsider = Math.max(minDiagonalToConsider, diagonalPath + 1);
+          }
+        }
+      }
+      editLength++;
+    };
+    if (callback) {
+      (function exec() {
+        setTimeout(function() {
+          if (editLength > maxEditLength || Date.now() > abortAfterTimestamp) {
+            return callback(void 0);
+          }
+          if (!execEditLength()) {
+            exec();
+          }
+        }, 0);
+      })();
+    } else {
+      while (editLength <= maxEditLength && Date.now() <= abortAfterTimestamp) {
+        const ret = execEditLength();
+        if (ret) {
+          return ret;
+        }
+      }
+    }
+  }
+  addToPath(path, added, removed, oldPosInc, options) {
+    const last = path.lastComponent;
+    if (last && !options.oneChangePerToken && last.added === added && last.removed === removed) {
+      return {
+        oldPos: path.oldPos + oldPosInc,
+        lastComponent: { count: last.count + 1, added, removed, previousComponent: last.previousComponent }
+      };
+    } else {
+      return {
+        oldPos: path.oldPos + oldPosInc,
+        lastComponent: { count: 1, added, removed, previousComponent: last }
+      };
+    }
+  }
+  extractCommon(basePath, newTokens, oldTokens, diagonalPath, options) {
+    const newLen = newTokens.length, oldLen = oldTokens.length;
+    let oldPos = basePath.oldPos, newPos = oldPos - diagonalPath, commonCount = 0;
+    while (newPos + 1 < newLen && oldPos + 1 < oldLen && this.equals(oldTokens[oldPos + 1], newTokens[newPos + 1], options)) {
+      newPos++;
+      oldPos++;
+      commonCount++;
+      if (options.oneChangePerToken) {
+        basePath.lastComponent = { count: 1, previousComponent: basePath.lastComponent, added: false, removed: false };
+      }
+    }
+    if (commonCount && !options.oneChangePerToken) {
+      basePath.lastComponent = { count: commonCount, previousComponent: basePath.lastComponent, added: false, removed: false };
+    }
+    basePath.oldPos = oldPos;
+    return newPos;
+  }
+  equals(left, right, options) {
+    if (options.comparator) {
+      return options.comparator(left, right);
+    } else {
+      return left === right || !!options.ignoreCase && left.toLowerCase() === right.toLowerCase();
+    }
+  }
+  removeEmpty(array) {
+    const ret = [];
+    for (let i = 0; i < array.length; i++) {
+      if (array[i]) {
+        ret.push(array[i]);
+      }
+    }
+    return ret;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  castInput(value, options) {
+    return value;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  tokenize(value, options) {
+    return Array.from(value);
+  }
+  join(chars) {
+    return chars.join("");
+  }
+  postProcess(changeObjects, options) {
+    return changeObjects;
+  }
+  get useLongestToken() {
+    return false;
+  }
+  buildValues(lastComponent, newTokens, oldTokens) {
+    const components = [];
+    let nextComponent;
+    while (lastComponent) {
+      components.push(lastComponent);
+      nextComponent = lastComponent.previousComponent;
+      delete lastComponent.previousComponent;
+      lastComponent = nextComponent;
+    }
+    components.reverse();
+    const componentLen = components.length;
+    let componentPos = 0, newPos = 0, oldPos = 0;
+    for (; componentPos < componentLen; componentPos++) {
+      const component = components[componentPos];
+      if (!component.removed) {
+        if (!component.added && this.useLongestToken) {
+          let value = newTokens.slice(newPos, newPos + component.count);
+          value = value.map(function(value2, i) {
+            const oldValue = oldTokens[oldPos + i];
+            return oldValue.length > value2.length ? oldValue : value2;
+          });
+          component.value = this.join(value);
+        } else {
+          component.value = this.join(newTokens.slice(newPos, newPos + component.count));
+        }
+        newPos += component.count;
+        if (!component.added) {
+          oldPos += component.count;
+        }
+      } else {
+        component.value = this.join(oldTokens.slice(oldPos, oldPos + component.count));
+        oldPos += component.count;
+      }
+    }
+    return components;
+  }
+};
+
+// node_modules/diff/libesm/diff/array.js
+var ArrayDiff = class extends Diff {
+  tokenize(value) {
+    return value.slice();
+  }
+  join(value) {
+    return value;
+  }
+  removeEmpty(value) {
+    return value;
+  }
+};
+var arrayDiff = new ArrayDiff();
+function diffArrays(oldArr, newArr, options) {
+  return arrayDiff.diff(oldArr, newArr, options);
+}
+
+// src/ui/vault-script-side-diff.ts
+var DEFAULT_MAX_ROWS = 8e3;
+function pushRow(rows, left, right, kind, maxRows) {
+  rows.push({ left, right, kind });
+  return rows.length >= maxRows;
+}
+function buildScriptSideBySideRows(currentText, proposedText, maxRows = DEFAULT_MAX_ROWS) {
+  const leftLines = currentText.length === 0 ? [] : currentText.split("\n");
+  const rightLines = proposedText.length === 0 ? [] : proposedText.split("\n");
+  const parts = diffArrays(leftLines, rightLines);
+  const rows = [];
+  for (const part of parts) {
+    if (part.added) {
+      for (const line of part.value) {
+        if (pushRow(rows, "", line, "add", maxRows))
+          return { rows, truncated: true };
+      }
+    } else if (part.removed) {
+      for (const line of part.value) {
+        if (pushRow(rows, line, "", "remove", maxRows))
+          return { rows, truncated: true };
+      }
+    } else {
+      for (const line of part.value) {
+        if (pushRow(rows, line, line, "equal", maxRows))
+          return { rows, truncated: true };
+      }
+    }
+  }
+  return { rows, truncated: false };
+}
+function buildDeleteScriptSideBySideRows(currentText, maxRows = DEFAULT_MAX_ROWS) {
+  const lines = currentText.length === 0 ? [] : currentText.split("\n");
+  const rows = [];
+  if (lines.length === 0) {
+    rows.push({ left: "(empty file)", right: "(delete)", kind: "remove" });
+    return { rows, truncated: false };
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const right = i === 0 ? "(delete)" : "";
+    if (pushRow(rows, lines[i], right, "remove", maxRows)) {
+      const moreLines = i < lines.length - 1;
+      return { rows, truncated: moreLines };
+    }
+  }
+  return { rows, truncated: false };
+}
+function renderScriptSideBySideTable(parent, rows, opts) {
+  const wrap = parent.createDiv();
+  wrap.style.cssText = "margin-top:4px;max-height:420px;overflow:auto;border:1px solid var(--background-modifier-border);border-radius:6px;";
+  const table = wrap.createEl("table");
+  table.style.cssText = "width:100%;border-collapse:collapse;font-size:11px;font-family:var(--font-monospace);table-layout:fixed;";
+  const thead = table.createEl("thead");
+  const hr = thead.createEl("tr");
+  const h0 = hr.createEl("th", { text: "Current vault" });
+  const h1 = hr.createEl("th", { text: "Proposed" });
+  for (const h of [h0, h1]) {
+    h.style.cssText = "text-align:left;padding:4px 6px;border-bottom:1px solid var(--background-modifier-border);width:50%;background:var(--background-secondary);";
+  }
+  const tbody = table.createEl("tbody");
+  for (const r of rows) {
+    const tr = tbody.createEl("tr");
+    const td0 = tr.createEl("td");
+    const td1 = tr.createEl("td");
+    const base = "padding:2px 6px;vertical-align:top;word-break:break-word;border-bottom:1px solid var(--background-modifier-border);white-space:pre-wrap;";
+    td0.style.cssText = base;
+    td1.style.cssText = base;
+    if (r.kind === "add") {
+      td1.style.boxShadow = "inset 3px 0 0 var(--text-success)";
+    } else if (r.kind === "remove") {
+      td0.style.boxShadow = "inset 3px 0 0 var(--text-error)";
+    }
+    td0.textContent = r.left;
+    td1.textContent = r.right;
+  }
+  if (opts?.truncationNote) {
+    const note = wrap.createEl("p", { text: opts.truncationNote });
+    note.style.cssText = "margin:6px 8px;font-size:11px;color:var(--text-muted);";
   }
 }
 
@@ -30007,7 +30433,29 @@ function truncateVaultOpPreviewText(raw) {
 
 \u2026 [preview truncated: ${overflow} more character(s)]`;
 }
-function appendVaultOpPreviewBlock(parent, op) {
+async function appendVaultOpPreviewBlock(plugin, parent, op) {
+  if (op.action === "upsert_script" || op.action === "delete_script") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", {
+      text: op.action === "delete_script" ? "Preview script delete (side-by-side)" : "Preview script change (side-by-side)"
+    });
+    let current = "";
+    try {
+      const path = resolveScriptFilePath(plugin, op.relativePath);
+      const f = plugin.app.vault.getAbstractFileByPath(path);
+      if (f instanceof import_obsidian31.TFile) {
+        current = await plugin.app.vault.cachedRead(f);
+      }
+    } catch {
+    }
+    const bodyHost = details.createDiv();
+    const { rows, truncated } = op.action === "delete_script" ? buildDeleteScriptSideBySideRows(current) : buildScriptSideBySideRows(current, op.content);
+    const note = truncated ? `Table truncated at ${rows.length} rows \u2014 open the vault file for the full view.` : void 0;
+    renderScriptSideBySideTable(bodyHost, rows, { truncationNote: note });
+    return;
+  }
   if (op.action === "upsert_enricher") {
     const details = parent.createEl("details");
     details.style.marginLeft = "24px";
@@ -30061,6 +30509,7 @@ var DEFAULT_SETTINGS = {
   skillsFolder: DEFAULT_SKILLS_FOLDER,
   enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
   credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
+  scriptsFolder: DEFAULT_SCRIPTS_FOLDER,
   apiProvider: "claude-code",
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
@@ -30765,6 +31214,9 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     }
     if (typeof merged.credentialsFolder !== "string" || !merged.credentialsFolder.trim()) {
       merged.credentialsFolder = DEFAULT_SETTINGS.credentialsFolder;
+    }
+    if (typeof merged.scriptsFolder !== "string" || !merged.scriptsFolder.trim()) {
+      merged.scriptsFolder = DEFAULT_SETTINGS.scriptsFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -33095,14 +33547,15 @@ ${ev.details}`;
           border-radius: 8px;
           border-left: 4px solid var(--text-accent);
         `;
-        vaultOpsDiv.createEl("h4", { text: "\u{1F4C1} Proposed vault changes (skills / credentials / enrichers)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("h4", { text: "\u{1F4C1} Proposed vault changes (skills / credentials / enrichers / scripts)" }).style.marginTop = "0";
         vaultOpsDiv.createEl("p", {
-          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here."
+          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here. Script proposals show a side-by-side diff (current vault vs proposed); the plugin does not run scripts."
         }).style.fontSize = "small";
         const listEl = vaultOpsDiv.createDiv();
         listEl.style.marginBottom = "12px";
         const selectedVaultOpIndices = new Set(item.proposedCustomVaultOps.map((_, idx) => idx));
-        item.proposedCustomVaultOps.forEach((op, idx) => {
+        for (let idx = 0; idx < item.proposedCustomVaultOps.length; idx++) {
+          const op = item.proposedCustomVaultOps[idx];
           const outer = listEl.createDiv();
           outer.style.cssText = `
             display: flex;
@@ -33130,8 +33583,8 @@ ${ev.details}`;
             else
               selectedVaultOpIndices.delete(idx);
           });
-          appendVaultOpPreviewBlock(outer, op);
-        });
+          await appendVaultOpPreviewBlock(this.plugin, outer, op);
+        }
         const vaultActionRow = vaultOpsDiv.createDiv();
         vaultActionRow.style.display = "flex";
         vaultActionRow.style.gap = "10px";
@@ -34990,6 +35443,7 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
             await this.plugin.app.vault.createFolder(enricherRoot);
           }
           await ensureCredentialsFolder(this.plugin);
+          await ensureScriptsDefaultsInstalled(this.plugin);
           this.plugin.vaultPromptLoader?.invalidateAll();
           this.plugin.taskAgentRegistry?.invalidate();
           this.plugin.skillRegistry?.invalidate();
@@ -35023,6 +35477,14 @@ var VaultAISettingTab = class extends import_obsidian31.PluginSettingTab {
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_CREDENTIALS_FOLDER).setValue(this.plugin.settings.credentialsFolder).onChange(async (value) => {
         this.plugin.settings.credentialsFolder = value.trim() || DEFAULT_CREDENTIALS_FOLDER;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian31.Setting(containerEl).setName("Scripts folder").setDesc(
+      "Text scripts (e.g. .py, .sh, .ts) the unified agent may propose via upsert_script / delete_script. Review the side-by-side diff in chat; the plugin does not execute scripts."
+    ).addText(
+      (text) => text.setPlaceholder(DEFAULT_SCRIPTS_FOLDER).setValue(this.plugin.settings.scriptsFolder).onChange(async (value) => {
+        this.plugin.settings.scriptsFolder = value.trim() || DEFAULT_SCRIPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );

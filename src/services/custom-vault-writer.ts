@@ -3,11 +3,16 @@ import type VaultAIPlugin from '../../main';
 import {
 	DEFAULT_CREDENTIALS_FOLDER,
 	DEFAULT_ENRICHERS_FOLDER,
+	DEFAULT_SCRIPTS_FOLDER,
 	DEFAULT_SKILLS_FOLDER,
 	OSINT_COPILOT_CUSTOM_ROOT,
 } from '../constants/vault-layout';
 import type { CustomVaultOperation } from './custom-vault-operations';
-import { normalizeCredentialsRelativePath, parseSkillIdForVault } from './custom-vault-operations';
+import {
+	normalizeCredentialsRelativePath,
+	parseSkillIdForVault,
+	relativePathHasAllowedScriptExtension,
+} from './custom-vault-operations';
 
 function pathIsUnderPrefix(path: string, prefix: string): boolean {
 	const p = normalizePath(path);
@@ -33,6 +38,10 @@ function credentialsRoot(plugin: VaultAIPlugin): string {
 
 function enrichersRoot(plugin: VaultAIPlugin): string {
 	return normalizePath(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+}
+
+function scriptsRoot(plugin: VaultAIPlugin): string {
+	return normalizePath(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
 }
 
 /** Re-validate op paths against current settings (defense in depth). */
@@ -69,6 +78,29 @@ export function resolveEnricherJsonPath(plugin: VaultAIPlugin, enricherId: strin
 	}
 	return file;
 }
+
+/** Resolved vault path for a script op `relativePath` (under configured scripts folder). */
+export function resolveScriptFilePath(plugin: VaultAIPlugin, relativePath: string): string {
+	const rel = normalizeCredentialsRelativePath(relativePath);
+	if (!rel || !relativePathHasAllowedScriptExtension(rel)) {
+		throw new Error('Invalid script relative path');
+	}
+	const root = scriptsRoot(plugin);
+	assertPathUnderCustomRoot(root, 'Scripts root');
+	const file = normalizePath(`${root}/${rel}`);
+	assertPathUnderCustomRoot(file, 'Script file');
+	if (!pathIsUnderPrefix(file, root)) {
+		throw new Error('Script path escapes scripts folder');
+	}
+	return file;
+}
+
+const DEFAULT_SCRIPTS_README = `# Vault scripts (coding assets)
+
+The unified agent can propose **create / update / delete** for text files in this folder. Review changes in chat and use **Apply selected** — the plugin does **not** run these scripts. Run them in your own terminal or Claude Code when you trust the code.
+
+Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
+`;
 
 async function ensureFolderChain(app: App, filePath: string): Promise<void> {
 	const parts = normalizePath(filePath).split('/').slice(0, -1);
@@ -191,6 +223,27 @@ export async function applyCustomVaultOperations(
 					}
 					break;
 				}
+				case 'upsert_script': {
+					const path = resolveScriptFilePath(plugin, op.relativePath);
+					await ensureFolderChain(plugin.app, path);
+					const existing = plugin.app.vault.getAbstractFileByPath(path);
+					if (existing instanceof TFile) {
+						await plugin.app.vault.modify(existing, op.content);
+					} else {
+						await plugin.app.vault.create(path, op.content);
+					}
+					applied++;
+					break;
+				}
+				case 'delete_script': {
+					const path = resolveScriptFilePath(plugin, op.relativePath);
+					const existing = plugin.app.vault.getAbstractFileByPath(path);
+					if (existing instanceof TFile) {
+						await plugin.app.vault.delete(existing);
+						applied++;
+					}
+					break;
+				}
 				default:
 					break;
 			}
@@ -218,5 +271,26 @@ export async function ensureCredentialsFolder(plugin: VaultAIPlugin): Promise<vo
 		await plugin.app.vault.createFolder(root);
 	} else if (!(f instanceof TFolder)) {
 		console.warn('[custom-vault-writer] credentials path is not a folder:', root);
+	}
+}
+
+/** Ensure scripts root exists (under OSINTCopilot/custom/). */
+export async function ensureScriptsFolder(plugin: VaultAIPlugin): Promise<void> {
+	const root = scriptsRoot(plugin);
+	assertPathUnderCustomRoot(root, 'Scripts root');
+	const f = plugin.app.vault.getAbstractFileByPath(root);
+	if (!f) {
+		await plugin.app.vault.createFolder(root);
+	} else if (!(f instanceof TFolder)) {
+		console.warn('[custom-vault-writer] scripts path is not a folder:', root);
+	}
+}
+
+/** Create scripts folder and a short README when missing (never overwrites README). */
+export async function ensureScriptsDefaultsInstalled(plugin: VaultAIPlugin): Promise<void> {
+	await ensureScriptsFolder(plugin);
+	const readme = normalizePath(`${scriptsRoot(plugin)}/README.md`);
+	if (!plugin.app.vault.getAbstractFileByPath(readme)) {
+		await plugin.app.vault.create(readme, DEFAULT_SCRIPTS_README);
 	}
 }

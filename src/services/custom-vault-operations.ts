@@ -1,5 +1,5 @@
 /**
- * Unified-agent JSON: proposed writes under OSINTCopilot/custom/ (skills, credentials, enrichers).
+ * Unified-agent JSON: proposed writes under OSINTCopilot/custom/ (skills, credentials, enrichers, scripts).
  * Applied only after user confirmation in chat.
  */
 
@@ -7,8 +7,44 @@ import type { EnricherSpec } from './enrichers/enricher-schema';
 import { normalizeEnricherSpec } from './enrichers/enricher-schema';
 
 export const MAX_CREDENTIAL_FILE_CHARS = 256_000;
+/** Max script body for upsert_script (same order of magnitude as credentials cap). */
+export const MAX_SCRIPT_FILE_CHARS = 256_000;
 /** Max serialized size for raw enricher spec payload before normalize (bytes of JSON string). */
 export const MAX_ENRICHER_SPEC_JSON_CHARS = 200_000;
+
+/** Allowed file extensions for script vault ops (last path segment must end with .ext). */
+export const SCRIPT_FILE_EXTENSIONS = new Set([
+	'py',
+	'pyi',
+	'js',
+	'mjs',
+	'cjs',
+	'ts',
+	'tsx',
+	'jsx',
+	'sh',
+	'bash',
+	'zsh',
+	'sql',
+	'yaml',
+	'yml',
+	'toml',
+	'md',
+	'txt',
+	'json',
+	'rs',
+	'go',
+	'pl',
+	'rb',
+	'ps1',
+]);
+
+export function relativePathHasAllowedScriptExtension(relativePath: string): boolean {
+	const base = relativePath.split('/').pop() || '';
+	const dot = base.lastIndexOf('.');
+	if (dot <= 0) return false;
+	return SCRIPT_FILE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+}
 
 export type CustomVaultOperation =
 	| CustomVaultUpsertSkill
@@ -16,7 +52,9 @@ export type CustomVaultOperation =
 	| CustomVaultPutCredentials
 	| CustomVaultDeleteCredentials
 	| CustomVaultUpsertEnricher
-	| CustomVaultDeleteEnricher;
+	| CustomVaultDeleteEnricher
+	| CustomVaultUpsertScript
+	| CustomVaultDeleteScript;
 
 export interface CustomVaultUpsertSkill {
 	action: 'upsert_skill';
@@ -52,6 +90,18 @@ export interface CustomVaultUpsertEnricher {
 export interface CustomVaultDeleteEnricher {
 	action: 'delete_enricher';
 	id: string;
+}
+
+/** Text script under the configured scripts folder; `content` is the full file body. */
+export interface CustomVaultUpsertScript {
+	action: 'upsert_script';
+	relativePath: string;
+	content: string;
+}
+
+export interface CustomVaultDeleteScript {
+	action: 'delete_script';
+	relativePath: string;
 }
 
 /** Normalize vault skill id for filenames (alphanumeric, underscore, hyphen). */
@@ -149,6 +199,20 @@ function pushDeleteEnricher(out: CustomVaultOperation[], o: Record<string, unkno
 	out.push({ action: 'delete_enricher', id });
 }
 
+function pushUpsertScript(out: CustomVaultOperation[], o: Record<string, unknown>): void {
+	const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+	if (!relativePath || !relativePathHasAllowedScriptExtension(relativePath)) return;
+	const content = typeof o.content === 'string' ? o.content : '';
+	if (content.length > MAX_SCRIPT_FILE_CHARS) return;
+	out.push({ action: 'upsert_script', relativePath, content });
+}
+
+function pushDeleteScript(out: CustomVaultOperation[], o: Record<string, unknown>): void {
+	const relativePath = normalizeCredentialsRelativePath(o.relativePath ?? o.path);
+	if (!relativePath || !relativePathHasAllowedScriptExtension(relativePath)) return;
+	out.push({ action: 'delete_script', relativePath });
+}
+
 /** Parse and validate custom_vault_operations from agent JSON; drops invalid entries. */
 export function normalizeCustomVaultOperations(raw: unknown): CustomVaultOperation[] {
 	if (!Array.isArray(raw)) return [];
@@ -176,6 +240,12 @@ export function normalizeCustomVaultOperations(raw: unknown): CustomVaultOperati
 			case 'delete_enricher':
 				pushDeleteEnricher(out, o);
 				break;
+			case 'upsert_script':
+				pushUpsertScript(out, o);
+				break;
+			case 'delete_script':
+				pushDeleteScript(out, o);
+				break;
 			default:
 				break;
 		}
@@ -198,5 +268,9 @@ export function summarizeCustomVaultOperation(op: CustomVaultOperation): string 
 			return `Upsert enricher "${op.id}" (${op.spec.name})`;
 		case 'delete_enricher':
 			return `Delete enricher "${op.id}"`;
+		case 'upsert_script':
+			return `Upsert script "${op.relativePath}" (${op.content.length} chars)`;
+		case 'delete_script':
+			return `Delete script "${op.relativePath}"`;
 	}
 }

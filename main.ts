@@ -85,13 +85,24 @@ import {
   DEFAULT_CREDENTIALS_FOLDER,
   DEFAULT_ENRICHERS_FOLDER,
   DEFAULT_PROMPTS_FOLDER,
+  DEFAULT_SCRIPTS_FOLDER,
   DEFAULT_SKILLS_FOLDER,
   DEFAULT_TASK_AGENTS_FOLDER,
   DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
 } from './src/constants/vault-layout';
 import type { CustomVaultOperation } from './src/services/custom-vault-operations';
 import { normalizeCustomVaultOperations, summarizeCustomVaultOperation } from './src/services/custom-vault-operations';
-import { applyCustomVaultOperations, ensureCredentialsFolder } from './src/services/custom-vault-writer';
+import {
+  applyCustomVaultOperations,
+  ensureCredentialsFolder,
+  ensureScriptsDefaultsInstalled,
+  resolveScriptFilePath,
+} from './src/services/custom-vault-writer';
+import {
+  buildDeleteScriptSideBySideRows,
+  buildScriptSideBySideRows,
+  renderScriptSideBySideTable,
+} from './src/ui/vault-script-side-diff';
 import { VaultLockService } from './src/services/vault-lock-service';
 import { VaultUnlockModal } from './src/modals/vault-unlock-modal';
 import { SchemaBootstrapService } from './src/services/schema-bootstrap-service';
@@ -116,7 +127,42 @@ function truncateVaultOpPreviewText(raw: string): string {
   return `${raw.slice(0, VAULT_OP_PREVIEW_MAX_CHARS)}\n\n… [preview truncated: ${overflow} more character(s)]`;
 }
 
-function appendVaultOpPreviewBlock(parent: HTMLDivElement, op: CustomVaultOperation): void {
+async function appendVaultOpPreviewBlock(
+  plugin: VaultAIPlugin,
+  parent: HTMLDivElement,
+  op: CustomVaultOperation,
+): Promise<void> {
+  if (op.action === "upsert_script" || op.action === "delete_script") {
+    const details = parent.createEl("details");
+    details.style.marginLeft = "24px";
+    details.style.marginTop = "4px";
+    details.createEl("summary", {
+      text:
+        op.action === "delete_script"
+          ? "Preview script delete (side-by-side)"
+          : "Preview script change (side-by-side)",
+    });
+    let current = "";
+    try {
+      const path = resolveScriptFilePath(plugin, op.relativePath);
+      const f = plugin.app.vault.getAbstractFileByPath(path);
+      if (f instanceof TFile) {
+        current = await plugin.app.vault.cachedRead(f);
+      }
+    } catch {
+      /* new file or unreadable path */
+    }
+    const bodyHost = details.createDiv();
+    const { rows, truncated } =
+      op.action === "delete_script"
+        ? buildDeleteScriptSideBySideRows(current)
+        : buildScriptSideBySideRows(current, op.content);
+    const note = truncated
+      ? `Table truncated at ${rows.length} rows — open the vault file for the full view.`
+      : undefined;
+    renderScriptSideBySideTable(bodyHost, rows, { truncationNote: note });
+    return;
+  }
   if (op.action === "upsert_enricher") {
     const details = parent.createEl("details");
     details.style.marginLeft = "24px";
@@ -179,6 +225,8 @@ interface VaultAISettings {
   enrichersFolder: string;
   /** Vault folder for credential files (API keys, etc.); must stay under OSINTCopilot/custom/. */
   credentialsFolder: string;
+  /** Vault folder for agent-proposable text scripts (py, sh, ts, …); must stay under OSINTCopilot/custom/. */
+  scriptsFolder: string;
   // Custom API settings
   apiProvider: 'claude-code';
   claudeCodeCliPath: string;
@@ -270,6 +318,7 @@ const DEFAULT_SETTINGS: VaultAISettings = {
   skillsFolder: DEFAULT_SKILLS_FOLDER,
   enrichersFolder: DEFAULT_ENRICHERS_FOLDER,
   credentialsFolder: DEFAULT_CREDENTIALS_FOLDER,
+  scriptsFolder: DEFAULT_SCRIPTS_FOLDER,
   apiProvider: 'claude-code',
   claudeCodeCliPath: 'claude',
   claudeCodeModel: 'sonnet',
@@ -1057,6 +1106,9 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     }
     if (typeof merged.credentialsFolder !== 'string' || !merged.credentialsFolder.trim()) {
       merged.credentialsFolder = DEFAULT_SETTINGS.credentialsFolder;
+    }
+    if (typeof merged.scriptsFolder !== 'string' || !merged.scriptsFolder.trim()) {
+      merged.scriptsFolder = DEFAULT_SETTINGS.scriptsFolder;
     }
     if (!Array.isArray(merged.lockedVaultPaths)) {
       merged.lockedVaultPaths = [];
@@ -3915,16 +3967,17 @@ export class ChatView extends ItemView {
           border-radius: 8px;
           border-left: 4px solid var(--text-accent);
         `;
-        vaultOpsDiv.createEl("h4", { text: "📁 Proposed vault changes (skills / credentials / enrichers)" }).style.marginTop = "0";
+        vaultOpsDiv.createEl("h4", { text: "📁 Proposed vault changes (skills / credentials / enrichers / scripts)" }).style.marginTop = "0";
         vaultOpsDiv.createEl("p", {
-          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here.",
+          text: "Review and apply file writes under your OSINT Copilot custom folder. Credential file contents are not shown here. Script proposals show a side-by-side diff (current vault vs proposed); the plugin does not run scripts.",
         }).style.fontSize = "small";
 
         const listEl = vaultOpsDiv.createDiv();
         listEl.style.marginBottom = "12px";
         const selectedVaultOpIndices = new Set<number>(item.proposedCustomVaultOps.map((_, idx) => idx));
 
-        item.proposedCustomVaultOps.forEach((op, idx) => {
+        for (let idx = 0; idx < item.proposedCustomVaultOps.length; idx++) {
+          const op = item.proposedCustomVaultOps[idx];
           const outer = listEl.createDiv();
           outer.style.cssText = `
             display: flex;
@@ -3950,8 +4003,8 @@ export class ChatView extends ItemView {
             if (cb.checked) selectedVaultOpIndices.add(idx);
             else selectedVaultOpIndices.delete(idx);
           });
-          appendVaultOpPreviewBlock(outer, op);
-        });
+          await appendVaultOpPreviewBlock(this.plugin, outer, op);
+        }
 
         const vaultActionRow = vaultOpsDiv.createDiv();
         vaultActionRow.style.display = "flex";
@@ -6199,6 +6252,7 @@ class VaultAISettingTab extends PluginSettingTab {
               await this.plugin.app.vault.createFolder(enricherRoot);
             }
             await ensureCredentialsFolder(this.plugin);
+            await ensureScriptsDefaultsInstalled(this.plugin);
             this.plugin.vaultPromptLoader?.invalidateAll();
             this.plugin.taskAgentRegistry?.invalidate();
             this.plugin.skillRegistry?.invalidate();
@@ -6251,6 +6305,20 @@ class VaultAISettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.credentialsFolder)
           .onChange(async (value) => {
             this.plugin.settings.credentialsFolder = value.trim() || DEFAULT_CREDENTIALS_FOLDER;
+            await this.plugin.saveSettings();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Scripts folder")
+      .setDesc(
+        "Text scripts (e.g. .py, .sh, .ts) the unified agent may propose via upsert_script / delete_script. Review the side-by-side diff in chat; the plugin does not execute scripts.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SCRIPTS_FOLDER)
+          .setValue(this.plugin.settings.scriptsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.scriptsFolder = value.trim() || DEFAULT_SCRIPTS_FOLDER;
             await this.plugin.saveSettings();
           }),
       );

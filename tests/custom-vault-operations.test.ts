@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	MAX_ENRICHER_SPEC_JSON_CHARS,
+	MAX_SCRIPT_FILE_CHARS,
 	normalizeCredentialsRelativePath,
 	normalizeCustomVaultOperations,
 	parseSkillIdForVault,
@@ -127,5 +128,41 @@ describe('custom vault operations', () => {
 		});
 		expect(u).toContain('Upsert enricher');
 		expect(u).toContain('N');
+	});
+
+	it('normalizes upsert_script and delete_script', () => {
+		const ops = normalizeCustomVaultOperations([
+			{ action: 'upsert_script', relativePath: 'tools/hi.py', content: 'print(2)\n' },
+			{ action: 'delete_script', relativePath: 'tools/hi.py' },
+		]);
+		expect(ops).toHaveLength(2);
+		expect(ops[0]).toMatchObject({ action: 'upsert_script', relativePath: 'tools/hi.py' });
+		expect(ops[1]).toMatchObject({ action: 'delete_script', relativePath: 'tools/hi.py' });
+	});
+
+	it('drops script ops for traversal, bad extension, or oversize content', () => {
+		expect(
+			normalizeCustomVaultOperations([
+				{ action: 'upsert_script', relativePath: 'a/../b.py', content: 'x' },
+				{ action: 'upsert_script', relativePath: 'x.exe', content: 'MZ' },
+				{ action: 'delete_script', relativePath: 'noext' },
+			]),
+		).toHaveLength(0);
+
+		const big = 'y'.repeat(MAX_SCRIPT_FILE_CHARS + 1);
+		expect(
+			normalizeCustomVaultOperations([{ action: 'upsert_script', relativePath: 'a.py', content: big }]),
+		).toHaveLength(0);
+	});
+
+	it('summarizes script ops without embedding full content in a misleading way', () => {
+		const u = summarizeCustomVaultOperation({
+			action: 'upsert_script',
+			relativePath: 'a/b.py',
+			content: 'SECRET_CODE',
+		});
+		expect(u).toContain('a/b.py');
+		expect(u).toContain('chars');
+		expect(u).not.toContain('SECRET_CODE');
 	});
 });

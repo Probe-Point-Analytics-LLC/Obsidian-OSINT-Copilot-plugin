@@ -12,7 +12,9 @@ const JSON_CONTRACT = `You MUST respond with a single JSON object ONLY (no markd
     { "action": "put_credentials", "relativePath": "vendor/api-key.txt", "content": "secret material" },
     { "action": "delete_credentials", "relativePath": "vendor/api-key.txt" },
     { "action": "upsert_enricher", "id": "enricher_slug", "spec": { "id": "enricher_slug", "name": "API title", "description": "...", "status": "active", "enabled": true, "allowedDomains": ["api.vendor.com"], "auth": { "type": "bearer_vault", "vaultRelativePath": "vendor/secret.txt" }, "request": { "method": "GET", "urlTemplate": "https://api.vendor.com/v1?q={{query}}" }, "inputHints": [], "skillInstructions": "", "limits": { "timeoutMs": 15000, "retries": 1, "maxResponseChars": 8000 }, "updatedAt": "ISO-8601" } },
-    { "action": "delete_enricher", "id": "enricher_slug" }
+    { "action": "delete_enricher", "id": "enricher_slug" },
+    { "action": "upsert_script", "relativePath": "tools/example.py", "content": "# full file body as plain text" },
+    { "action": "delete_script", "relativePath": "tools/old_helper.sh" }
   ],
   "enricher_invocations": [ { "enricher_id": "slug_matching_enricher_json", "query": "text passed to the enricher URL/body templates (e.g. email, domain, natural language)" } ]
 }
@@ -24,7 +26,7 @@ Rules for graph_operations:
 - retrieval_hits should list the main vault note paths you relied on (if any).
 
 Rules for custom_vault_operations:
-- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, or to store API keys/secrets under the vault custom area.
+- Only when the user explicitly asks to add, remove, or change vault skills, HTTP enricher JSON specs, text scripts under the vault scripts folder, or to store API keys/secrets under the vault custom area.
 - Use an empty array when no vault file changes are requested.
 - NEVER put secrets, API keys, or tokens in answer_markdown or retrieval_hits; use put_credentials for raw secrets and bearer_vault / header_vault / query_vault with vaultRelativePath inside upsert_enricher.spec (never embed raw keys in spec JSON).
 - relativePath must be a relative path with forward slashes only (no ".." segments); files are created under the vault credentials folder.
@@ -32,6 +34,10 @@ Rules for custom_vault_operations:
 - upsert_enricher writes one validated *.json file under the vault enrichers folder (same slug as id). Pair with upsert_skill when adding a new API tool so enricher_invocations can resolve after the user applies changes. Invalid specs are dropped server-side — follow the enricher schema: status "active" and enabled true if the user should run it immediately via enricher_invocations; allowedDomains must include every API hostname used in request.urlTemplate (not only a documentation site); urlTemplate and bodyTemplate use Mustache-style placeholders {{query}} and {{attachments_context}}: the executor applies URL encoding (encodeURIComponent) to those values in urlTemplate only; bodyTemplate receives raw strings for JSON. HTTP runs inside Obsidian via requestUrl (no browser tab, no user browser cookies); do not design specs that only work behind a logged-in browser session unless the API supports token/header auth you put in vault credentials.
 - When fixing or replacing an enricher, every upsert_enricher object MUST include the complete spec in the "spec" field (all fields needed for a working file). Do not describe the new JSON only in answer_markdown — the chat approval UI and Apply step use custom_vault_operations[].spec.
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
+- upsert_script / delete_script target **text scripts** under the vault **scripts** folder (Settings → Scripts folder; default OSINTCopilot/custom/scripts). relativePath is only the path **inside** that folder: forward slashes, no ".." segments, and the filename must use an allowed text extension (e.g. py, sh, ts, md, json — not binary types).
+- For upsert_script you MUST include the **entire file** in the "content" string. Do not store secrets or API keys in script content — use put_credentials and enricher *_vault auth instead.
+- Do not claim the plugin will **run** or execute proposed scripts inside Obsidian; the user reviews the side-by-side diff and applies writes, then runs code in their own terminal or Claude Code if they choose.
+- delete_script removes the file at scripts_folder/relativePath when the user asks to delete a script.
 
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them inside Obsidian using requestUrl (same class of outbound HTTP as other plugin features — not a separate Node server, not the user's browser, so CORS as in a web page does not apply the same way; still use public/token APIs suitable for server-style requests).
@@ -47,7 +53,7 @@ Important:
 - Prefer concise, investigative Markdown in answer_markdown.
 - Cite vault paths inline where useful.
 - Do not fabricate retrieval_hits; only list sources you actually used.
-- Proposed vault file edits require user confirmation in the UI before anything is written.
+- Proposed vault file edits (including scripts) require user confirmation in the UI before anything is written.
 - Do not claim curl/Bash was "blocked at the permission gate" unless you are certain shell was invoked; for HTTP APIs use enricher_invocations with ids listed under REGISTERED HTTP ENRICHERS in the user prompt (never instruct raw curl when enrichers apply).`;
 }
 
