@@ -1,4 +1,4 @@
-import VaultAIPlugin from "../../main";
+import type VaultAIPlugin from "../plugin/vault-ai-plugin";
 import { App, Notice, TFile } from 'obsidian';
 import { GraphApiService } from './api-service';
 import {
@@ -21,15 +21,9 @@ import { createAgentProvider } from './agent-runtime/create-agent-provider';
 import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
 import type { CustomVaultOperation } from './custom-vault-operations';
+import type { OrchestrationPlan } from './orchestration-plan';
 
-export interface OrchestrationPlan {
-    reasoning: string;
-    planSummary?: string; // Summary of what will be done for user review
-    isProposal?: boolean; // If true, the agent is asking for approval
-    toolsToCall: string[]; // e.g., ['LOCAL_VAULT', 'EXTRACT_TO_GRAPH', 'VAULT_GRAPH_INGEST']
-    graphCommands: string[]; // e.g., ['@@CREATE: {...}', '@@DELETE: {...}']
-    directResponse?: string; // If no tools needed or as a final response
-}
+export type { OrchestrationPlan } from './orchestration-plan';
 
 export interface OrchestrationResult {
     finalResponse: string;

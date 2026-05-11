@@ -1,4 +1,4 @@
-import type VaultAIPlugin from '../../../main';
+import type VaultAIPlugin from '../../plugin/vault-ai-plugin';
 import { createAgentProvider } from './create-agent-provider';
 import { CLAUDE_RUNTIME_ID, getConfiguredRuntimeOptions } from './runtime-registry';
 

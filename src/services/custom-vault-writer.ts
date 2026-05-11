@@ -1,5 +1,5 @@
 import { normalizePath, TFile, TFolder, type App } from 'obsidian';
-import type VaultAIPlugin from '../../main';
+import type VaultAIPlugin from '../plugin/vault-ai-plugin';
 import {
 	DEFAULT_CREDENTIALS_FOLDER,
 	DEFAULT_ENRICHERS_FOLDER,

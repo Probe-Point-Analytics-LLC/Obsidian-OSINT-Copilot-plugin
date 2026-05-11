@@ -1,4 +1,4 @@
-import type VaultAIPlugin from "../../main";
+import type VaultAIPlugin from "../plugin/vault-ai-plugin";
 import { parseVaultSkillPlannerTool } from "./skill-runtime";
 import { executeEnricherHttp } from "../services/enrichers/enricher-executor";
 import { parseEnrichToolId } from "../services/enrichers/enricher-schema";

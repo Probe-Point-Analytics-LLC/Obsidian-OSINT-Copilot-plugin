@@ -1,4 +1,4 @@
-import type VaultAIPlugin from '../../../main';
+import type VaultAIPlugin from '../../plugin/vault-ai-plugin';
 
 export interface CustomAgentRuntime {
     id: string;

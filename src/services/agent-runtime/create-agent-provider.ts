@@ -1,4 +1,4 @@
-import type VaultAIPlugin from '../../../main';
+import type VaultAIPlugin from '../../plugin/vault-ai-plugin';
 import { ClaudeAgentProvider } from './claude-agent-provider';
 import { HermesAgentProvider } from './hermes-agent-provider';
 import type { AgentProvider } from './provider-types';
