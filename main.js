@@ -31268,24 +31268,24 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
       (leaf) => new MapView(leaf, this.entityManager, (entityId) => this.onEntityClick(entityId))
     );
     this.registerView(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, (leaf) => new ToolsSkillsRegistryView(leaf, this));
-    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new pane)", (evt) => {
+    const chatRibbon = this.addRibbonIcon("message-square", "OSINT Copilot chat (Ctrl+click for new tab)", (evt) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
       void this.openChatView(forceNew);
     });
-    this.addRibbonIcon("layout-list", "OSINT Copilot tools & skills registry (Ctrl+click for new pane)", (evt) => {
+    this.addRibbonIcon("layout-list", "OSINT Copilot tools & skills registry (Ctrl+click for new tab)", (evt) => {
       const forceNew = evt.ctrlKey || evt.metaKey;
       void this.openToolsSkillsRegistryView(forceNew);
     });
     if (this.settings.enableGraphFeatures) {
-      const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new pane)", (evt) => {
+      const graphRibbon = this.addRibbonIcon("git-fork", "Entity graph (Ctrl+click for new tab)", (evt) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
         void this.openGraphView(forceNew);
       });
-      const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new pane)", (evt) => {
+      const timelineRibbon = this.addRibbonIcon("calendar", "Timeline (Ctrl+click for new tab)", (evt) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
         void this.openTimelineView(forceNew);
       });
-      const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new pane)", (evt) => {
+      const mapRibbon = this.addRibbonIcon("map-pin", "Location map (Ctrl+click for new tab)", (evt) => {
         const forceNew = evt.ctrlKey || evt.metaKey;
         void this.openMapView(forceNew);
       });
@@ -31349,7 +31349,7 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
     });
     this.addCommand({
       id: "open-chat-view-new-pane",
-      name: "Open chat in new pane",
+      name: "Open chat in new tab",
       callback: () => {
         void this.openChatView(true);
       }
@@ -31363,7 +31363,7 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
     });
     this.addCommand({
       id: "open-graph-view-new-pane",
-      name: "Open entity graph in new pane",
+      name: "Open entity graph in new tab",
       callback: () => {
         void this.openGraphView(true);
       }
@@ -31377,7 +31377,7 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
     });
     this.addCommand({
       id: "open-timeline-view-new-pane",
-      name: "Open timeline in new pane",
+      name: "Open timeline in new tab",
       callback: () => {
         void this.openTimelineView(true);
       }
@@ -31391,7 +31391,7 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
     });
     this.addCommand({
       id: "open-map-view-new-pane",
-      name: "Open location map in new pane",
+      name: "Open location map in new tab",
       callback: () => {
         void this.openMapView(true);
       }
@@ -31405,7 +31405,7 @@ var VaultAIPlugin = class extends import_obsidian33.Plugin {
     });
     this.addCommand({
       id: "open-tools-skills-registry-new-pane",
-      name: "Open tools & skills registry in new pane",
+      name: "Open tools & skills registry in new tab",
       callback: () => {
         void this.openToolsSkillsRegistryView(true);
       }
@@ -32018,12 +32018,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
   // ============================================================================
   /**
    * Get or create a leaf in the main editor area for OSINT views.
-   * This replaces note editors and uses the main workspace area.
-   * @param viewType The view type to check for existing instances
-   * @param forceNew If true, creates a new split pane even if one exists
-   * @returns A workspace leaf in the main editor area
+   * When any OSINT view is already open in the root workspace, new views open as
+   * **tabs in the same tab group** (via `Workspace.duplicateLeaf`) so plugin
+   * panes stay grouped instead of spawning vertical splits.
+   * @param _viewType Reserved for future routing (e.g. prefer parent of same family).
+   * @param _forceNew Reserved; new OSINT panes always join the OSINT tab strip when one exists.
    */
-  getMainEditorLeaf(viewType, forceNew) {
+  async getMainEditorLeaf(_viewType, _forceNew) {
     const osintViewTypes = [GRAPH_VIEW_TYPE, TIMELINE_VIEW_TYPE, MAP_VIEW_TYPE, CHAT_VIEW_TYPE, TOOLS_SKILLS_REGISTRY_VIEW_TYPE];
     const mainLeaves = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
@@ -32038,14 +32039,21 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     const noteEditorLeaves = mainLeaves.filter(
       (leaf) => leaf.view?.getViewType() === "markdown" || leaf.view?.getViewType() === "empty"
     );
-    if (forceNew && existingOsintLeaves.length > 0) {
-      return this.app.workspace.createLeafBySplit(existingOsintLeaves[0], "vertical");
+    if (existingOsintLeaves.length > 0) {
+      const activeLeaf = this.app.workspace.activeLeaf;
+      let anchor = existingOsintLeaves[0];
+      if (activeLeaf && mainLeaves.includes(activeLeaf) && osintViewTypes.includes(activeLeaf.view?.getViewType() || "")) {
+        anchor = activeLeaf;
+      }
+      try {
+        return await this.app.workspace.duplicateLeaf(anchor, "tab");
+      } catch (e) {
+        console.warn("[VaultAIPlugin] duplicateLeaf(tab) failed; falling back to new root tab", e);
+        return this.app.workspace.getLeaf("tab");
+      }
     }
     if (noteEditorLeaves.length > 0) {
       return noteEditorLeaves[0];
-    }
-    if (existingOsintLeaves.length > 0) {
-      return this.app.workspace.createLeafBySplit(existingOsintLeaves[0], "vertical");
     }
     return this.app.workspace.getLeaf("tab");
   }
@@ -32090,8 +32098,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
   }
   /**
    * Open the Graph View in the main editor area.
-   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
-   *                 This allows multiple views to be open simultaneously.
+   * @param forceNew If true, opens another instance as a new tab next to existing OSINT tabs when possible.
    */
   async openGraphView(forceNew = false) {
     if (!this.settings.enableGraphFeatures) {
@@ -32105,7 +32112,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       void this.app.workspace.revealLeaf(existing[0]);
       return existing[0];
     }
-    const leaf = this.getMainEditorLeaf(GRAPH_VIEW_TYPE, forceNew);
+    const leaf = await this.getMainEditorLeaf(GRAPH_VIEW_TYPE, forceNew);
     if (leaf) {
       await leaf.setViewState({ type: GRAPH_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
@@ -32198,8 +32205,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
   }
   /**
    * Open the Timeline View in the main editor area.
-   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
-   *                 This allows multiple views to be open simultaneously.
+   * @param forceNew If true, opens another instance as a new tab next to existing OSINT tabs when possible.
    */
   async openTimelineView(forceNew = false) {
     const existing = this.app.workspace.getLeavesOfType(TIMELINE_VIEW_TYPE);
@@ -32207,7 +32213,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.getMainEditorLeaf(TIMELINE_VIEW_TYPE, forceNew);
+    const leaf = await this.getMainEditorLeaf(TIMELINE_VIEW_TYPE, forceNew);
     if (leaf) {
       await leaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
@@ -32215,8 +32221,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
   }
   /**
    * Open the Map View in the main editor area.
-   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
-   *                 This allows multiple views to be open simultaneously.
+   * @param forceNew If true, opens another instance as a new tab next to existing OSINT tabs when possible.
    */
   async openMapView(forceNew = false) {
     const existing = this.app.workspace.getLeavesOfType(MAP_VIEW_TYPE);
@@ -32224,7 +32229,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.getMainEditorLeaf(MAP_VIEW_TYPE, forceNew);
+    const leaf = await this.getMainEditorLeaf(MAP_VIEW_TYPE, forceNew);
     if (leaf) {
       await leaf.setViewState({ type: MAP_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
@@ -32239,7 +32244,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       void this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.getMainEditorLeaf(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, forceNew);
+    const leaf = await this.getMainEditorLeaf(TOOLS_SKILLS_REGISTRY_VIEW_TYPE, forceNew);
     if (leaf) {
       await leaf.setViewState({ type: TOOLS_SKILLS_REGISTRY_VIEW_TYPE, active: true });
       void this.app.workspace.revealLeaf(leaf);
@@ -32639,8 +32644,7 @@ ${additionalContext}
   }
   /**
    * Open the Chat View in the main editor area.
-   * @param forceNew If true, creates a new instance in a split pane even if one already exists.
-   *                 This allows multiple views to be open simultaneously.
+   * @param forceNew If true, opens another instance as a new tab next to existing OSINT tabs when possible.
    */
   async openChatView(forceNew = false) {
     const existing = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -32648,9 +32652,9 @@ ${additionalContext}
       await this.app.workspace.revealLeaf(existing[0]);
       return;
     }
-    const leaf = this.getMainEditorLeaf(CHAT_VIEW_TYPE, forceNew);
+    const leaf = await this.getMainEditorLeaf(CHAT_VIEW_TYPE, forceNew);
     if (leaf) {
-      void leaf.setViewState({
+      await leaf.setViewState({
         type: CHAT_VIEW_TYPE,
         active: true
       });
