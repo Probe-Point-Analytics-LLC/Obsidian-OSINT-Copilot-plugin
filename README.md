@@ -1,6 +1,6 @@
 # OSINT Copilot for Obsidian
 
-**OSINT Copilot** is an Obsidian plugin for **SOC analysts, threat researchers, and investigators**. It gives you a **local-first** investigation workspace: entities and links live as Markdown in your vault, with **graph**, **timeline**, and **map** views. **AI-assisted** workflows (entity extraction, vault Q&A, tri-mode chat, orchestration) run through the **Claude Code CLI** on your machine. There is **no** vendor license key, hosted report/dark-web/footprint pipeline, or remote evidence API in this build.
+**OSINT Copilot** is an Obsidian plugin for **SOC analysts, threat researchers, and investigators**. It gives you a **local-first** investigation workspace: entities and links live as Markdown in your vault, with **graph**, **timeline**, and **map** views. **AI-assisted** workflows (unified chat agent, entity extraction, vault Q&A, HTTP enrichers) run through **Claude Code**, **Hermes**, or **custom CLI runtimes** on your machine. There is **no** vendor license key, hosted report/dark-web/footprint pipeline, or remote evidence API in this build.
 
 ![OSINT Copilot Interface](screenshots/Copilot%20Left%20pallete%20bigger.png)
 
@@ -29,12 +29,24 @@
 
 ---
 
+## Documentation map
+
+| Document | Audience | Contents |
+|----------|----------|----------|
+| [README.md](README.md) (this file) | New users, evaluators | Overview, install, runtime logic, feature tour, settings summary |
+| [USER_GUIDE.md](USER_GUIDE.md) | Daily operators | Step-by-step config, enrichers, registry view, workflows, troubleshooting |
+| [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_SETUP.md) | Integrators | HTTP enricher specs, auth types, LeakCheck-style example, troubleshooting |
+| [docs/CUSTOM_TYPES_SETUP.md](docs/CUSTOM_TYPES_SETUP.md) | Schema authors | Vault YAML custom entity/relationship types |
+| [RELEASE_NOTES.md](RELEASE_NOTES.md) | Upgraders | Version-to-version changes (current release: **2.5.6**, see **Unreleased** for `main`) |
+
+---
+
 ## What the plugin does today
 
 | Layer | What you get |
 |--------|----------------|
 | **100% local** | **Entity graph**, **timeline**, **map**, manual **entities** and **relationships** (FollowTheMoney-style notes under your entity folder), **Nominatim** geocoding for addresses. No account required. |
-| **Local AI (Claude Code CLI)** | **Entity extraction** from pasted text, **vault Q&A / local search**, **general / graph / local** chat modes, **orchestration** (investigation planner + synthesis), **vault-wide graph ingest** (local batch extraction). Uses **your** Claude install; prompts can be overridden from the vault (see [Vault prompts](#vault-prompts-editable-rules--agents)). |
+| **Local AI (CLI runtimes)** | **Unified chat agent** (Claude default, Hermes/custom optional): one JSON turn per message with optional graph proposals, vault skill/credential/enricher drafts, and `enricher_invocations`. **Bulk extraction** and **vault graph ingest** use **Claude Code** (Graph extraction settings). Prompts are editable from the vault (see [Vault prompts](#vault-prompts-editable-rules--agents)). |
 
 On first enable, the plugin creates default Markdown under **`OSINTCopilot/custom/prompts/`** (rules, agents, graph-extraction skill) so you can edit behavior without rebuilding the plugin.
 
@@ -54,7 +66,9 @@ On first enable, the plugin creates default Markdown under **`OSINTCopilot/custo
 ### Local AI (Claude Code CLI required)
 - **Entity extraction** — From text / attachments in chat; skill text from vault `skills/graph-extraction.md` when present
 - **Vault Q&A / local search** — Answers grounded in indexed notes via local Claude
-- **Orchestration** — Planner + tool steps; **vault rules** (`rules/global.md`) and **active agent** (`agents/<id>.md`) are injected into the planner context
+- **Unified chat** — One local CLI turn per message; **vault rules** (`rules/global.md`) and **active agent** (`agents/<id>.md`) augment the prompt
+- **HTTP enrichers** — Vault JSON specs + optional companion skills; strict approval for installs and agent proposals
+- **Tools & skills registry** — Browse built-in tool reference, vault skills, and enricher specs
 
 ---
 
@@ -154,7 +168,7 @@ The first time the plugin runs (and whenever files are still missing), it create
 | Path | Role |
 |------|------|
 | `OSINTCopilot/custom/prompts/README.md` | Explains the layout |
-| `OSINTCopilot/custom/prompts/rules/global.md` | Extra instructions for the **orchestration planner** |
+| `OSINTCopilot/custom/prompts/rules/global.md` | Extra instructions merged into the **unified agent** prompt |
 | `OSINTCopilot/custom/prompts/agents/*.md` | **Agents** — YAML frontmatter (`id`, `name`, …) + body text |
 | `OSINTCopilot/custom/prompts/skills/graph-extraction.md` | Instructions for **entity / graph extraction** (used before the bundled plugin skill) |
 
@@ -168,12 +182,11 @@ The first time the plugin runs (and whenever files are still missing), it create
 
 ## HTTP enrichers (strict approval)
 
-HTTP enrichers let users add API data sources as planner tools, similar to connector-based workflows:
+HTTP enrichers let you add API data sources the unified agent can call via **`enricher_invocations`** (Obsidian `requestUrl`, not your browser):
 
 - Enricher specs: `OSINTCopilot/custom/enrichers/*.json`
-- Companion skills: `OSINTCopilot/custom/skills/*.md`
-- Tool IDs exposed to planner: `ENRICH_<id>`
-- Credentials are resolved from environment variables referenced in spec (`auth.envVar`), never stored in spec markdown/json.
+- Companion skills: `OSINTCopilot/custom/skills/*.md` (optional documentation for the agent)
+- Credentials: vault files under **Credentials folder** (`bearer_vault` / `header_vault` / `query_vault`) or `*_env` types — never in JSON or chat
 
 See full setup and mapping example in [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_SETUP.md).
 
@@ -365,7 +378,7 @@ The plugin supports FollowTheMoney relationship types:
 
 All AI features in this build use **Claude Code CLI** on your machine (plus optional **custom chat** endpoints you add in settings).
 
-#### Local AI setup (entity extraction, vault Q&A, orchestration)
+#### Local AI setup (unified chat, extraction, enrichers)
 
 1. **Settings → OSINT Copilot** — set **Claude Code CLI path** and model.
 2. Use **Test Claude binary** to confirm the CLI is reachable.
@@ -378,7 +391,7 @@ Automatically extract entities from unstructured text using **Claude Code CLI**.
 **How to use:**
 
 1. Open the OSINT Copilot chat
-2. Choose **Graph generation** mode (or use **General agent** / **Local search** with attachments as needed)
+2. Attach source text or images and ask for graph extraction (unified agent returns `graph_operations` for confirmation)
 3. Paste text (e.g., news article, report, document)
 4. The CLI will:
    - Identify entities (people, companies, locations, etc.)
@@ -399,7 +412,7 @@ Ask questions about your vault content; answers are generated with **Claude Code
 
 **How to use:**
 
-1. Open the OSINT Copilot chat and select **Local search** mode
+1. Open the OSINT Copilot chat and ask a vault-grounded question (unified agent)
 2. Ask a question (e.g., "What do we know about Lukoil's operations in Moldova?")
 3. The plugin will:
    - Search / index relevant notes
@@ -597,10 +610,10 @@ Configure OSINT Copilot to match your workflow and requirements.
 
 | Setting | Description | Default | When needed |
 |---------|-------------|---------|-------------|
-| **Claude Code CLI path** | Executable for local AI (`claude` if on PATH) | `claude` | Local extraction, vault Q&A, orchestration |
+| **Claude Code CLI path** | Executable for local AI (`claude` if on PATH) | `claude` | Unified chat (when runtime = Claude), extraction, vault ingest |
 | **Claude model** | Model flag passed to CLI | `sonnet` | With local Claude |
 | **Prompts folder** | Vault folder for rules / agents / skills | `OSINTCopilot/custom/prompts` | Optional (auto-created) |
-| **Active agent id** | Which `agents/<id>.md` to load | `default` | Vault agent body for orchestration |
+| **Active agent id** | Which `agents/<id>.md` to load | `default` | Vault agent body merged into unified prompt |
 | **Entity Base Path** | Folder where entity notes are stored | `OSINTCopilot` | No |
 | **Conversation Folder** | Chat history (Markdown + JSON block per file) | `OSINTCopilot/conversations` | No |
 | **Max Notes** | Cap on notes in context | 15 | No |

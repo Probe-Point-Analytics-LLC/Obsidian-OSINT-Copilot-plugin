@@ -26,6 +26,15 @@
 - Threat intel researchers building entity-centric notes  
 - Anyone who wants **graph + timeline + map** on top of structured investigation notes
 
+### Related documentation
+
+| Document | Use when |
+|----------|----------|
+| [README.md](README.md) | Overview, install, documentation map |
+| [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_SETUP.md) | HTTP enricher specs and troubleshooting |
+| [docs/CUSTOM_TYPES_SETUP.md](docs/CUSTOM_TYPES_SETUP.md) | Custom vault YAML types |
+| [RELEASE_NOTES.md](RELEASE_NOTES.md) | Upgrading between versions |
+
 ---
 
 ## Installation
@@ -93,6 +102,20 @@ Under **Settings → OSINT Copilot → Unified chat agent**:
 Runtime-specific controls are now conditional: Hermes fields show only when **Hermes** is selected, custom runtime fields show only when that **custom runtime** is selected, and Claude selection shows a pointer to Claude CLI/model controls.
 
 Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
+
+#### Register a custom runtime (step-by-step)
+
+1. Open **Settings → OSINT Copilot → Unified chat agent → Custom runtimes**.
+2. Click **Add custom runtime** and set:
+   - **Display name** — label in the chat header dropdown.
+   - **Id** — stable slug (lowercase; used internally).
+   - **CLI path** — full path to your executable if it is not on `PATH`.
+   - **Extra args** — subcommand and flags your CLI needs before stdin (split on whitespace).
+   - **Timeout** / **Health-check args** — used by **Test agent runtime**.
+   - **Enabled** — must be on for the runtime to appear in chat.
+3. Click **Test agent runtime** with that runtime selected in **Agent runtime**.
+4. In chat, pick your runtime from the header dropdown and send a short message; confirm the reply is valid plugin JSON or readable fallback text.
+5. If bulk extraction should stay on Claude, leave **Graph extraction (Claude Code)** pointed at `claude` even when chat uses a custom runtime.
 
 **Graph extraction (Claude Code)** settings configure the `claude` binary used for **bulk** extraction (vault ingest, attachment pipeline, task agents) and for unified chat when **Agent runtime** is Claude.
 
@@ -163,7 +186,7 @@ Each file uses YAML frontmatter (`skill_kind: vault`, `id`, `name`, `description
 
 **Settings:** **Skills folder** under **OSINT Copilot**.
 
-**Tools & skills registry:** Command **OSINT Copilot: Open tools & skills registry** (or the ribbon **layout-list** icon) opens a tab with three columns: **built-in orchestration tools** (read-only reference), **vault skills** from your skills folder (open note, add, delete to trash), and **HTTP enrichers** from your enrichers folder (open JSON, add a disabled draft, delete to trash). Built-in tools are not files; planner calls like `SKILL_<id>` and `ENRICH_<id>` map to the vault files listed in the other columns.
+**Tools & skills registry:** Command **OSINT Copilot: Open tools & skills registry** (or the ribbon **layout-list** icon) opens a tab with three columns: **built-in tools** (collapsible read-only reference for what the unified agent may conceptually use), **vault skills** from your skills folder (open note, add, delete to trash), and **HTTP enrichers** from your enrichers folder (open JSON, add a disabled draft, delete to trash). Vault skills and enricher JSON are the files you edit; built-in entries document plugin capabilities, not separate vault files.
 
 ### 3b. Custom YAML types (Person, Company, relationships)
 
@@ -185,7 +208,7 @@ Caps how many notes are pulled into context for **local search** and related flo
 
 ### 7. System prompt
 
-Default text for vault-oriented answers; combine with **vault rules/agents** for orchestration.
+Default text for vault-oriented answers; combine with **vault rules/agents** for unified-agent augmentation.
 
 ### What needs what?
 
@@ -290,7 +313,7 @@ What TTPs are associated with Lazarus Group?
 
 **Provenance (confidence)**:
 
-- Entity notes include optional YAML: `**osint_sources`**, `**osint_confidence**`, `**osint_contradictions**` (see graph extraction and orchestration flows).
+- Entity notes include optional YAML: `**osint_sources`**, `**osint_confidence**`, `**osint_contradictions**` (see graph extraction and unified-agent flows).
 - `**osint_confidence**` is one of: `unverified`, `low`, `medium`, `high`, `conflicted`.
 - The graph toolbar has **Confidence** checkboxes to show or hide nodes by level. **Conflicted** nodes are styled with a stronger, distinct border.
 - When the assistant creates graph entities without explicit citations, the plugin still writes **inferred** source rows so nothing is “sourceless.”
@@ -299,7 +322,7 @@ What TTPs are associated with Lazarus Group?
 **Locking notes from the graph**:
 
 - Enter **box select**, select entities and/or relationship edges, then click **🔒 lock area**. Those notes become **read-only** in Obsidian (preview only; edit actions hidden) until you **unlock** via the lock button in the note header or **Unlock all** under plugin settings (**Graph note lock**).
-- **Orchestration** and **task agents** will not overwrite locked paths. Deleting or editing entities through the plugin is blocked until unlock.
+- **Unified chat** and **task agents** will not overwrite locked paths. Deleting or editing entities through the plugin is blocked until unlock.
 - Locks are stored in plugin data (paths survive restarts). Renaming a locked note in the vault updates the lock entry. Deleting a file outside the plugin still removes the file from disk.
 
 **Creating Entities**:
@@ -451,15 +474,18 @@ owns, operates, communicates_with, targets, and more...
 **Steps**:
 
 1. **Gather initial intelligence**
-  - Select **Local search** and ask: "What do we know about APT29?"
-  - Review the answer and referenced notes
-2. **Structure findings**
-  - Switch to **Graph generation** and paste new intel (or summarize in chat first, then extract)
-  - Confirm entities and relationships in your vault
+  - Open chat; confirm **Agent runtime** (Claude, Hermes, or custom).
+  - Ask: "What do we know about APT29?" — review the answer and any **Retrieval** / referenced notes.
+2. **Structure new findings**
+  - Paste or attach new intel; ask to extract entities and relationships into the graph.
+  - **Apply selected** on proposed `graph_operations` after reviewing the diff.
 3. **Visualize relationships**
-  - Open Graph View
-  - Explore connections between APT29 and related entities
-  - Identify infrastructure patterns
+  - Open **Graph View**; explore APT29 and related infrastructure.
+4. **Optional API enrichment**
+  - If you have an HTTP enricher (e.g. breach lookup), ask the agent to use `enricher_id` **leakcheck** (or rely on `enricher_invocations` in the turn).
+  - Read **Enricher results** at the bottom of the message, not only the prose answer.
+5. **Catalog**
+  - Open **tools & skills registry** to verify enricher JSON and companion skills on disk.
 
 ### Example 2: IOC Analysis
 
@@ -468,21 +494,18 @@ owns, operates, communicates_with, targets, and more...
 **Steps**:
 
 1. **Extract entities**
-  - Select **Graph generation**
-  - Paste your IOC list:
+  - In chat, paste your IOC list and ask for graph extraction:
     ```
     Suspicious IPs: 192.168.1.100, 10.0.0.50
     Domains: malware-c2.evil.com, phishing-site.bad.org
     Email: attacker@phishing.bad
     ```
-  - Entities are automatically created
+  - Confirm proposed entities and links in chat, then **Apply selected**.
 2. **Research each IOC**
-  - Select **Local search**
-  - Query: "What do we know about malware-c2.evil.com?"
-  - Cross-reference with your existing notes
+  - Ask vault-grounded questions: "What do we know about malware-c2.evil.com?"
+  - Cross-reference with existing notes and the graph.
 3. **Document findings**
-  - Write a summary note in the vault or ask **General agent** to draft a structured summary from context
-  - Keep entities linked via the graph and connections notes
+  - Draft a summary in chat or compose a manual note; link entities via the graph and **Connections/** notes.
 
 ### Example 3: Incident Response Documentation
 
@@ -490,18 +513,28 @@ owns, operates, communicates_with, targets, and more...
 
 **Steps**:
 
-1. **Create an event entity**
-  - Use **Graph generation** with incident text to create an **Event** (and related entities)
-  - Include date, description, and initial findings
-2. **Link Related Entities**
-  - As you identify IOCs, create entities
-  - Relationships are automatically tracked
-3. **Build Timeline**
-  - Open Timeline View
-  - Visualize incident progression
-  - Identify attack sequence
-4. **Write the incident report**
-  - Use **General agent** or **Local search** with your vault context, or compose a note manually from the timeline and entities
+1. **Create event and related entities**
+  - Paste incident narrative in chat; request **Event** entities with `start_date` / `first_seen` where known.
+  - Apply graph proposals; add IOCs as they appear.
+2. **Build timeline**
+  - Open **Timeline View** — **Event** notes appear with case-insensitive `type` and supported date aliases (see Feature 4).
+  - Save entity notes under the entity base path; the timeline auto-refreshes shortly after saves.
+3. **Write the incident report**
+  - Use chat with vault context to outline BLUF and timeline sections, or write manually from graph + timeline.
+4. **Registry hygiene**
+  - Use the registry view to open enricher/skill files you added during the incident.
+
+### Example 4: Install an HTTP enricher end-to-end
+
+**Scenario**: Add a LeakCheck-style API without putting keys in chat.
+
+**Steps**:
+
+1. Run **OSINT Copilot: Draft HTTP enricher skill from API documentation** (or ask the agent to propose `upsert_enricher`).
+2. Click **Install** on the draft modal (or **Apply selected** in chat after previewing JSON).
+3. Store the API key via agent **put_credentials** or manually under `OSINTCopilot/custom/credentials/`.
+4. Confirm **Credentials folder** in Settings matches that path.
+5. Send a test query in chat; verify **Enricher results** and follow [docs/ENRICHERS_SETUP.md](docs/ENRICHERS_SETUP.md) if the id or auth fails.
 
 ---
 
@@ -616,18 +649,18 @@ If you see `organization does not have access`, this is an account/org entitleme
 3. **Iterate on Results**
   - Ask follow-up questions
   - Request clarification or more detail
-  - Use **Graph generation** to capture key findings
+  - Ask the unified agent to extract new entities into the graph when you paste source material
 
 ### Building Knowledge Over Time
 
 1. **Create Entities Consistently**
-  - Use **Graph generation** regularly to build your knowledge base
+  - Extract into the graph from chat whenever you add source material
   - Relationships accumulate and become more valuable
 2. **Review Graph Periodically**
   - Visualize connections to spot patterns
   - Identify gaps in your research
 3. **Summarize periodically**
-  - Use **Local search** or **General agent** to produce summaries from your vault notes
+  - Ask vault-grounded questions in chat to produce summaries from your notes
 
 ### Keyboard Shortcuts
 
