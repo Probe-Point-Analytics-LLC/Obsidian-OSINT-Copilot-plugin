@@ -17030,7 +17030,7 @@ var DEFAULT_CONFIG = {
   cliPath: "claude",
   model: "sonnet",
   maxTokens: 16e3,
-  timeoutMs: 12e4
+  timeoutMs: 3e5
 };
 var DEFAULT_CHAT_MAX_TURNS = 16;
 var SKILL_FILE = ".claude/GRAPH_EXTRACTION.md";
@@ -17206,12 +17206,12 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             } else {
               const combined = [errOut, stdOut].filter(Boolean).join("\n");
               const timedOut = error.killed || error.signal === "SIGTERM";
-              const tail = combined || error.message || (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : "unknown error");
+              const tail = combined || (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : null) || error.message || "unknown error";
               logOptions?.emit?.({
                 phase: "invoke_error",
                 level: "error",
                 message: `Claude CLI failed (code ${error.code})`,
-                details: logOptions?.rawCli ? combined || error.message || "unknown error" : sanitizeCliOutput(combined || error.message || "unknown error", 1200),
+                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
                 timestamp: Date.now()
               });
               console.error("[ClaudeCodeService] CLI failed", { code: error.code, stderr: errOut, stdout: stdOut });
@@ -30860,6 +30860,7 @@ var DEFAULT_SETTINGS = {
   claudeCodeCliPath: "claude",
   claudeCodeModel: "sonnet",
   claudeCodeExtraArgs: "",
+  claudeCodeTimeoutMs: 3e5,
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: "hermes",
   hermesAgentExtraArgs: "",
@@ -31302,6 +31303,15 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     ).addText(
       (text) => text.setPlaceholder("").setValue(this.plugin.settings.claudeCodeExtraArgs).onChange(async (value) => {
         this.plugin.settings.claudeCodeExtraArgs = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian33.Setting(containerEl).setName("Claude Code timeout (ms)").setDesc(
+      "How long to wait for a single Claude Code CLI call (chat turns, extraction, skills) before it's killed. Raise this for large attachments or the opus model, which can take several minutes."
+    ).addText(
+      (text) => text.setValue(String(this.plugin.settings.claudeCodeTimeoutMs)).onChange(async (value) => {
+        const n = parseInt(value.trim(), 10);
+        this.plugin.settings.claudeCodeTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 3e5;
         await this.plugin.saveSettings();
       })
     );
@@ -35405,7 +35415,8 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
       cliPath: this.settings.claudeCodeCliPath || "claude",
       model: this.settings.claudeCodeModel || "sonnet",
       cliWorkingDirectory: basePath || void 0,
-      extraCliArgs: this.settings.claudeCodeExtraArgs ?? ""
+      extraCliArgs: this.settings.claudeCodeExtraArgs ?? "",
+      timeoutMs: this.settings.claudeCodeTimeoutMs || 3e5
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);

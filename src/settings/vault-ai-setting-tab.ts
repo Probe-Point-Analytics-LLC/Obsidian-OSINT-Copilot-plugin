@@ -621,6 +621,19 @@ export class VaultAISettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Claude Code timeout (ms)")
+			.setDesc(
+				"How long to wait for a single Claude Code CLI call (chat turns, extraction, skills) before it's killed. Raise this for large attachments or the opus model, which can take several minutes.",
+			)
+			.addText((text) =>
+				text.setValue(String(this.plugin.settings.claudeCodeTimeoutMs)).onChange(async (value) => {
+					const n = parseInt(value.trim(), 10);
+					this.plugin.settings.claudeCodeTimeoutMs = Number.isFinite(n) && n >= 5000 ? n : 300_000;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
 			.setName("Extraction log verbosity")
 			.setDesc("How much Claude extraction detail is shown in chat while processing attachments.")
 			.addDropdown((dd) =>

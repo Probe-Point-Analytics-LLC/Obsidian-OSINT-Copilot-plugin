@@ -47,7 +47,7 @@ const DEFAULT_CONFIG: ClaudeCodeConfig = {
     cliPath: 'claude',
     model: 'sonnet',
     maxTokens: 16000,
-    timeoutMs: 120_000,
+    timeoutMs: 300_000,
 };
 
 /** `--max-turns` for chat-style CLI calls; entity extraction uses a separate invoke with turns=1. */
@@ -256,15 +256,17 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                             // Claude Code often prints fatal messages on stdout; include both for Obsidian notices and logs.
                             const combined = [errOut, stdOut].filter(Boolean).join('\n');
                             const timedOut = error.killed || error.signal === 'SIGTERM';
-                            const tail = combined || error.message ||
-                                (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : 'unknown error');
+                            // A timeout kill leaves no useful stderr/stdout, and Node's own error.message
+                            // ("Command failed: ...") is just the invoked command line, not a real
+                            // explanation — prefer the clear timeout message over that generic text.
+                            const tail = combined ||
+                                (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : null) ||
+                                error.message || 'unknown error';
                             logOptions?.emit?.({
                                 phase: 'invoke_error',
                                 level: 'error',
                                 message: `Claude CLI failed (code ${error.code})`,
-                                details: logOptions?.rawCli
-                                    ? (combined || error.message || 'unknown error')
-                                    : sanitizeCliOutput(combined || error.message || 'unknown error', 1200),
+                                details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
                                 timestamp: Date.now(),
                             });
                             console.error('[ClaudeCodeService] CLI failed', { code: error.code, stderr: errOut, stdout: stdOut });

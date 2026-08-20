@@ -183,6 +183,7 @@ export default class VaultAIPlugin extends Plugin {
       model: this.settings.claudeCodeModel || 'sonnet',
       cliWorkingDirectory: basePath || undefined,
       extraCliArgs: this.settings.claudeCodeExtraArgs ?? '',
+      timeoutMs: this.settings.claudeCodeTimeoutMs || 300_000,
     });
     this.claudeCodeService = svc;
     this.graphApiService.setClaudeCodeService(svc);
