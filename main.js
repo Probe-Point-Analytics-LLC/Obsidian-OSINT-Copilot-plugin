@@ -16624,6 +16624,31 @@ Tip: paste the text content directly into the chat instead.`
     });
   }
   /**
+   * Resolves the pdftotext binary to run. GUI apps (Obsidian included) are often launched
+   * with a PATH that's missing the login shell's additions — most commonly seen when the app
+   * is started from a desktop launcher rather than a terminal — so a plain `execFile('pdftotext', ...)`
+   * can fail with ENOENT even though poppler-utils is genuinely installed. Prefer a known
+   * absolute path if one exists on disk; otherwise fall back to bare `pdftotext` (unchanged
+   * behavior for environments where PATH already resolves it, e.g. Windows).
+   */
+  resolvePdftotextPath() {
+    const nodeFs = require("fs");
+    const candidates = [
+      "/usr/bin/pdftotext",
+      "/usr/local/bin/pdftotext",
+      "/opt/homebrew/bin/pdftotext",
+      "/snap/bin/pdftotext"
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (nodeFs.existsSync(candidate))
+          return candidate;
+      } catch {
+      }
+    }
+    return "pdftotext";
+  }
+  /**
    * Extract text from PDF by saving to temp file and running pdftotext (poppler-utils).
    */
   async extractPdfText(file) {
@@ -16636,8 +16661,9 @@ Tip: paste the text content directly into the chat instead.`
     const tmpFile = nodePath.join(tmpDir, `osint-copilot-${Date.now()}.pdf`);
     try {
       nodeFs.writeFileSync(tmpFile, Buffer.from(buffer));
+      const pdftotextPath = this.resolvePdftotextPath();
       const text = await new Promise((resolve, reject) => {
-        execFile2("pdftotext", ["-layout", tmpFile, "-"], {
+        execFile2(pdftotextPath, ["-layout", tmpFile, "-"], {
           maxBuffer: 10 * 1024 * 1024,
           timeout: 3e4
         }, (error, stdout, stderr) => {
