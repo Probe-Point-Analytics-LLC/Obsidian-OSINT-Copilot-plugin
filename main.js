@@ -16688,39 +16688,70 @@ Error: ${stderr || error.message}`
   }
   /**
    * Minimal ZIP extraction for a single file entry (no external dependencies).
+   *
+   * Reads the central directory (located via the End Of Central Directory record) rather
+   * than scanning local file headers sequentially from the start of the archive. Many real
+   * DOCX writers (streamed saves, some Word/LibreOffice/Pandoc output) set the ZIP
+   * "data descriptor" bit on compressed entries, which leaves compressed/uncompressed size
+   * as 0 in the *local* header — a sequential scan can't know how far to skip and desyncs
+   * on the first such entry. Central directory entries always carry accurate sizes.
    */
   extractFileFromZip(data, targetPath) {
-    let offset = 0;
-    while (offset < data.length - 4) {
-      const sig = data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24;
-      if (sig !== 67324752)
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const EOCD_SIGNATURE = 101010256;
+    const eocdSearchStart = Math.max(0, data.length - 22 - 65535);
+    let eocdOffset = -1;
+    for (let i = data.length - 22; i >= eocdSearchStart; i--) {
+      if (view.getUint32(i, true) === EOCD_SIGNATURE) {
+        eocdOffset = i;
         break;
-      const compressionMethod = data[offset + 8] | data[offset + 9] << 8;
-      const compressedSize = data[offset + 18] | data[offset + 19] << 8 | data[offset + 20] << 16 | data[offset + 21] << 24;
-      const uncompressedSize = data[offset + 22] | data[offset + 23] << 8 | data[offset + 24] << 16 | data[offset + 25] << 24;
-      const nameLen = data[offset + 26] | data[offset + 27] << 8;
-      const extraLen = data[offset + 28] | data[offset + 29] << 8;
-      const name = new TextDecoder().decode(data.slice(offset + 30, offset + 30 + nameLen));
-      const dataStart = offset + 30 + nameLen + extraLen;
+      }
+    }
+    if (eocdOffset === -1)
+      return null;
+    const centralDirEntryCount = view.getUint16(eocdOffset + 10, true);
+    const centralDirOffset = view.getUint32(eocdOffset + 16, true);
+    const CENTRAL_DIR_SIGNATURE = 33639248;
+    let offset = centralDirOffset;
+    for (let i = 0; i < centralDirEntryCount; i++) {
+      if (offset + 46 > data.length || view.getUint32(offset, true) !== CENTRAL_DIR_SIGNATURE)
+        break;
+      const compressionMethod = view.getUint16(offset + 10, true);
+      const compressedSize = view.getUint32(offset + 20, true);
+      const uncompressedSize = view.getUint32(offset + 24, true);
+      const nameLen = view.getUint16(offset + 28, true);
+      const extraLen = view.getUint16(offset + 30, true);
+      const commentLen = view.getUint16(offset + 32, true);
+      const localHeaderOffset = view.getUint32(offset + 42, true);
+      const name = new TextDecoder().decode(data.slice(offset + 46, offset + 46 + nameLen));
       if (name === targetPath) {
-        if (compressionMethod === 0) {
-          return data.slice(dataStart, dataStart + uncompressedSize);
-        }
-        if (compressionMethod === 8) {
-          try {
-            const compressed = data.slice(dataStart, dataStart + compressedSize);
-            const { inflateRawSync } = require("zlib");
-            const result = inflateRawSync(Buffer.from(compressed));
-            return new Uint8Array(result);
-          } catch (e) {
-            console.error("[GraphApiService] DOCX decompression failed:", e);
-            return null;
-          }
-        }
+        return this.readZipEntryData(data, view, localHeaderOffset, compressionMethod, compressedSize, uncompressedSize);
+      }
+      offset += 46 + nameLen + extraLen + commentLen;
+    }
+    return null;
+  }
+  /** Reads and (if needed) inflates a single entry's data given its central-directory metadata. */
+  readZipEntryData(data, view, localHeaderOffset, compressionMethod, compressedSize, uncompressedSize) {
+    const LOCAL_FILE_SIGNATURE = 67324752;
+    if (view.getUint32(localHeaderOffset, true) !== LOCAL_FILE_SIGNATURE)
+      return null;
+    const nameLen = view.getUint16(localHeaderOffset + 26, true);
+    const extraLen = view.getUint16(localHeaderOffset + 28, true);
+    const dataStart = localHeaderOffset + 30 + nameLen + extraLen;
+    if (compressionMethod === 0) {
+      return data.slice(dataStart, dataStart + uncompressedSize);
+    }
+    if (compressionMethod === 8) {
+      try {
+        const compressed = data.slice(dataStart, dataStart + compressedSize);
+        const { inflateRawSync } = require("zlib");
+        const result = inflateRawSync(Buffer.from(compressed));
+        return new Uint8Array(result);
+      } catch (e) {
+        console.error("[GraphApiService] DOCX decompression failed:", e);
         return null;
       }
-      const size = compressedSize > 0 ? compressedSize : uncompressedSize;
-      offset = dataStart + size;
     }
     return null;
   }
@@ -16737,7 +16768,7 @@ Error: ${stderr || error.message}`
   /**
    * General-purpose LLM call via Claude Code CLI.
    */
-  async callRemoteModel(messages, jsonResponse = false, customModel, signal, orchestrationOptions) {
+  async callRemoteModel(messages, jsonResponse = false, customModel, signal, orchestrationOptions, logOptions) {
     if (!this.claudeCodeService) {
       throw new Error("Claude Code service not initialized.");
     }
@@ -16753,7 +16784,7 @@ Error: ${stderr || error.message}`
     if (jsonResponse) {
       systemPrompt += "\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.";
     }
-    return this.claudeCodeService.chat(systemPrompt, userContent, signal);
+    return this.claudeCodeService.chat(systemPrompt, userContent, signal, logOptions);
   }
   /**
    * Split text into chunks, trying to break at paragraph boundaries.
@@ -17105,6 +17136,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
         return;
       }
       const { execFile: execFile2 } = require("child_process");
+      let killedByAbortSignal = false;
       const extra = splitCliArgsLine(this.config.extraCliArgs ?? "");
       const args = [
         "--print",
@@ -17137,7 +17169,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
           const errOut = stderr?.trim() ?? "";
           const stdOut = stdout?.trim() ?? "";
           if (error) {
-            if (error.killed || error.signal === "SIGTERM") {
+            if (killedByAbortSignal) {
               logOptions?.emit?.({
                 phase: "invoke_aborted",
                 level: "warn",
@@ -17147,7 +17179,8 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
               reject(new DOMException("Aborted", "AbortError"));
             } else {
               const combined = [errOut, stdOut].filter(Boolean).join("\n");
-              const tail = combined || error.message || "unknown error";
+              const timedOut = error.killed || error.signal === "SIGTERM";
+              const tail = combined || error.message || (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : "unknown error");
               logOptions?.emit?.({
                 phase: "invoke_error",
                 level: "error",
@@ -17180,6 +17213,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
       });
       if (signal) {
         const onAbort = () => {
+          killedByAbortSignal = true;
           child.kill("SIGTERM");
         };
         signal.addEventListener("abort", onAbort, { once: true });
@@ -27066,7 +27100,7 @@ var ClaudeAgentProvider = class {
     this.graphApi = graphApi;
     this.id = "claude-code";
   }
-  async runTurn(ctx, signal, onProgress) {
+  async runTurn(ctx, signal, onProgress, logOptions) {
     onProgress?.("Running Claude Code agent (JSON turn)...", 25);
     const system = buildUnifiedAgentSystemPrompt("Claude Code");
     const user = buildUnifiedAgentUserPrompt(ctx);
@@ -27077,7 +27111,9 @@ var ClaudeAgentProvider = class {
       ],
       true,
       void 0,
-      signal
+      signal,
+      void 0,
+      logOptions
     );
     onProgress?.("Parsing agent response...", 85);
     return parseAgentTurnResult(raw, "claude-code");
@@ -27532,8 +27568,9 @@ The page could not be fetched automatically (e.g. login required or bot protecti
       enrichersFolderDisplay: this.plugin.settings.enrichersFolder
     };
     const provider = createAgentProvider(this.plugin);
+    const logOptions = options?.onLog ? { emit: options.onLog, rawCli: this.plugin.settings.extractionDebugRawCli } : void 0;
     try {
-      const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct));
+      const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct), logOptions);
       checkAborted();
       let answer = turn.answer_markdown || "";
       if (turn.retrieval_hits?.length) {
@@ -31941,6 +31978,30 @@ var _ChatView = class _ChatView extends import_obsidian37.ItemView {
     return `${base}
 ${ev.details}`;
   }
+  /**
+   * Builds a log-event appender for the collapsible "Agent logs" panel rendered under a
+   * chat message's progress bar. Shared by attachment extraction and unified-agent turns so
+   * the verbosity filter and entry cap can't drift between the two.
+   */
+  makeLogAppender(messageIndex) {
+    return (ev) => {
+      if (!this.activeAbortControllers.has(messageIndex))
+        return;
+      const item = this.chatHistory[messageIndex];
+      if (!item)
+        return;
+      const include = this.shouldDisplayDetailedExtractionLogs() ? true : ev.phase === "invoke_start" || ev.phase === "invoke_exit" || ev.phase === "invoke_error" || ev.phase === "invoke_aborted";
+      if (!include)
+        return;
+      if (!item.extractionLogs)
+        item.extractionLogs = [];
+      item.extractionLogs.push(ev);
+      if (item.extractionLogs.length > 80) {
+        item.extractionLogs = item.extractionLogs.slice(-80);
+      }
+      void this.renderMessages();
+    };
+  }
   getViewType() {
     return CHAT_VIEW_TYPE;
   }
@@ -32045,6 +32106,7 @@ ${ev.details}`;
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
+      timestamp: m.timestamp,
       notes: m.notes,
       jobId: m.jobId,
       status: m.status,
@@ -32057,20 +32119,24 @@ ${ev.details}`;
     }));
   }
   historyToConversationMessages() {
-    return this.chatHistory.map((h) => ({
-      role: h.role,
-      content: h.content,
-      timestamp: Date.now(),
-      notes: h.notes,
-      jobId: h.jobId,
-      status: h.status,
-      progress: h.progress,
-      reportFilePath: h.reportFilePath,
-      usedEntities: h.usedEntities,
-      proposedModifications: h.proposedModifications,
-      proposedCustomVaultOps: h.proposedCustomVaultOps,
-      proposedPlan: h.proposedPlan
-    }));
+    return this.chatHistory.map((h) => {
+      if (h.timestamp === void 0)
+        h.timestamp = Date.now();
+      return {
+        role: h.role,
+        content: h.content,
+        timestamp: h.timestamp,
+        notes: h.notes,
+        jobId: h.jobId,
+        status: h.status,
+        progress: h.progress,
+        reportFilePath: h.reportFilePath,
+        usedEntities: h.usedEntities,
+        proposedModifications: h.proposedModifications,
+        proposedCustomVaultOps: h.proposedCustomVaultOps,
+        proposedPlan: h.proposedPlan
+      };
+    });
   }
   async saveCurrentConversation() {
     this.applyChatMode("general");
@@ -32916,7 +32982,7 @@ ${ev.details}`;
         details.style.cssText = "margin-top: 8px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary);";
         details.open = !!item.extractionLogsExpanded;
         const summary = details.createEl("summary", {
-          text: `Extraction logs (${item.extractionLogs.length})`
+          text: `Agent logs (${item.extractionLogs.length})`
         });
         summary.style.cssText = "cursor: pointer; font-size: 12px; color: var(--text-muted);";
         details.addEventListener("toggle", () => {
@@ -33776,23 +33842,7 @@ ${ev.details}`;
           this.updateProgressBar(extractionMsgIndex, { message, percent });
         }
       };
-      const appendExtractionLog = (ev) => {
-        if (!this.activeAbortControllers.has(extractionMsgIndex))
-          return;
-        const item = this.chatHistory[extractionMsgIndex];
-        if (!item)
-          return;
-        if (!item.extractionLogs)
-          item.extractionLogs = [];
-        const include = this.shouldDisplayDetailedExtractionLogs() ? true : ev.phase === "invoke_start" || ev.phase === "invoke_exit" || ev.phase === "invoke_error" || ev.phase === "invoke_aborted";
-        if (!include)
-          return;
-        item.extractionLogs.push(ev);
-        if (item.extractionLogs.length > 80) {
-          item.extractionLogs = item.extractionLogs.slice(-80);
-        }
-        void this.renderMessages();
-      };
+      const appendExtractionLog = this.makeLogAppender(extractionMsgIndex);
       let extractedCount = 0;
       let failedCount = 0;
       let cancelled = false;
@@ -33942,8 +33992,8 @@ ${fileList}` : fileList;
       progress: { message: "Running task agent (local Claude)...", percent: 15 }
     });
     await this.renderMessages();
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
       const id = this.selectedTaskAgentId.trim();
       const manifest = await this.plugin.taskAgentRegistry.getById(id);
@@ -33971,9 +34021,10 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].progress = void 0;
       await this.renderMessages();
     } catch (e) {
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg === "Cancelled by user" || msg.includes("Aborted"))
+      if (wasUserCancelled || msg === "Cancelled by user")
         return;
       this.chatHistory[assistantIndex].content = `Task agent error: ${msg}`;
       this.chatHistory[assistantIndex].progress = void 0;
@@ -34003,12 +34054,13 @@ ${fileList}` : fileList;
       item.progress = { message, percent };
       this.updateProgressBar(assistantIndex, { message, percent });
     };
+    const appendAgentLog = this.makeLogAppender(assistantIndex);
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
       const currentGraphState = {
         entities: this.plugin.entityManager.getAllEntities(),
-        // Send the current graph state 
+        // Send the current graph state
         connections: this.plugin.entityManager.getAllConnections()
         // Send connections to find orphaned nodes
       };
@@ -34028,7 +34080,8 @@ ${fileList}` : fileList;
             if (tools.length <= 1)
               return;
             return this.setupOrchestrationParallelToolsUI(assistantIndex, tools);
-          }
+          },
+          onLog: appendAgentLog
         }
       );
       this.activeAbortControllers.delete(assistantIndex);
@@ -34053,12 +34106,13 @@ ${fileList}` : fileList;
       this.chatHistory[assistantIndex].multiProgress = void 0;
       await this.renderMessages();
     } catch (e) {
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const item = this.chatHistory[assistantIndex];
       item.orchestrationAbortByToolId = void 0;
       item.orchestrationDisplayToToolId = void 0;
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+      if (wasUserCancelled || errorMsg === "Cancelled by user")
         return;
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
@@ -34077,8 +34131,8 @@ ${fileList}` : fileList;
       progress: { message: "Running vault graph ingest...", percent: 5 }
     });
     await this.renderMessages();
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
       const q = (query || "").trim() || "Ingest vault documents for knowledge graph";
       const toolResults = await this.plugin.orchestrationService.executeToolsInParallel(
@@ -34116,9 +34170,10 @@ ${fileList}` : fileList;
       this._awaitingToolReview = true;
       await this.renderMessages();
     } catch (e) {
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+      if (wasUserCancelled || errorMsg === "Cancelled by user")
         return;
       this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = void 0;
@@ -34159,8 +34214,8 @@ ${fileList}` : fileList;
         this.updateProgressBar(synthesisIndex, { message, percent });
       }
     };
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(synthesisIndex, controller);
       const currentGraphState = {
         entities: this.plugin.entityManager.getAllEntities(),
@@ -34182,9 +34237,10 @@ ${fileList}` : fileList;
       await this.renderMessages();
       await this.saveCurrentConversation();
     } catch (e) {
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(synthesisIndex);
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted"))
+      if (wasUserCancelled || errorMsg === "Cancelled by user")
         return;
       this.chatHistory[synthesisIndex].content = `Synthesis Error: ${errorMsg}`;
       this.chatHistory[synthesisIndex].progress = void 0;
@@ -34384,6 +34440,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       this.chatHistory[messageIndex].content = `\u{1F3F7}\uFE0F ${message}`;
       this.updateProgressBar(messageIndex, { message, percent });
     };
+    let controller;
     try {
       const existingEntities = this.plugin.entityManager.getAllEntities();
       updateProgress("Checking existing entities...", 20);
@@ -34408,7 +34465,7 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
         updateProgress(`\u{1F4E6} ${message}`, chunkPercent);
       };
       console.log(`[OSINT Copilot] Calling graphApiService.processTextInChunks (Text length: ${inputText.length})...`);
-      const controller = new AbortController();
+      controller = new AbortController();
       this.activeAbortControllers.set(messageIndex, controller);
       this.updateProgressBar(messageIndex, { message: "Sending text to AI for entity extraction...", percent: 30 });
       const result = await this.plugin.graphApiService.processTextInChunks(
@@ -34502,11 +34559,12 @@ Please review and apply the changes below:`;
       await this.renderMessages();
       await this.saveCurrentConversation();
     } catch (error) {
+      const wasUserCancelled = controller?.signal.aborted ?? false;
       if (typeof messageIndex !== "undefined") {
         this.activeAbortControllers.delete(messageIndex);
       }
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted") || errorMsg.includes("Request was cancelled")) {
+      if (wasUserCancelled || errorMsg === "Cancelled by user") {
         return;
       }
       if (typeof messageIndex !== "undefined" && this.chatHistory[messageIndex]) {
