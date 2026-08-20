@@ -22,6 +22,7 @@ import type { AgentTurnContext } from './agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from './graph-commands-from-operations';
 import type { CustomVaultOperation } from './custom-vault-operations';
 import type { OrchestrationPlan } from './orchestration-plan';
+import type { ExtractionLogOptions, ExtractionLogEvent } from './claude-code-service';
 
 export type { OrchestrationPlan } from './orchestration-plan';
 
@@ -57,6 +58,8 @@ export interface ProcessRequestOptions {
     abortSignal?: AbortSignal;
     /** Called when multiple tools run; return per-tool signals for cooperative cancel. */
     onToolsStarting?: (tools: string[]) => Record<string, AbortSignal> | void;
+    /** Live CLI log events for the "agent is thinking" panel under the chat progress bar. */
+    onLog?: (event: ExtractionLogEvent) => void;
 }
 
 /** Options for applying @@ graph commands (provenance context when sources are omitted). */
@@ -284,8 +287,11 @@ export class OrchestrationService {
         };
 
         const provider = createAgentProvider(this.plugin);
+        const logOptions: ExtractionLogOptions | undefined = options?.onLog
+            ? { emit: options.onLog, rawCli: this.plugin.settings.extractionDebugRawCli }
+            : undefined;
         try {
-            const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct));
+            const turn = await provider.runTurn(agentCtx, options?.abortSignal, (msg, pct) => onProgress(msg, pct), logOptions);
             checkAborted();
 
             let answer = turn.answer_markdown || "";

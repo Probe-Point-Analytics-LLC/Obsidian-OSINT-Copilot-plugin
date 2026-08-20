@@ -479,7 +479,8 @@ export class GraphApiService {
         jsonResponse: boolean = false,
         customModel?: string,
         signal?: AbortSignal,
-        orchestrationOptions?: { provider: 'osint-copilot' | 'local' | 'remote', url: string, apiKey: string }
+        orchestrationOptions?: { provider: 'osint-copilot' | 'local' | 'remote', url: string, apiKey: string },
+        logOptions?: ExtractionLogOptions
     ): Promise<string> {
         if (!this.claudeCodeService) {
             throw new Error('Claude Code service not initialized.');
@@ -496,7 +497,7 @@ export class GraphApiService {
         if (jsonResponse) {
             systemPrompt += '\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.';
         }
-        return this.claudeCodeService.chat(systemPrompt, userContent, signal);
+        return this.claudeCodeService.chat(systemPrompt, userContent, signal, logOptions);
     }
 
     /**

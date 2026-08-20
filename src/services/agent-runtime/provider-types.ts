@@ -1,5 +1,6 @@
 import type { AIOperation } from '../../entities/types';
 import type { CustomVaultOperation } from '../custom-vault-operations';
+import type { ExtractionLogOptions } from '../claude-code-service';
 
 export const AGENT_TURN_SCHEMA_VERSION = 'osint_copilot_agent_turn_v1' as const;
 
@@ -59,6 +60,7 @@ export interface AgentProvider {
         ctx: AgentTurnContext,
         signal: AbortSignal | undefined,
         onProgress?: (message: string, percent: number) => void,
+        logOptions?: ExtractionLogOptions,
     ): Promise<AgentTurnResult>;
     healthCheck(): Promise<boolean>;
 }

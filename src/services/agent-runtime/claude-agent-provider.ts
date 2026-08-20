@@ -1,4 +1,5 @@
 import type { GraphApiService } from '../api-service';
+import type { ExtractionLogOptions } from '../claude-code-service';
 import { buildUnifiedAgentSystemPrompt, buildUnifiedAgentUserPrompt } from './build-unified-agent-prompt';
 import { parseAgentTurnResult } from './parse-agent-turn-json';
 import type { AgentProvider, AgentTurnContext, AgentTurnResult } from './provider-types';
@@ -11,6 +12,7 @@ export class ClaudeAgentProvider implements AgentProvider {
         ctx: AgentTurnContext,
         signal: AbortSignal | undefined,
         onProgress?: (message: string, percent: number) => void,
+        logOptions?: ExtractionLogOptions,
     ): Promise<AgentTurnResult> {
         onProgress?.('Running Claude Code agent (JSON turn)...', 25);
         const system = buildUnifiedAgentSystemPrompt('Claude Code');
@@ -23,6 +25,8 @@ export class ClaudeAgentProvider implements AgentProvider {
             true,
             undefined,
             signal,
+            undefined,
+            logOptions,
         );
         onProgress?.('Parsing agent response...', 85);
         return parseAgentTurnResult(raw, 'claude-code');

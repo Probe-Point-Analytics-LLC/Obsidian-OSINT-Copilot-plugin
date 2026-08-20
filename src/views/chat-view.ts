@@ -101,6 +101,29 @@ export class ChatView extends ItemView {
     return `${base}\n${ev.details}`;
   }
 
+  /**
+   * Builds a log-event appender for the collapsible "Agent logs" panel rendered under a
+   * chat message's progress bar. Shared by attachment extraction and unified-agent turns so
+   * the verbosity filter and entry cap can't drift between the two.
+   */
+  private makeLogAppender(messageIndex: number): (ev: ExtractionLogEvent) => void {
+    return (ev: ExtractionLogEvent) => {
+      if (!this.activeAbortControllers.has(messageIndex)) return;
+      const item = this.chatHistory[messageIndex];
+      if (!item) return;
+      const include = this.shouldDisplayDetailedExtractionLogs()
+        ? true
+        : (ev.phase === 'invoke_start' || ev.phase === 'invoke_exit' || ev.phase === 'invoke_error' || ev.phase === 'invoke_aborted');
+      if (!include) return;
+      if (!item.extractionLogs) item.extractionLogs = [];
+      item.extractionLogs.push(ev);
+      if (item.extractionLogs.length > 80) {
+        item.extractionLogs = item.extractionLogs.slice(-80);
+      }
+      void this.renderMessages();
+    };
+  }
+
   constructor(leaf: WorkspaceLeaf, plugin: VaultAIPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -1307,7 +1330,7 @@ export class ChatView extends ItemView {
           "margin-top: 8px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-secondary);";
         details.open = !!item.extractionLogsExpanded;
         const summary = details.createEl("summary", {
-          text: `Extraction logs (${item.extractionLogs.length})`,
+          text: `Agent logs (${item.extractionLogs.length})`,
         });
         summary.style.cssText = "cursor: pointer; font-size: 12px; color: var(--text-muted);";
         details.addEventListener("toggle", () => {
@@ -2328,21 +2351,7 @@ export class ChatView extends ItemView {
         }
       };
 
-      const appendExtractionLog = (ev: ExtractionLogEvent) => {
-        if (!this.activeAbortControllers.has(extractionMsgIndex)) return;
-        const item = this.chatHistory[extractionMsgIndex];
-        if (!item) return;
-        if (!item.extractionLogs) item.extractionLogs = [];
-        const include = this.shouldDisplayDetailedExtractionLogs()
-          ? true
-          : (ev.phase === 'invoke_start' || ev.phase === 'invoke_exit' || ev.phase === 'invoke_error' || ev.phase === 'invoke_aborted');
-        if (!include) return;
-        item.extractionLogs.push(ev);
-        if (item.extractionLogs.length > 80) {
-          item.extractionLogs = item.extractionLogs.slice(-80);
-        }
-        void this.renderMessages();
-      };
+      const appendExtractionLog = this.makeLogAppender(extractionMsgIndex);
 
       let extractedCount = 0;
       let failedCount = 0;
@@ -2588,6 +2597,10 @@ export class ChatView extends ItemView {
       this.updateProgressBar(assistantIndex, { message, percent });
     };
 
+    // Live CLI activity shown in a collapsible log panel under the progress bar while the
+    // agent is thinking, instead of only a single static progress line.
+    const appendAgentLog = this.makeLogAppender(assistantIndex);
+
     const controller = new AbortController();
     try {
       this.activeAbortControllers.set(assistantIndex, controller);
@@ -2615,6 +2628,7 @@ export class ChatView extends ItemView {
             if (tools.length <= 1) return;
             return this.setupOrchestrationParallelToolsUI(assistantIndex, tools);
           },
+          onLog: appendAgentLog,
         }
       );
 
