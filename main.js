@@ -34,7 +34,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 
 // src/plugin/vault-ai-plugin.ts
-var import_obsidian39 = require("obsidian");
+var import_obsidian40 = require("obsidian");
 
 // src/generated/oidsfBundledSchemas.ts
 var OIDSF_BUNDLED_SCHEMAS = {
@@ -16627,11 +16627,15 @@ Tip: paste the text content directly into the chat instead.`
    * Resolves the pdftotext binary to run. GUI apps (Obsidian included) are often launched
    * with a PATH that's missing the login shell's additions — most commonly seen when the app
    * is started from a desktop launcher rather than a terminal — so a plain `execFile('pdftotext', ...)`
-   * can fail with ENOENT even though poppler-utils is genuinely installed. Prefer a known
+   * can fail with ENOENT even though poppler-utils is genuinely installed. An explicit setting
+   * always wins (the user knows their own install location best); otherwise prefer a known
    * absolute path if one exists on disk; otherwise fall back to bare `pdftotext` (unchanged
    * behavior for environments where PATH already resolves it, e.g. Windows).
    */
   resolvePdftotextPath() {
+    const override = this.settings?.pdftotextPath?.trim();
+    if (override)
+      return override;
     const nodeFs = require("fs");
     const candidates = [
       "/usr/bin/pdftotext",
@@ -16669,10 +16673,12 @@ Tip: paste the text content directly into the chat instead.`
         }, (error, stdout, stderr) => {
           if (error) {
             reject(new Error(
-              `PDF text extraction failed. Please install poppler-utils:
+              `PDF text extraction failed (tried "${pdftotextPath}"). Please install poppler-utils:
   Ubuntu/Debian: sudo apt install poppler-utils
   Arch/Manjaro: sudo pacman -S poppler
   macOS: brew install poppler
+
+If poppler-utils is already installed but Obsidian can't find it, set "pdftotext path" under Settings \u2192 Graph extraction (Claude Code) to its full path (run 'which pdftotext' in the terminal/session Obsidian was launched from to find it).
 
 Error: ${stderr || error.message}`
             ));
@@ -17686,14 +17692,67 @@ var ConversationService = class {
 };
 
 // src/views/graph-view.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian13 = require("obsidian");
+
+// src/utils/vault-bootstrap-fs.ts
+var import_obsidian6 = require("obsidian");
+function isAlreadyExistsError(e) {
+  return e instanceof Error && e.message.includes("already exists");
+}
+async function ensureFolderExists(app, path) {
+  const normalized = (0, import_obsidian6.normalizePath)(path);
+  const existing = app.vault.getAbstractFileByPath(normalized);
+  if (existing instanceof import_obsidian6.TFolder)
+    return;
+  if (existing) {
+    throw new Error(`Cannot create folder "${normalized}": a file already exists at that path.`);
+  }
+  try {
+    await app.vault.createFolder(normalized);
+  } catch (e) {
+    if (!isAlreadyExistsError(e))
+      throw e;
+    if (!(app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian6.TFolder)) {
+      console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a folder:`, e);
+    }
+  }
+}
+async function ensureFolderChain(app, path) {
+  const parts = (0, import_obsidian6.normalizePath)(path).split("/").filter(Boolean);
+  let acc = "";
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    await ensureFolderExists(app, acc);
+  }
+}
+async function ensureFolderChainForFile(app, filePath) {
+  const normalized = (0, import_obsidian6.normalizePath)(filePath);
+  const parent = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : "";
+  if (parent)
+    await ensureFolderChain(app, parent);
+}
+async function createFileIfMissing(app, path, content) {
+  const normalized = (0, import_obsidian6.normalizePath)(path);
+  if (app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian6.TFile)
+    return;
+  await ensureFolderChainForFile(app, normalized);
+  try {
+    await app.vault.create(normalized, content);
+  } catch (e) {
+    if (!isAlreadyExistsError(e))
+      throw e;
+    if (!(app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian6.TFile)) {
+      console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a file:`, e);
+    }
+  }
+}
 
 // src/modals/entity-modal.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/modals/custom-type-modal.ts
-var import_obsidian6 = require("obsidian");
-var CustomTypeCreationModal = class extends import_obsidian6.Modal {
+var import_obsidian7 = require("obsidian");
+var CustomTypeCreationModal = class extends import_obsidian7.Modal {
   constructor(app, customTypesService, existingSchema, onSave, baseType = "Thing") {
     super(app);
     this.isEditing = false;
@@ -17754,7 +17813,7 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
   renderGeneralSettings(container) {
     const section = container.createDiv({ cls: "graph_copilot-section" });
     section.createEl("h3", { text: "1. General information" });
-    new import_obsidian6.Setting(section).setName("Type name").setDesc('Internal name (CamelCase, e.g. "MyCustomType")').addText((text) => text.setPlaceholder("MyCustomType").setValue(this.schema.name || "").setDisabled(this.isEditing).onChange((value) => {
+    new import_obsidian7.Setting(section).setName("Type name").setDesc('Internal name (CamelCase, e.g. "MyCustomType")').addText((text) => text.setPlaceholder("MyCustomType").setValue(this.schema.name || "").setDisabled(this.isEditing).onChange((value) => {
       if (this.isEditing)
         return;
       const sanitized = value.replace(/[^a-zA-Z0-9]/g, "");
@@ -17764,10 +17823,10 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
       if (!this.schema.plural)
         this.schema.plural = value + "s";
     }));
-    new import_obsidian6.Setting(section).setName("Display label").setDesc("Human readable label").addText((text) => text.setPlaceholder("My custom type").onChange((value) => this.schema.label = value));
-    new import_obsidian6.Setting(section).setName("Plural label").setDesc("Plural formatted label").addText((text) => text.setPlaceholder("My custom types").onChange((value) => this.schema.plural = value));
-    new import_obsidian6.Setting(section).setName("Description").setDesc("Short description of what this entity represents").addTextArea((text) => text.setPlaceholder("Description...").onChange((value) => this.schema.description = value));
-    new import_obsidian6.Setting(section).setName("Color").setDesc("Color for the entity nodes").addColorPicker((color) => color.setValue(this.schema.color || "#607D8B").onChange((value) => this.schema.color = value));
+    new import_obsidian7.Setting(section).setName("Display label").setDesc("Human readable label").addText((text) => text.setPlaceholder("My custom type").onChange((value) => this.schema.label = value));
+    new import_obsidian7.Setting(section).setName("Plural label").setDesc("Plural formatted label").addText((text) => text.setPlaceholder("My custom types").onChange((value) => this.schema.plural = value));
+    new import_obsidian7.Setting(section).setName("Description").setDesc("Short description of what this entity represents").addTextArea((text) => text.setPlaceholder("Description...").onChange((value) => this.schema.description = value));
+    new import_obsidian7.Setting(section).setName("Color").setDesc("Color for the entity nodes").addColorPicker((color) => color.setValue(this.schema.color || "#607D8B").onChange((value) => this.schema.color = value));
   }
   renderPropertyBuilder(container) {
     const section = container.createDiv({ cls: "graph_copilot-section" });
@@ -17821,7 +17880,7 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
     const formGrid = addPropSection.createDiv({ cls: "graph_copilot-form-grid" });
     const nameContainer = formGrid.createDiv();
     nameContainer.createDiv({ text: "Label *", cls: "setting-item-name" });
-    const nameInput = new import_obsidian6.TextComponent(nameContainer);
+    const nameInput = new import_obsidian7.TextComponent(nameContainer);
     nameInput.setPlaceholder("E.g. birth date");
     nameInput.inputEl.addClass("graph_copilot-input-full");
     nameInput.onChange((val) => {
@@ -17834,29 +17893,29 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
     });
     const keyContainer = formGrid.createDiv();
     keyContainer.createDiv({ text: "Property key *", cls: "setting-item-name" });
-    const keyInput = new import_obsidian6.TextComponent(keyContainer);
+    const keyInput = new import_obsidian7.TextComponent(keyContainer);
     keyInput.setPlaceholder("E.g. birthDate");
     keyInput.inputEl.addClass("graph_copilot-input-full");
     keyInput.onChange((val) => newProp.key = val);
     const typeContainer = formGrid.createDiv();
     typeContainer.createDiv({ text: "Type", cls: "setting-item-name" });
-    const typeSelect = new import_obsidian6.DropdownComponent(typeContainer);
+    const typeSelect = new import_obsidian7.DropdownComponent(typeContainer);
     this.PROPERTY_TYPES.forEach((t) => typeSelect.addOption(t, t));
     typeSelect.setValue("string");
     typeSelect.onChange((val) => newProp.type = val);
     const descContainer = formGrid.createDiv();
     descContainer.createDiv({ text: "Description", cls: "setting-item-name" });
-    const descInput = new import_obsidian6.TextComponent(descContainer);
+    const descInput = new import_obsidian7.TextComponent(descContainer);
     descInput.setPlaceholder("Optional description");
     descInput.inputEl.addClass("graph_copilot-input-full");
     descInput.onChange((val) => newProp.description = val);
     const flagsContainer = addPropSection.createDiv({ cls: "graph_copilot-flags-container" });
-    new import_obsidian6.Setting(flagsContainer).setName("Required").addToggle((t) => t.onChange((v) => newProp.required = v));
-    new import_obsidian6.Setting(flagsContainer).setName("Key property (featured)").addToggle((t) => t.onChange((v) => newProp.featured = v));
+    new import_obsidian7.Setting(flagsContainer).setName("Required").addToggle((t) => t.onChange((v) => newProp.required = v));
+    new import_obsidian7.Setting(flagsContainer).setName("Key property (featured)").addToggle((t) => t.onChange((v) => newProp.featured = v));
     const btnContainer = addPropSection.createDiv({ cls: "graph_copilot-btn-container" });
-    const addBtn = new import_obsidian6.ButtonComponent(btnContainer).setButtonText("Add property").setCta().onClick(() => {
+    const addBtn = new import_obsidian7.ButtonComponent(btnContainer).setButtonText("Add property").setCta().onClick(() => {
       if (!newProp.label || !newProp.key) {
-        new import_obsidian6.Notice("Label and key are required");
+        new import_obsidian7.Notice("Label and key are required");
         return;
       }
       this.propertyRows.push({ ...newProp, id: Date.now().toString() });
@@ -17873,8 +17932,8 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
   }
   renderFooter(contentEl) {
     const buttonContainer = contentEl.createDiv({ cls: "graph_copilot-entity-modal-buttons" });
-    new import_obsidian6.ButtonComponent(buttonContainer).setButtonText("Cancel").onClick(() => this.close());
-    new import_obsidian6.ButtonComponent(buttonContainer).setButtonText(this.isEditing ? "Update type" : "Create type").setCta().onClick(() => this.handleSave());
+    new import_obsidian7.ButtonComponent(buttonContainer).setButtonText("Cancel").onClick(() => this.close());
+    new import_obsidian7.ButtonComponent(buttonContainer).setButtonText(this.isEditing ? "Update type" : "Create type").setCta().onClick(() => this.handleSave());
   }
   populateRowsFromSchema() {
     if (!this.schema.properties)
@@ -17896,11 +17955,11 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
   }
   async handleSave() {
     if (!this.schema.name) {
-      new import_obsidian6.Notice("Internal type name is required");
+      new import_obsidian7.Notice("Internal type name is required");
       return;
     }
     if (!this.schema.label) {
-      new import_obsidian6.Notice("Display label is required");
+      new import_obsidian7.Notice("Display label is required");
       return;
     }
     const finalProperties = {};
@@ -17932,7 +17991,7 @@ var CustomTypeCreationModal = class extends import_obsidian6.Modal {
       }
       this.close();
     } catch (error) {
-      new import_obsidian6.Notice(`Failed to create type: ${error}`);
+      new import_obsidian7.Notice(`Failed to create type: ${error}`);
       console.error(error);
     }
   }
@@ -18004,7 +18063,7 @@ var COMMON_RELATIONSHIPS = [
   "FRIEND_OF",
   "COLLEAGUE_OF"
 ];
-var EntityCreationModal = class extends import_obsidian7.Modal {
+var EntityCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, entityType, onEntityCreated, initialProperties = {}, entityId) {
     super(app);
     this.entityId = entityId;
@@ -18328,7 +18387,7 @@ var EntityCreationModal = class extends import_obsidian7.Modal {
     if (this.properties[labelField] && this.properties[labelField].trim() !== "") {
       const nameValidation = validateEntityName(this.properties[labelField], this.entityType);
       if (!nameValidation.isValid) {
-        new import_obsidian7.Notice(nameValidation.error || "Invalid entity name");
+        new import_obsidian8.Notice(nameValidation.error || "Invalid entity name");
         return;
       }
     }
@@ -18336,21 +18395,21 @@ var EntityCreationModal = class extends import_obsidian7.Modal {
       let entity;
       if (this.entityId) {
         entity = await this.entityManager.updateEntity(this.entityId, this.properties);
-        new import_obsidian7.Notice(`Updated ${this.entityType}: ${entity?.label}`);
+        new import_obsidian8.Notice(`Updated ${this.entityType}: ${entity?.label}`);
       } else {
         entity = await this.entityManager.createEntity(
           this.entityType,
           this.properties,
           { skipAutoGeocode: true }
         );
-        new import_obsidian7.Notice(`Created ${this.entityType}: ${entity.label}`);
+        new import_obsidian8.Notice(`Created ${this.entityType}: ${entity.label}`);
       }
       if (this.onEntityCreated && entity) {
         this.onEntityCreated(entity.id);
       }
       this.close();
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to create entity: ${error}`);
+      new import_obsidian8.Notice(`Failed to create entity: ${error}`);
       console.error("Entity creation error:", error);
     }
   }
@@ -18414,7 +18473,7 @@ var EntityCreationModal = class extends import_obsidian7.Modal {
     contentEl.empty();
   }
 };
-var ConnectionCreationModal = class extends import_obsidian7.Modal {
+var ConnectionCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, onConnectionCreated, preselectedSourceId, preselectedTargetId) {
     super(app);
     this.sourceEntityId = null;
@@ -18516,19 +18575,19 @@ var ConnectionCreationModal = class extends import_obsidian7.Modal {
   }
   async handleCreate() {
     if (!this.sourceEntityId) {
-      new import_obsidian7.Notice("Please select a source entity");
+      new import_obsidian8.Notice("Please select a source entity");
       return;
     }
     if (!this.targetEntityId) {
-      new import_obsidian7.Notice("Please select a target entity");
+      new import_obsidian8.Notice("Please select a target entity");
       return;
     }
     if (this.sourceEntityId === this.targetEntityId) {
-      new import_obsidian7.Notice("Source and target entities must be different");
+      new import_obsidian8.Notice("Source and target entities must be different");
       return;
     }
     if (!this.relationship.trim()) {
-      new import_obsidian7.Notice("Please enter a relationship type");
+      new import_obsidian8.Notice("Please enter a relationship type");
       return;
     }
     try {
@@ -18540,16 +18599,16 @@ var ConnectionCreationModal = class extends import_obsidian7.Modal {
       if (connection) {
         const sourceEntity = this.entityManager.getEntity(this.sourceEntityId);
         const targetEntity = this.entityManager.getEntity(this.targetEntityId);
-        new import_obsidian7.Notice(`Created: ${sourceEntity?.label} \u2192 ${this.relationship} \u2192 ${targetEntity?.label}`);
+        new import_obsidian8.Notice(`Created: ${sourceEntity?.label} \u2192 ${this.relationship} \u2192 ${targetEntity?.label}`);
         if (this.onConnectionCreated) {
           this.onConnectionCreated(connection.id);
         }
         this.close();
       } else {
-        new import_obsidian7.Notice("Failed to create connection");
+        new import_obsidian8.Notice("Failed to create connection");
       }
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to create connection: ${error}`);
+      new import_obsidian8.Notice(`Failed to create connection: ${error}`);
       console.error("Connection creation error:", error);
     }
   }
@@ -18558,7 +18617,7 @@ var ConnectionCreationModal = class extends import_obsidian7.Modal {
     contentEl.empty();
   }
 };
-var FTMEntityCreationModal = class extends import_obsidian7.Modal {
+var FTMEntityCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, schemaName, onEntityCreated, catalogType) {
     super(app);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -18802,19 +18861,19 @@ var FTMEntityCreationModal = class extends import_obsidian7.Modal {
       if (this.properties[lf] && String(this.properties[lf]).trim() !== "") {
         const nameValidation = validateEntityName(String(this.properties[lf]), cat.name);
         if (!nameValidation.isValid) {
-          new import_obsidian7.Notice(nameValidation.error || "Invalid entity name");
+          new import_obsidian8.Notice(nameValidation.error || "Invalid entity name");
           return;
         }
       }
       try {
         const entity = await this.entityManager.createCatalogEntity(cat, this.properties);
-        new import_obsidian7.Notice(`Created ${cat.label}: ${entity.label}`);
+        new import_obsidian8.Notice(`Created ${cat.label}: ${entity.label}`);
         if (this.onEntityCreated) {
           this.onEntityCreated(entity.id);
         }
         this.close();
       } catch (error) {
-        new import_obsidian7.Notice(`Failed to create entity: ${error}`);
+        new import_obsidian8.Notice(`Failed to create entity: ${error}`);
         console.error("Catalog entity creation error:", error);
       }
       return;
@@ -18826,7 +18885,7 @@ var FTMEntityCreationModal = class extends import_obsidian7.Modal {
     if (this.properties[labelField] && String(this.properties[labelField]).trim() !== "") {
       const nameValidation = validateEntityName(this.properties[labelField], this.schemaName);
       if (!nameValidation.isValid) {
-        new import_obsidian7.Notice(nameValidation.error || "Invalid entity name");
+        new import_obsidian8.Notice(nameValidation.error || "Invalid entity name");
         return;
       }
     }
@@ -18836,13 +18895,13 @@ var FTMEntityCreationModal = class extends import_obsidian7.Modal {
         this.properties,
         { skipAutoGeocode: true }
       );
-      new import_obsidian7.Notice(`Created ${config.label}: ${entity.label}`);
+      new import_obsidian8.Notice(`Created ${config.label}: ${entity.label}`);
       if (this.onEntityCreated) {
         this.onEntityCreated(entity.id);
       }
       this.close();
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to create entity: ${error}`);
+      new import_obsidian8.Notice(`Failed to create entity: ${error}`);
       console.error("FTM Entity creation error:", error);
     }
   }
@@ -18918,11 +18977,11 @@ var FTMEntityCreationModal = class extends import_obsidian7.Modal {
           if (!this.properties.fileName)
             this.properties.fileName = file.name;
         }
-        new import_obsidian7.Notice(`File uploaded: ${filePath}`);
+        new import_obsidian8.Notice(`File uploaded: ${filePath}`);
       } catch (err) {
         console.error("File upload error:", err);
         hintText.textContent = "\u274C Upload failed";
-        new import_obsidian7.Notice(`Upload failed: ${err}`);
+        new import_obsidian8.Notice(`Upload failed: ${err}`);
       }
     };
     fileInput.addEventListener("change", (e) => {
@@ -18957,7 +19016,7 @@ var FTMEntityCreationModal = class extends import_obsidian7.Modal {
     contentEl.empty();
   }
 };
-var FTMEntityTypeSelectorModal = class _FTMEntityTypeSelectorModal extends import_obsidian7.Modal {
+var FTMEntityTypeSelectorModal = class _FTMEntityTypeSelectorModal extends import_obsidian8.Modal {
   constructor(app, entityManager, onEntityCreated) {
     super(app);
     this.searchInput = null;
@@ -19011,7 +19070,7 @@ var FTMEntityTypeSelectorModal = class _FTMEntityTypeSelectorModal extends impor
           selector.open();
         }).open();
       } else {
-        new import_obsidian7.Notice("Error: OSINT copilot plugin instance not found.");
+        new import_obsidian8.Notice("Error: OSINT copilot plugin instance not found.");
       }
     };
     contentEl.createEl("p", { text: "Select the type of entity to create:" });
@@ -19358,7 +19417,7 @@ var FTMEntityTypeSelectorModal = class _FTMEntityTypeSelectorModal extends impor
     contentEl.empty();
   }
 };
-var FTMEntityEditModal = class extends import_obsidian7.Modal {
+var FTMEntityEditModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, entity, onEntityUpdated) {
     super(app);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19715,11 +19774,11 @@ var FTMEntityEditModal = class extends import_obsidian7.Modal {
                         <div style="font-size: 12px; color: var(--text-accent); word-break: break-all;">${filePath.replace(/^\//, "")}</div>
                     `;
         }
-        new import_obsidian7.Notice(`File uploaded: ${filePath}`);
+        new import_obsidian8.Notice(`File uploaded: ${filePath}`);
       } catch (err) {
         console.error("File upload error:", err);
         hintText.textContent = "\u274C Upload failed";
-        new import_obsidian7.Notice(`Upload failed: ${err}`);
+        new import_obsidian8.Notice(`Upload failed: ${err}`);
       }
     };
     fileInput.addEventListener("change", (e) => {
@@ -19808,17 +19867,17 @@ Confidence: ${result.confidence} `,
       button.disabled = false;
       button.textContent = "\u2713 geocoded successfully";
       button.style.background = "var(--text-success)";
-      new import_obsidian7.Notice("Geocoding successful! Don't forget to save your changes.");
+      new import_obsidian8.Notice("Geocoding successful! Don't forget to save your changes.");
     } catch (error) {
       button.disabled = false;
       button.textContent = "\u{1F4CD} geolocate address";
       if (error instanceof GeocodingError) {
         this.updateGeocodeStatus(`\u2717 ${error.message} `, "error");
-        new import_obsidian7.Notice(`Geocoding failed: ${error.message} `);
+        new import_obsidian8.Notice(`Geocoding failed: ${error.message} `);
       } else {
         console.error("[FTMEntityEditModal] Geocoding error:", error);
         this.updateGeocodeStatus("\u2717 Failed to geocode address. Please try again.", "error");
-        new import_obsidian7.Notice("Failed to geocode address. Please try again.");
+        new import_obsidian8.Notice("Failed to geocode address. Please try again.");
       }
     }
   }
@@ -19847,23 +19906,23 @@ Confidence: ${result.confidence} `,
     if (this.properties[labelField] && String(this.properties[labelField]).trim() !== "") {
       const nameValidation = validateEntityName(this.properties[labelField], this.schemaName);
       if (!nameValidation.isValid) {
-        new import_obsidian7.Notice(nameValidation.error || "Invalid entity name");
+        new import_obsidian8.Notice(nameValidation.error || "Invalid entity name");
         return;
       }
     }
     try {
       const updatedEntity = await this.entityManager.updateEntity(this.entity.id, this.properties);
       if (updatedEntity) {
-        new import_obsidian7.Notice(`Updated ${config.label}: ${updatedEntity.label} `);
+        new import_obsidian8.Notice(`Updated ${config.label}: ${updatedEntity.label} `);
         if (this.onEntityUpdated) {
           this.onEntityUpdated(this.entity.id);
         }
         this.close();
       } else {
-        new import_obsidian7.Notice("Failed to update entity: entity not found");
+        new import_obsidian8.Notice("Failed to update entity: entity not found");
       }
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to update entity: ${error} `);
+      new import_obsidian8.Notice(`Failed to update entity: ${error} `);
       console.error("FTM Entity update error:", error);
     }
   }
@@ -19924,17 +19983,17 @@ border - radius: 4px;
       const propName = nameInput.value.trim();
       const propValue = valueInput.value.trim();
       if (!propName) {
-        new import_obsidian7.Notice("Please enter a property name");
+        new import_obsidian8.Notice("Please enter a property name");
         return;
       }
       if (!propValue) {
-        new import_obsidian7.Notice("Please enter a property value");
+        new import_obsidian8.Notice("Please enter a property value");
         return;
       }
       this.properties[propName] = propValue;
       contentEl.empty();
       this.renderNonFTMEntityEditor(contentEl);
-      new import_obsidian7.Notice(`Added property: ${propName} `);
+      new import_obsidian8.Notice(`Added property: ${propName} `);
     };
     if (this.schemaName === "Location" && (!this.properties.latitude || !this.properties.longitude)) {
       this.createGeocodingSection(contentEl);
@@ -19974,7 +20033,7 @@ border - radius: 4px;
     deleteBtn.onclick = () => {
       delete this.properties[propertyName];
       fieldContainer.remove();
-      new import_obsidian7.Notice(`Deleted property: ${propertyName} `);
+      new import_obsidian8.Notice(`Deleted property: ${propertyName} `);
     };
   }
   /**
@@ -19984,16 +20043,16 @@ border - radius: 4px;
     try {
       const updatedEntity = await this.entityManager.updateEntity(this.entity.id, this.properties);
       if (updatedEntity) {
-        new import_obsidian7.Notice(`Updated ${this.schemaName}: ${updatedEntity.label} `);
+        new import_obsidian8.Notice(`Updated ${this.schemaName}: ${updatedEntity.label} `);
         if (this.onEntityUpdated) {
           this.onEntityUpdated(this.entity.id);
         }
         this.close();
       } else {
-        new import_obsidian7.Notice("Failed to update entity: entity not found");
+        new import_obsidian8.Notice("Failed to update entity: entity not found");
       }
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to update entity: ${error} `);
+      new import_obsidian8.Notice(`Failed to update entity: ${error} `);
       console.error("Non-FTM Entity update error:", error);
     }
   }
@@ -20002,7 +20061,7 @@ border - radius: 4px;
     contentEl.empty();
   }
 };
-var FTMIntervalTypeSelectorModal = class _FTMIntervalTypeSelectorModal extends import_obsidian7.Modal {
+var FTMIntervalTypeSelectorModal = class _FTMIntervalTypeSelectorModal extends import_obsidian8.Modal {
   constructor(app, entityManager, onConnectionCreated, preselectedSourceId, preselectedTargetId) {
     super(app);
     this.sourceEntityId = null;
@@ -20049,7 +20108,7 @@ var FTMIntervalTypeSelectorModal = class _FTMIntervalTypeSelectorModal extends i
           // Specify base type
         ).open();
       } else {
-        new import_obsidian7.Notice("Error: OSINT copilot plugin instance not found.");
+        new import_obsidian8.Notice("Error: OSINT copilot plugin instance not found.");
       }
     };
     contentEl.createEl("p", { text: "Select the type of relationship/interval to create:" });
@@ -20345,7 +20404,7 @@ color: var(--text - muted);
     contentEl.empty();
   }
 };
-var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
+var FTMIntervalCreationModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, intervalType, onConnectionCreated, preselectedSourceId, preselectedTargetId, catalogRel) {
     super(app);
     // FTM schema name (e.g., 'Associate', 'Ownership')
@@ -20377,7 +20436,7 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
     }
     const config = getFTMEntityConfig(this.intervalType);
     if (!config) {
-      new import_obsidian7.Notice(`Unknown interval type: ${this.intervalType} `);
+      new import_obsidian8.Notice(`Unknown interval type: ${this.intervalType} `);
       this.close();
       return;
     }
@@ -20612,11 +20671,11 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
       const fromId = this.catalogSourceId || this.sourceEntityId;
       const toId = this.catalogTargetId || this.targetEntityId;
       if (!fromId || !toId) {
-        new import_obsidian7.Notice("Please select both entities for the connection");
+        new import_obsidian8.Notice("Please select both entities for the connection");
         return;
       }
       if (fromId === toId) {
-        new import_obsidian7.Notice("Source and target entities must be different");
+        new import_obsidian8.Notice("Source and target entities must be different");
         return;
       }
       try {
@@ -20630,7 +20689,7 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
         if (connection) {
           const sourceEntity = this.entityManager.getEntity(fromId);
           const targetEntity = this.entityManager.getEntity(toId);
-          new import_obsidian7.Notice(
+          new import_obsidian8.Notice(
             `Created: ${sourceEntity?.label} \u2192 ${this.intervalType} \u2192 ${targetEntity?.label} `
           );
           if (this.onConnectionCreated) {
@@ -20638,10 +20697,10 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
           }
           this.close();
         } else {
-          new import_obsidian7.Notice("Failed to create connection");
+          new import_obsidian8.Notice("Failed to create connection");
         }
       } catch (error) {
-        new import_obsidian7.Notice(`Failed to create connection: ${error} `);
+        new import_obsidian8.Notice(`Failed to create connection: ${error} `);
         console.error("Catalog interval creation error:", error);
       }
       return;
@@ -20655,11 +20714,11 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
         const sourceId = this.properties[entityProps[0]];
         const targetId = this.properties[entityProps[1]];
         if (!sourceId || !targetId) {
-          new import_obsidian7.Notice("Please select both entities for the connection");
+          new import_obsidian8.Notice("Please select both entities for the connection");
           return;
         }
         if (sourceId === targetId) {
-          new import_obsidian7.Notice("Source and target entities must be different");
+          new import_obsidian8.Notice("Source and target entities must be different");
           return;
         }
         const connection = await this.entityManager.createConnection(
@@ -20672,19 +20731,19 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
         if (connection) {
           const sourceEntity = this.entityManager.getEntity(sourceId);
           const targetEntity = this.entityManager.getEntity(targetId);
-          new import_obsidian7.Notice(`Created: ${sourceEntity?.label} \u2192 ${this.intervalType} \u2192 ${targetEntity?.label} `);
+          new import_obsidian8.Notice(`Created: ${sourceEntity?.label} \u2192 ${this.intervalType} \u2192 ${targetEntity?.label} `);
           if (this.onConnectionCreated) {
             this.onConnectionCreated(connection.id);
           }
           this.close();
         } else {
-          new import_obsidian7.Notice("Failed to create connection");
+          new import_obsidian8.Notice("Failed to create connection");
         }
       } else {
-        new import_obsidian7.Notice("This interval type requires at least two entity references");
+        new import_obsidian8.Notice("This interval type requires at least two entity references");
       }
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to create ${config.label}: ${error} `);
+      new import_obsidian8.Notice(`Failed to create ${config.label}: ${error} `);
       console.error("Interval creation error:", error);
     }
   }
@@ -20693,7 +20752,7 @@ var FTMIntervalCreationModal = class extends import_obsidian7.Modal {
     contentEl.empty();
   }
 };
-var ConnectionEditModal = class extends import_obsidian7.Modal {
+var ConnectionEditModal = class extends import_obsidian8.Modal {
   constructor(app, entityManager, connection, onConnectionUpdated) {
     super(app);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20824,13 +20883,13 @@ margin - bottom: 16px;
     const config = getFTMEntityConfig(intervalType);
     try {
       await this.entityManager.updateConnection(this.connection.id, this.properties);
-      new import_obsidian7.Notice("Connection updated successfully");
+      new import_obsidian8.Notice("Connection updated successfully");
       if (this.onConnectionUpdated) {
         this.onConnectionUpdated(this.connection.id);
       }
       this.close();
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to update connection: ${error} `);
+      new import_obsidian8.Notice(`Failed to update connection: ${error} `);
       console.error("Connection update error:", error);
     }
   }
@@ -20898,17 +20957,17 @@ border - radius: 4px;
       const propName = nameInput.value.trim();
       const propValue = valueInput.value.trim();
       if (!propName) {
-        new import_obsidian7.Notice("Please enter a property name");
+        new import_obsidian8.Notice("Please enter a property name");
         return;
       }
       if (!propValue) {
-        new import_obsidian7.Notice("Please enter a property value");
+        new import_obsidian8.Notice("Please enter a property value");
         return;
       }
       this.properties[propName] = propValue;
       contentEl.empty();
       this.renderNonFTMConnectionEditor(contentEl, intervalType);
-      new import_obsidian7.Notice(`Added property: ${propName} `);
+      new import_obsidian8.Notice(`Added property: ${propName} `);
     };
     const buttonContainer = contentEl.createDiv({ cls: "graph_copilot-entity-modal-buttons" });
     const saveBtn = buttonContainer.createEl("button", {
@@ -20945,7 +21004,7 @@ border - radius: 4px;
     deleteBtn.onclick = () => {
       delete this.properties[propertyName];
       fieldContainer.remove();
-      new import_obsidian7.Notice(`Deleted property: ${propertyName} `);
+      new import_obsidian8.Notice(`Deleted property: ${propertyName} `);
     };
   }
   /**
@@ -20954,13 +21013,13 @@ border - radius: 4px;
   async handleNonFTMConnectionSave() {
     try {
       await this.entityManager.updateConnection(this.connection.id, this.properties);
-      new import_obsidian7.Notice("Connection updated successfully");
+      new import_obsidian8.Notice("Connection updated successfully");
       if (this.onConnectionUpdated) {
         this.onConnectionUpdated(this.connection.id);
       }
       this.close();
     } catch (error) {
-      new import_obsidian7.Notice(`Failed to update connection: ${error} `);
+      new import_obsidian8.Notice(`Failed to update connection: ${error} `);
       console.error("Non-FTM Connection update error:", error);
     }
   }
@@ -20971,8 +21030,8 @@ border - radius: 4px;
 };
 
 // src/modals/confirm-modal.ts
-var import_obsidian8 = require("obsidian");
-var ConfirmModal = class extends import_obsidian8.Modal {
+var import_obsidian9 = require("obsidian");
+var ConfirmModal = class extends import_obsidian9.Modal {
   constructor(app, title, message, onConfirm, onCancel, destructive = false, checkboxItems, confirmText = "Confirm", cancelText = "Cancel") {
     super(app);
     this.title = title;
@@ -21067,8 +21126,8 @@ var ConfirmModal = class extends import_obsidian8.Modal {
 };
 
 // src/modals/vault-unlock-modal.ts
-var import_obsidian9 = require("obsidian");
-var VaultUnlockModal = class extends import_obsidian9.Modal {
+var import_obsidian10 = require("obsidian");
+var VaultUnlockModal = class extends import_obsidian10.Modal {
   constructor(app, onUnlock, titleText = "Locked note", message = "This note is locked from the OSINT graph. Unlocking allows editing and agent changes.") {
     super(app);
     this.onUnlock = onUnlock;
@@ -21081,7 +21140,7 @@ var VaultUnlockModal = class extends import_obsidian9.Modal {
     contentEl.createEl("h2", { text: this.titleText });
     contentEl.createEl("p", { text: this.message });
     contentEl.createEl("p", { text: "Are you sure you want to unlock?" });
-    new import_obsidian9.Setting(contentEl).addButton(
+    new import_obsidian10.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Unlock").setCta().onClick(() => {
         this.onUnlock();
         this.close();
@@ -21094,8 +21153,8 @@ var VaultUnlockModal = class extends import_obsidian9.Modal {
 };
 
 // src/modals/graph-workspace-name-modal.ts
-var import_obsidian10 = require("obsidian");
-var GraphWorkspaceNameModal = class extends import_obsidian10.Modal {
+var import_obsidian11 = require("obsidian");
+var GraphWorkspaceNameModal = class extends import_obsidian11.Modal {
   constructor(app, onCreate) {
     super(app);
     this.onCreate = onCreate;
@@ -21108,11 +21167,11 @@ var GraphWorkspaceNameModal = class extends import_obsidian10.Modal {
       text: "Each workspace saves its own node layout in the vault.",
       cls: "setting-item-description"
     });
-    new import_obsidian10.Setting(contentEl).setName("Name").addText((text) => {
+    new import_obsidian11.Setting(contentEl).setName("Name").addText((text) => {
       this.textInput = text;
       text.setPlaceholder("My investigation graph");
     });
-    new import_obsidian10.Setting(contentEl).addButton(
+    new import_obsidian11.Setting(contentEl).addButton(
       (btn) => btn.setButtonText("Create").setCta().onClick(() => {
         void this.handleCreate();
       })
@@ -21121,7 +21180,7 @@ var GraphWorkspaceNameModal = class extends import_obsidian10.Modal {
   async handleCreate() {
     const name = this.textInput?.getValue().trim() ?? "";
     if (!name) {
-      new import_obsidian10.Notice("Enter a name for the graph workspace.");
+      new import_obsidian11.Notice("Enter a name for the graph workspace.");
       return;
     }
     await Promise.resolve(this.onCreate(name));
@@ -21508,7 +21567,7 @@ var GraphHistoryManager = class {
 };
 
 // src/views/timeline-view.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 var TIMELINE_VIEW_TYPE = "graph_copilot-timeline-view";
 function isEventEntityType(entityType) {
   return typeof entityType === "string" && entityType.trim().toLowerCase() === "event";
@@ -21532,7 +21591,7 @@ function pickFirstTimelineDateProperty(properties) {
   }
   return void 0;
 }
-var TimelineView = class extends import_obsidian11.ItemView {
+var TimelineView = class extends import_obsidian12.ItemView {
   constructor(leaf, entityManager, onEventClick) {
     super(leaf);
     this.container = null;
@@ -21562,7 +21621,7 @@ var TimelineView = class extends import_obsidian11.ItemView {
     this.timelineContainer = container.createDiv({ cls: "graph_copilot-timeline-canvas" });
     this.applyStyles();
     await this.refresh();
-    const basePrefix = (0, import_obsidian11.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
+    const basePrefix = (0, import_obsidian12.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
     const scheduleRefreshFromPath = (path) => {
       if (!path.replace(/\\/g, "/").toLowerCase().startsWith(basePrefix))
         return;
@@ -21576,25 +21635,25 @@ var TimelineView = class extends import_obsidian11.ItemView {
     };
     this.registerEvent(
       this.app.vault.on("modify", (f) => {
-        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+        if (f instanceof import_obsidian12.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (f) => {
-        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+        if (f instanceof import_obsidian12.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (f) => {
-        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+        if (f instanceof import_obsidian12.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("rename", (f, oldPath) => {
-        if (f instanceof import_obsidian11.TFile && f.extension === "md")
+        if (f instanceof import_obsidian12.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
         if (typeof oldPath === "string")
           scheduleRefreshFromPath(oldPath);
@@ -21919,7 +21978,7 @@ var TimelineView = class extends import_obsidian11.ItemView {
       }
     };
     card.addEventListener("contextmenu", (e) => {
-      const menu = new import_obsidian11.Menu();
+      const menu = new import_obsidian12.Menu();
       menu.addItem((item) => {
         item.setTitle("Edit").setIcon("pencil").onClick(() => {
           const entity = this.entityManager.getEntity(event.id);
@@ -21935,7 +21994,7 @@ var TimelineView = class extends import_obsidian11.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian11.Notice("Entity not found");
+            new import_obsidian12.Notice("Entity not found");
           }
         });
       });
@@ -21994,7 +22053,7 @@ var TimelineView = class extends import_obsidian11.ItemView {
 // src/views/graph-view.ts
 var GRAPH_VIEW_TYPE = "graph_copilot-graph-view";
 var NODE_POSITIONS_FILE = GRAPH_NODE_POSITIONS_FILE;
-var _GraphView = class _GraphView extends import_obsidian12.ItemView {
+var _GraphView = class _GraphView extends import_obsidian13.ItemView {
   constructor(leaf, entityManager, onEntityClick, onShowOnMap, graphHost) {
     super(leaf);
     this.cy = null;
@@ -22191,7 +22250,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       ol.createEl("li", { text: "Check console tab for errors" });
       ol.createEl("li", { text: "Check network tab for failed requests to unpkg.com" });
       ol.createEl("li", { text: "Verify plugin settings: enableGraphFeatures should be enabled" });
-      new import_obsidian12.Notice("Graph failed to load. Check console for details.", 1e4);
+      new import_obsidian13.Notice("Graph failed to load. Check console for details.", 1e4);
     }
   }
   setupGraphDropHandlers(container) {
@@ -22234,14 +22293,14 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
           return;
         const position = this.screenToModelPosition(evt.clientX, evt.clientY);
         const dragManager = this.app.dragManager;
-        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian12.TFile) {
+        if (dragManager?.draggable?.type === "file" && dragManager.draggable.file instanceof import_obsidian13.TFile) {
           await this.handleGraphFileDrop([dragManager.draggable.file], position);
           return;
         }
         const internalPath = evt.dataTransfer.getData("text/plain");
         if (internalPath) {
           const tfile = this.app.vault.getAbstractFileByPath(internalPath);
-          if (tfile instanceof import_obsidian12.TFile) {
+          if (tfile instanceof import_obsidian13.TFile) {
             await this.handleGraphFileDrop([tfile], position);
             return;
           }
@@ -22265,17 +22324,17 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     };
   }
   async handleExternalFileDrop(fileList, position) {
-    const evidencePath = (0, import_obsidian12.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
-    await this.ensureFolderExists(evidencePath);
+    const evidencePath = (0, import_obsidian13.normalizePath)(`${this.entityManager.getBasePath()}/Evidence`);
+    await ensureFolderExists(this.app, evidencePath);
     const tFiles = [];
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i];
       const safeName = file.name.replace(/[\\/:*?"<>|]/g, "_");
-      const destPath = (0, import_obsidian12.normalizePath)(`${evidencePath}/${safeName}`);
+      const destPath = (0, import_obsidian13.normalizePath)(`${evidencePath}/${safeName}`);
       try {
         const buffer = await file.arrayBuffer();
         const existing = this.app.vault.getAbstractFileByPath(destPath);
-        if (existing instanceof import_obsidian12.TFile) {
+        if (existing instanceof import_obsidian13.TFile) {
           tFiles.push(existing);
         } else {
           const created = await this.app.vault.createBinary(destPath, buffer);
@@ -22283,7 +22342,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         }
       } catch (err) {
         console.error(`[GraphView] Failed to import file ${file.name}:`, err);
-        new import_obsidian12.Notice(`Failed to import ${file.name}`);
+        new import_obsidian13.Notice(`Failed to import ${file.name}`);
       }
     }
     if (tFiles.length > 0) {
@@ -22297,7 +22356,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       const isImage = _GraphView.IMAGE_EXTENSIONS.has(ext);
       const isDocument2 = _GraphView.DOCUMENT_EXTENSIONS.has(ext);
       if (!isImage && !isDocument2) {
-        new import_obsidian12.Notice(`Unsupported file type: .${ext}`);
+        new import_obsidian13.Notice(`Unsupported file type: .${ext}`);
         continue;
       }
       const dropPos = { x: basePosition.x + offset * 120, y: basePosition.y };
@@ -22318,11 +22377,11 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         }
         this.historyManager.recordEntityCreate(entity);
         this.addEntityToGraphAtPosition(entity, dropPos);
-        new import_obsidian12.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
+        new import_obsidian13.Notice(`Added ${isImage ? "image" : "document"}: ${file.basename}`);
         offset++;
       } catch (err) {
         console.error(`[GraphView] Failed to create entity for ${file.name}:`, err);
-        new import_obsidian12.Notice(`Failed to add ${file.name} to graph`);
+        new import_obsidian13.Notice(`Failed to add ${file.name} to graph`);
       }
     }
   }
@@ -22364,16 +22423,10 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     if (!_GraphView.IMAGE_EXTENSIONS.has(ext))
       return void 0;
     const file = this.app.vault.getAbstractFileByPath(fp);
-    if (file instanceof import_obsidian12.TFile) {
+    if (file instanceof import_obsidian13.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return void 0;
-  }
-  async ensureFolderExists(path) {
-    const folder = this.app.vault.getAbstractFileByPath(path);
-    if (!folder) {
-      await this.app.vault.createFolder(path);
-    }
   }
   async onClose() {
     if (this._keyHandler) {
@@ -22468,7 +22521,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     delGraphBtn.onclick = () => {
       const id = this.graphHost.getActiveGraphId();
       if (id === "default") {
-        new import_obsidian12.Notice("Cannot delete the default graph workspace.");
+        new import_obsidian13.Notice("Cannot delete the default graph workspace.");
         return;
       }
       const label = this.graphHost.listGraphWorkspaces().find((g) => g.id === id)?.name ?? id;
@@ -22577,14 +22630,14 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         refreshBtn.textContent = "\u21BB refreshing...";
         try {
           await this.refreshWithSavedPositions();
-          new import_obsidian12.Notice("Graph refreshed successfully");
+          new import_obsidian13.Notice("Graph refreshed successfully");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-success)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
           }, 300);
         } catch (error) {
           console.error("[GraphView] Manual refresh failed:", error);
-          new import_obsidian12.Notice("Failed to refresh graph. Check console for details.");
+          new import_obsidian13.Notice("Failed to refresh graph. Check console for details.");
           refreshBtn.setCssProps({ "background-color": "var(--interactive-error)" });
           setTimeout(() => {
             refreshBtn.setCssProps({ "background-color": "" });
@@ -22618,10 +22671,10 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       a.download = `osint-investigation-${timestamp2}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      new import_obsidian12.Notice("Investigation exported successfully");
+      new import_obsidian13.Notice("Investigation exported successfully");
     } catch (error) {
       console.error("[GraphView] Export failed:", error);
-      new import_obsidian12.Notice("Failed to export investigation");
+      new import_obsidian13.Notice("Failed to export investigation");
     }
   }
   /**
@@ -22653,7 +22706,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     if (this.container) {
       this.container.addClass("graph_copilot-connection-mode");
     }
-    new import_obsidian12.Notice("Connection mode: click the source node");
+    new import_obsidian13.Notice("Connection mode: click the source node");
   }
   /**
    * Exit connection mode.
@@ -22707,7 +22760,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       this.container.addClass("graph_copilot-box-select-mode");
     }
     this.updateSelectionUI();
-    new import_obsidian12.Notice("Box select mode: drag to select multiple items");
+    new import_obsidian13.Notice("Box select mode: drag to select multiple items");
   }
   /**
    * Exit box selection mode.
@@ -22750,7 +22803,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     const slice = this.allGraphPositions[newId] || {};
     this.nodePositionsCache = new Map(Object.entries(slice));
     await this.refreshWithSavedPositions();
-    new import_obsidian12.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
+    new import_obsidian13.Notice(`Switched to graph: ${this.graphHost.listGraphWorkspaces().find((g) => g.id === newId)?.name ?? newId}`);
   }
   /** File paths for notes backing the current selection (entities + connections). */
   getSelectedNotePaths() {
@@ -22769,13 +22822,13 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
   }
   async lockSelectedArea() {
     const n = this.graphHost.vaultLockService.lockPaths(this.getSelectedNotePaths());
-    new import_obsidian12.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
+    new import_obsidian13.Notice(n > 0 ? `Locked ${n} note(s)` : "Selected items were already locked");
   }
   unlockSelectedArea() {
     const lock = this.graphHost.vaultLockService;
     const lockedPaths = this.getSelectedNotePaths().filter((p) => lock.isPathLocked(p));
     if (lockedPaths.length === 0) {
-      new import_obsidian12.Notice("No locked notes in the selection");
+      new import_obsidian13.Notice("No locked notes in the selection");
       return;
     }
     new ConfirmModal(
@@ -22786,7 +22839,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         for (const p of lockedPaths) {
           lock.unlockPath(p);
         }
-        new import_obsidian12.Notice(`Unlocked ${lockedPaths.length} note(s)`);
+        new import_obsidian13.Notice(`Unlocked ${lockedPaths.length} note(s)`);
       },
       void 0,
       false
@@ -22801,12 +22854,12 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       return;
     if (connection.filePath) {
       const file = this.app.vault.getAbstractFileByPath(connection.filePath);
-      if (file instanceof import_obsidian12.TFile) {
+      if (file instanceof import_obsidian13.TFile) {
         await this.app.workspace.getLeaf().openFile(file);
         return;
       }
     }
-    new import_obsidian12.Notice("No note file found for this relationship");
+    new import_obsidian13.Notice("No note file found for this relationship");
   }
   /**
    * Handle node click in connection mode.
@@ -22821,10 +22874,10 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       if (this.statusIndicator) {
         this.statusIndicator.textContent = `Source: ${nodeLabel} \u2192 Click target...`;
       }
-      new import_obsidian12.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
+      new import_obsidian13.Notice(`Source selected: ${nodeLabel}. Now click the target node.`);
     } else {
       if (nodeId === this.sourceNodeId) {
-        new import_obsidian12.Notice("Cannot connect a node to itself. Click a different node.");
+        new import_obsidian13.Notice("Cannot connect a node to itself. Click a different node.");
         return;
       }
       const modal = new FTMIntervalTypeSelectorModal(
@@ -23010,7 +23063,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
       if (evt.target === this.cy) {
         if (this.connectionMode) {
           this.exitConnectionMode();
-          new import_obsidian12.Notice("Connection mode cancelled");
+          new import_obsidian13.Notice("Connection mode cancelled");
         } else if (!this.boxSelectMode && (this.selectedNodes.size > 0 || this.selectedEdges.size > 0)) {
           this.clearSelection();
         }
@@ -23154,7 +23207,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     });
     this.updateSelectionUI();
     const totalCount = this.selectedNodes.size + this.selectedEdges.size;
-    new import_obsidian12.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
+    new import_obsidian13.Notice(`Selected ${this.selectedNodes.size} entities and ${this.selectedEdges.size} relationships`);
   }
   /**
    * Clear all selections (nodes and edges).
@@ -23335,14 +23388,14 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     for (const entityId of this.selectedNodes) {
       const e = this.entityManager.getEntity(entityId);
       if (e?.filePath && lock.isPathLocked(e.filePath)) {
-        new import_obsidian12.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
+        new import_obsidian13.Notice("Cannot delete: a selected entity note is locked. Unlock it first.");
         return;
       }
     }
     for (const connectionId of this.selectedEdges) {
       const c = this.entityManager.getConnection(connectionId);
       if (c?.filePath && lock.isPathLocked(c.filePath)) {
-        new import_obsidian12.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
+        new import_obsidian13.Notice("Cannot delete: a selected relationship note is locked. Unlock it first.");
         return;
       }
     }
@@ -23405,9 +23458,9 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
     if (failedRelationships > 0)
       failParts.push(`${failedRelationships} ${failedRelationships === 1 ? "relationship" : "relationships"}`);
     if (failParts.length === 0) {
-      new import_obsidian12.Notice(`Successfully deleted ${successParts.join(" and ")}`);
+      new import_obsidian13.Notice(`Successfully deleted ${successParts.join(" and ")}`);
     } else {
-      new import_obsidian12.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
+      new import_obsidian13.Notice(`Deleted ${successParts.join(" and ")}. Failed: ${failParts.join(" and ")}`);
     }
   }
   /**
@@ -23478,13 +23531,13 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
           }
           this.selectedNodes.delete(entityId);
           this.updateSelectionUI();
-          new import_obsidian12.Notice(`Deleted entity: ${label}`);
+          new import_obsidian13.Notice(`Deleted entity: ${label}`);
         } else {
-          new import_obsidian12.Notice(`Failed to delete entity: ${label}`);
+          new import_obsidian13.Notice(`Failed to delete entity: ${label}`);
         }
       } catch (error) {
         console.error(`Failed to delete entity ${entityId}:`, error);
-        new import_obsidian12.Notice(`Error deleting entity: ${label}`);
+        new import_obsidian13.Notice(`Error deleting entity: ${label}`);
       }
     };
     buttonContainer.appendChild(deleteBtn);
@@ -23530,7 +23583,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         const fp = entityForLock.filePath;
         new VaultUnlockModal(this.app, () => {
           lock.unlockPath(fp);
-          new import_obsidian12.Notice("Note unlocked");
+          new import_obsidian13.Notice("Note unlocked");
         }, "Unlock entity note").open();
       });
       menu.appendChild(unlockNoteItem);
@@ -23553,7 +23606,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian12.Notice("Entity not found");
+        new import_obsidian13.Notice("Entity not found");
       }
       menu.remove();
     });
@@ -23565,7 +23618,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
           if (this.onShowOnMap) {
             this.onShowOnMap(entityId);
           } else {
-            new import_obsidian12.Notice("Map view not available");
+            new import_obsidian13.Notice("Map view not available");
           }
           menu.remove();
         });
@@ -23593,14 +23646,14 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
               await this.entityManager.updateEntity(entityId, {
                 add_to_timeline: !isOnTimeline
               });
-              new import_obsidian12.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
+              new import_obsidian13.Notice(isOnTimeline ? "Removed from Timeline" : "Added to Timeline");
               const updatedEntity = this.entityManager.getEntity(entityId);
               if (updatedEntity) {
                 this.updateEntityInGraph(updatedEntity);
               }
             } catch (error) {
               console.error("[GraphView] Failed to toggle timeline status:", error);
-              new import_obsidian12.Notice("Failed to update timeline status");
+              new import_obsidian13.Notice("Failed to update timeline status");
             }
             menu.remove();
           })();
@@ -23720,7 +23773,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         );
         editModal.open();
       } else {
-        new import_obsidian12.Notice("Connection not found");
+        new import_obsidian13.Notice("Connection not found");
       }
       menu.remove();
     });
@@ -23733,7 +23786,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
         const fp = connectionForLock.filePath;
         new VaultUnlockModal(this.app, () => {
           edgeLock.unlockPath(fp);
-          new import_obsidian12.Notice("Note unlocked");
+          new import_obsidian13.Notice("Note unlocked");
         }, "Unlock relationship note").open();
       });
       menu.appendChild(unlockConnItem);
@@ -23768,7 +23821,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
   async deleteRelationship(connectionId, relationship, sourceLabel, targetLabel) {
     const connection = this.entityManager.getConnection(connectionId);
     if (!connection) {
-      new import_obsidian12.Notice("Relationship not found");
+      new import_obsidian13.Notice("Relationship not found");
       return;
     }
     new ConfirmModal(
@@ -23782,7 +23835,7 @@ var _GraphView = class _GraphView extends import_obsidian12.ItemView {
           if (this.cy) {
             this.cy.getElementById(connectionId).remove();
           }
-          new import_obsidian12.Notice(`Deleted relationship: ${relationship}`);
+          new import_obsidian13.Notice(`Deleted relationship: ${relationship}`);
         })();
       },
       void 0,
@@ -24316,7 +24369,7 @@ ${label}
             this.nodePositionsCache.set(node.id(), { x: pos.x, y: pos.y });
           });
           this.savePositions();
-          new import_obsidian12.Notice("Graph rearranged");
+          new import_obsidian13.Notice("Graph rearranged");
         }
         resolve();
       }, 600);
@@ -24413,7 +24466,7 @@ ${label}
     try {
       console.debug(`[GraphView] Looking for positions file at: ${NODE_POSITIONS_FILE} `);
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian12.TFile) {
+      if (file instanceof import_obsidian13.TFile) {
         const content = await this.app.vault.read(file);
         const raw = JSON.parse(content);
         if (raw && raw.version === 2 && raw.byGraph && typeof raw.byGraph === "object") {
@@ -24458,7 +24511,7 @@ ${label}
       } catch (e) {
       }
       const file = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-      if (file instanceof import_obsidian12.TFile) {
+      if (file instanceof import_obsidian13.TFile) {
         await this.app.vault.modify(file, content);
         console.debug("[GraphView] Positions saved successfully (modified existing file)");
       } else {
@@ -24469,7 +24522,7 @@ ${label}
           const errorMessage = createError.message;
           if (errorMessage?.includes("already exists")) {
             const existingFile = this.app.vault.getAbstractFileByPath(NODE_POSITIONS_FILE);
-            if (existingFile instanceof import_obsidian12.TFile) {
+            if (existingFile instanceof import_obsidian13.TFile) {
               await this.app.vault.modify(existingFile, content);
               console.debug("[GraphView] Positions saved successfully (modified after race condition)");
             }
@@ -24594,15 +24647,15 @@ ${label}
    */
   async performUndo() {
     if (!this.historyManager.canUndo()) {
-      new import_obsidian12.Notice("Nothing to undo");
+      new import_obsidian13.Notice("Nothing to undo");
       return;
     }
     const description = this.historyManager.getLastUndoDescription();
     const success = await this.historyManager.undo();
     if (success) {
-      new import_obsidian12.Notice(`Undo: ${description} `);
+      new import_obsidian13.Notice(`Undo: ${description} `);
     } else {
-      new import_obsidian12.Notice("Undo failed");
+      new import_obsidian13.Notice("Undo failed");
     }
   }
   /**
@@ -24610,15 +24663,15 @@ ${label}
    */
   async performRedo() {
     if (!this.historyManager.canRedo()) {
-      new import_obsidian12.Notice("Nothing to redo");
+      new import_obsidian13.Notice("Nothing to redo");
       return;
     }
     const description = this.historyManager.getLastRedoDescription();
     const success = await this.historyManager.redo();
     if (success) {
-      new import_obsidian12.Notice(`Redo: ${description} `);
+      new import_obsidian13.Notice(`Redo: ${description} `);
     } else {
-      new import_obsidian12.Notice("Redo failed");
+      new import_obsidian13.Notice("Redo failed");
     }
   }
   /**
@@ -24951,7 +25004,7 @@ ${label}
   async geolocateEntity(entityId) {
     const entity = this.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian12.Notice("Entity not found");
+      new import_obsidian13.Notice("Entity not found");
       return;
     }
     let address;
@@ -24969,18 +25022,18 @@ ${label}
       country = entity.properties.country;
     }
     if (!address && !city && !country) {
-      new import_obsidian12.Notice("No address information found. Please add address details to the entity first.");
+      new import_obsidian13.Notice("No address information found. Please add address details to the entity first.");
       return;
     }
     try {
-      new import_obsidian12.Notice("Geocoding address...");
+      new import_obsidian13.Notice("Geocoding address...");
       const result = await this.geocodingService.geocodeAddressWithRetry(
         address,
         city,
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian12.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
+          new import_obsidian13.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt} / ${maxAttempts})`);
         }
       );
       const updates = {
@@ -25004,15 +25057,15 @@ ${label}
       if (updatedEntity) {
         this.updateEntityInGraph(updatedEntity);
       }
-      new import_obsidian12.Notice(`\u2713 Geocoded: ${result.displayName} 
+      new import_obsidian13.Notice(`\u2713 Geocoded: ${result.displayName} 
 Lat: ${result.latitude.toFixed(4)}, Lng: ${result.longitude.toFixed(4)} 
 Confidence: ${result.confidence} `);
     } catch (error) {
       if (error instanceof GeocodingError) {
-        new import_obsidian12.Notice(`Geocoding failed: ${error.message} `);
+        new import_obsidian13.Notice(`Geocoding failed: ${error.message} `);
       } else {
         console.error("[GraphView] Geocoding error:", error);
-        new import_obsidian12.Notice("Failed to geocode address. Please try again.");
+        new import_obsidian13.Notice("Failed to geocode address. Please try again.");
       }
     }
   }
@@ -25022,9 +25075,9 @@ _GraphView.DOCUMENT_EXTENSIONS = /* @__PURE__ */ new Set(["pdf", "docx", "doc", 
 var GraphView = _GraphView;
 
 // src/views/map-view.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 var MAP_VIEW_TYPE = "graph_copilot-map-view";
-var MapView = class extends import_obsidian13.ItemView {
+var MapView = class extends import_obsidian14.ItemView {
   constructor(leaf, entityManager, onLocationClick) {
     super(leaf);
     this.vaultRefreshTimer = null;
@@ -25062,7 +25115,7 @@ var MapView = class extends import_obsidian13.ItemView {
     });
     await this.loadLeaflet();
     this.initializeMap();
-    const basePrefix = (0, import_obsidian13.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
+    const basePrefix = (0, import_obsidian14.normalizePath)(this.entityManager.getBasePath()).toLowerCase() + "/";
     const scheduleRefreshFromPath = (path) => {
       if (!path.replace(/\\/g, "/").toLowerCase().startsWith(basePrefix))
         return;
@@ -25076,25 +25129,25 @@ var MapView = class extends import_obsidian13.ItemView {
     };
     this.registerEvent(
       this.app.vault.on("modify", (f) => {
-        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+        if (f instanceof import_obsidian14.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (f) => {
-        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+        if (f instanceof import_obsidian14.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (f) => {
-        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+        if (f instanceof import_obsidian14.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
       })
     );
     this.registerEvent(
       this.app.vault.on("rename", (f, oldPath) => {
-        if (f instanceof import_obsidian13.TFile && f.extension === "md")
+        if (f instanceof import_obsidian14.TFile && f.extension === "md")
           scheduleRefreshFromPath(f.path);
         if (typeof oldPath === "string")
           scheduleRefreshFromPath(oldPath);
@@ -25241,7 +25294,7 @@ var MapView = class extends import_obsidian13.ItemView {
       this.map?.invalidateSize();
     }, 100);
     this.map.on("contextmenu", (e) => {
-      const menu = new import_obsidian13.Menu();
+      const menu = new import_obsidian14.Menu();
       menu.addItem((item) => {
         item.setTitle("Create location here").setIcon("map-pin").onClick(() => {
           const modal = new EntityCreationModal(
@@ -25365,7 +25418,7 @@ var MapView = class extends import_obsidian13.ItemView {
       }
     });
     marker.on("contextmenu", (e) => {
-      const menu = new import_obsidian13.Menu();
+      const menu = new import_obsidian14.Menu();
       menu.addItem((item) => {
         item.setTitle("Open note").setIcon("file-text").onClick(() => {
           this.entityManager.openEntityNote(location.id);
@@ -25386,7 +25439,7 @@ var MapView = class extends import_obsidian13.ItemView {
               entity.id
             ).open();
           } else {
-            new import_obsidian13.Notice("Entity not found");
+            new import_obsidian14.Notice("Entity not found");
           }
         });
       });
@@ -25507,7 +25560,7 @@ var MapView = class extends import_obsidian13.ItemView {
       return isLocationOrAddress && hasNoCoords && hasAddress;
     });
     if (locationsWithoutCoords.length === 0) {
-      new import_obsidian13.Notice("No locations found that need geocoding");
+      new import_obsidian14.Notice("No locations found that need geocoding");
       return;
     }
     const modal = new GeolocateMissingModal(
@@ -25522,7 +25575,7 @@ var MapView = class extends import_obsidian13.ItemView {
     modal.open();
   }
 };
-var GeolocateMissingModal = class extends import_obsidian13.Modal {
+var GeolocateMissingModal = class extends import_obsidian14.Modal {
   constructor(app, locations, geocodingService2, entityManager, onComplete) {
     super(app);
     this.locations = locations;
@@ -25607,7 +25660,7 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
         state,
         country,
         (attempt, maxAttempts, delaySeconds) => {
-          new import_obsidian13.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+          new import_obsidian14.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
         }
       );
       const updates = {
@@ -25631,9 +25684,9 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
       btn.textContent = "\u2717 failed";
       btn.setCssProps({ color: "var(--text-error)" });
       if (error instanceof GeocodingError) {
-        new import_obsidian13.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
+        new import_obsidian14.Notice(`Failed to geocode ${entity.label}: ${error.message}`);
       } else {
-        new import_obsidian13.Notice(`Failed to geocode ${entity.label}`);
+        new import_obsidian14.Notice(`Failed to geocode ${entity.label}`);
       }
       btn.disabled = false;
     }
@@ -25663,7 +25716,7 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
           state,
           country,
           (attempt, maxAttempts, delaySeconds) => {
-            new import_obsidian13.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
+            new import_obsidian14.Notice(`Network error, retrying in ${delaySeconds}s... (attempt ${attempt}/${maxAttempts})`);
           }
         );
         const updates = {
@@ -25686,7 +25739,7 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
         failed++;
       }
     }
-    new import_obsidian13.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
+    new import_obsidian14.Notice(`Geocoded ${success} location(s). ${failed} failed.`);
     await this.onComplete();
     this.close();
   }
@@ -25697,7 +25750,7 @@ var GeolocateMissingModal = class extends import_obsidian13.Modal {
 };
 
 // src/views/tools-skills-registry-view.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 
 // src/data/built-in-orchestration-tools.ts
 var BUILT_IN_ORCHESTRATION_TOOLS = [
@@ -26016,20 +26069,20 @@ function isEnricherRunnable(spec) {
 }
 
 // src/utils/registry-paths.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 function skillMarkdownPathFromId(skillsFolder, rawId) {
   const id = parseSkillIdForVault(rawId);
   if (!id || id === "readme")
     return null;
-  const root = (0, import_obsidian14.normalizePath)(skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
-  return (0, import_obsidian14.normalizePath)(`${root}/${id}.md`);
+  const root = (0, import_obsidian15.normalizePath)(skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+  return (0, import_obsidian15.normalizePath)(`${root}/${id}.md`);
 }
 function enricherJsonPathFromId(enrichersFolder, rawId) {
   const id = parseSkillIdForVault(rawId);
   if (!id)
     return null;
-  const root = (0, import_obsidian14.normalizePath)(enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
-  return (0, import_obsidian14.normalizePath)(`${root}/${id}.json`);
+  const root = (0, import_obsidian15.normalizePath)(enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+  return (0, import_obsidian15.normalizePath)(`${root}/${id}.json`);
 }
 
 // src/views/tools-skills-registry-view.ts
@@ -26060,25 +26113,7 @@ function yamlDoubleQuoted(s) {
   const oneLine = s.replace(/\r?\n/g, " ").trim();
   return `"${oneLine.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
-async function ensureFolderChain(app, path) {
-  const norm = (0, import_obsidian15.normalizePath)(path);
-  const parts = norm.split("/").filter(Boolean);
-  let acc = "";
-  for (const p of parts) {
-    acc = acc ? `${acc}/${p}` : p;
-    const f = app.vault.getAbstractFileByPath(acc);
-    if (!f) {
-      try {
-        await app.vault.createFolder(acc);
-      } catch (e) {
-        if (e instanceof Error && !e.message.includes("Folder already exists")) {
-          throw e;
-        }
-      }
-    }
-  }
-}
-var AddSkillModal = class extends import_obsidian15.Modal {
+var AddSkillModal = class extends import_obsidian16.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -26094,32 +26129,32 @@ var AddSkillModal = class extends import_obsidian15.Modal {
       text: "Id becomes the filename (slug). README is reserved.",
       cls: "setting-item-description"
     });
-    new import_obsidian15.Setting(contentEl).setName("Skill id").addText((t) => {
+    new import_obsidian16.Setting(contentEl).setName("Skill id").addText((t) => {
       t.setPlaceholder("my_skill");
       t.onChange((v) => {
         this.idInput = v;
       });
     });
-    new import_obsidian15.Setting(contentEl).setName("Display name").addText((t) => {
+    new import_obsidian16.Setting(contentEl).setName("Display name").addText((t) => {
       t.setPlaceholder("My skill");
       t.onChange((v) => {
         this.nameInput = v;
       });
     });
-    new import_obsidian15.Setting(contentEl).setName("Description").addTextArea((t) => {
+    new import_obsidian16.Setting(contentEl).setName("Description").addTextArea((t) => {
       t.setPlaceholder("Short line for the planner tool list");
       t.inputEl.rows = 3;
       t.onChange((v) => {
         this.descInput = v;
       });
     });
-    new import_obsidian15.Setting(contentEl).addButton((b) => {
+    new import_obsidian16.Setting(contentEl).addButton((b) => {
       b.setButtonText("Create").setCta();
       b.onClick(() => {
         void (async () => {
           const id = parseSkillIdForVault(this.idInput);
           if (!id || id === "readme") {
-            new import_obsidian15.Notice("Enter a valid skill id (letters, numbers, _ and -).");
+            new import_obsidian16.Notice("Enter a valid skill id (letters, numbers, _ and -).");
             return;
           }
           const name = this.nameInput.trim() || id;
@@ -26129,7 +26164,7 @@ var AddSkillModal = class extends import_obsidian15.Modal {
         })();
       });
     });
-    new import_obsidian15.Setting(contentEl).addButton((b) => {
+    new import_obsidian16.Setting(contentEl).addButton((b) => {
       b.setButtonText("Cancel");
       b.onClick(() => this.close());
     });
@@ -26138,7 +26173,7 @@ var AddSkillModal = class extends import_obsidian15.Modal {
     this.contentEl.empty();
   }
 };
-var AddEnricherDraftModal = class extends import_obsidian15.Modal {
+var AddEnricherDraftModal = class extends import_obsidian16.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -26153,25 +26188,25 @@ var AddEnricherDraftModal = class extends import_obsidian15.Modal {
       text: "Creates a disabled draft JSON. Edit domains and URL before enabling.",
       cls: "setting-item-description"
     });
-    new import_obsidian15.Setting(contentEl).setName("Enricher id").addText((t) => {
+    new import_obsidian16.Setting(contentEl).setName("Enricher id").addText((t) => {
       t.setPlaceholder("my_enricher");
       t.onChange((v) => {
         this.idInput = v;
       });
     });
-    new import_obsidian15.Setting(contentEl).setName("Display name").addText((t) => {
+    new import_obsidian16.Setting(contentEl).setName("Display name").addText((t) => {
       t.setPlaceholder("My enricher");
       t.onChange((v) => {
         this.nameInput = v;
       });
     });
-    new import_obsidian15.Setting(contentEl).addButton((b) => {
+    new import_obsidian16.Setting(contentEl).addButton((b) => {
       b.setButtonText("Create draft").setCta();
       b.onClick(() => {
         void (async () => {
           const id = parseSkillIdForVault(this.idInput);
           if (!id) {
-            new import_obsidian15.Notice("Enter a valid enricher id.");
+            new import_obsidian16.Notice("Enter a valid enricher id.");
             return;
           }
           const name = this.nameInput.trim() || id;
@@ -26180,7 +26215,7 @@ var AddEnricherDraftModal = class extends import_obsidian15.Modal {
         })();
       });
     });
-    new import_obsidian15.Setting(contentEl).addButton((b) => {
+    new import_obsidian16.Setting(contentEl).addButton((b) => {
       b.setButtonText("Cancel");
       b.onClick(() => this.close());
     });
@@ -26189,7 +26224,7 @@ var AddEnricherDraftModal = class extends import_obsidian15.Modal {
     this.contentEl.empty();
   }
 };
-var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
+var ToolsSkillsRegistryView = class extends import_obsidian16.ItemView {
   constructor(leaf, host) {
     super(leaf);
     this.host = host;
@@ -26251,7 +26286,7 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
       }
     });
     const chevron = header.createSpan({ cls: "osint-copilot-registry-built-in-chevron" });
-    (0, import_obsidian15.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+    (0, import_obsidian16.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
     header.createEl("h3", { text: "Built-in tools" });
     const body = wrap.createDiv({
       cls: "osint-copilot-registry-built-in-body",
@@ -26275,7 +26310,7 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
       body.toggleAttribute("hidden", this.builtInToolsCollapsed);
       header.setAttribute("aria-expanded", this.builtInToolsCollapsed ? "false" : "true");
       chevron.empty();
-      (0, import_obsidian15.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
+      (0, import_obsidian16.setIcon)(chevron, this.builtInToolsCollapsed ? "chevron-right" : "chevron-down");
     };
     sync();
     const toggle = () => {
@@ -26294,7 +26329,7 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
     this.skillsCol.empty();
     this.skillsCol.createEl("h3", { text: "Vault skills" });
     this.skillsCol.createDiv({
-      text: `Folder: ${(0, import_obsidian15.normalizePath)(this.host.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER)}`,
+      text: `Folder: ${(0, import_obsidian16.normalizePath)(this.host.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER)}`,
       cls: "osint-copilot-registry-hint"
     });
     if (skills.length === 0) {
@@ -26316,7 +26351,7 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
     this.enrichCol.empty();
     this.enrichCol.createEl("h3", { text: "HTTP enrichers" });
     this.enrichCol.createDiv({
-      text: `Folder: ${(0, import_obsidian15.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}`,
+      text: `Folder: ${(0, import_obsidian16.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}`,
       cls: "osint-copilot-registry-hint"
     });
     if (list.length === 0) {
@@ -26332,7 +26367,7 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
         text: `${e.id} \xB7 ${e.status} \xB7 ${e.enabled ? "enabled" : "disabled"} \xB7 ${runnable ? "runnable" : "not runnable"}`,
         cls: "osint-copilot-registry-row-id"
       });
-      const path = enricherJsonPathFromId(this.host.settings.enrichersFolder, e.id) ?? (0, import_obsidian15.normalizePath)(`${(0, import_obsidian15.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}/${e.id}.json`);
+      const path = enricherJsonPathFromId(this.host.settings.enrichersFolder, e.id) ?? (0, import_obsidian16.normalizePath)(`${(0, import_obsidian16.normalizePath)(this.host.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER)}/${e.id}.json`);
       const actions = row.createDiv({ cls: "osint-copilot-registry-row-actions" });
       const openBtn = actions.createEl("button", { text: "Open file" });
       openBtn.addEventListener("click", () => void this.openPath(path));
@@ -26341,9 +26376,9 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
     }
   }
   async openPath(vaultPath) {
-    const f = this.app.vault.getAbstractFileByPath((0, import_obsidian15.normalizePath)(vaultPath));
-    if (!(f instanceof import_obsidian15.TFile)) {
-      new import_obsidian15.Notice("File not found: " + vaultPath);
+    const f = this.app.vault.getAbstractFileByPath((0, import_obsidian16.normalizePath)(vaultPath));
+    if (!(f instanceof import_obsidian16.TFile)) {
+      new import_obsidian16.Notice("File not found: " + vaultPath);
       return;
     }
     await this.app.workspace.getLeaf(false).openFile(f);
@@ -26377,35 +26412,35 @@ var ToolsSkillsRegistryView = class extends import_obsidian15.ItemView {
     ).open();
   }
   async trashByPath(vaultPath, kind) {
-    const norm = (0, import_obsidian15.normalizePath)(vaultPath);
+    const norm = (0, import_obsidian16.normalizePath)(vaultPath);
     const f = this.app.vault.getAbstractFileByPath(norm);
-    if (!(f instanceof import_obsidian15.TFile)) {
-      new import_obsidian15.Notice("File not found.");
+    if (!(f instanceof import_obsidian16.TFile)) {
+      new import_obsidian16.Notice("File not found.");
       return;
     }
     try {
       await this.app.fileManager.trashFile(f);
     } catch (err) {
       console.error(err);
-      new import_obsidian15.Notice("Could not move file to trash.");
+      new import_obsidian16.Notice("Could not move file to trash.");
       return;
     }
     if (kind === "skill")
       this.host.skillRegistry.invalidate();
     else
       this.host.enricherRegistry.invalidate();
-    new import_obsidian15.Notice("Moved to trash.");
+    new import_obsidian16.Notice("Moved to trash.");
     await this.reload();
   }
   async createSkillFile(id, name, description) {
     const rel = skillMarkdownPathFromId(this.host.settings.skillsFolder, id);
     if (!rel) {
-      new import_obsidian15.Notice("Invalid skill id.");
+      new import_obsidian16.Notice("Invalid skill id.");
       return;
     }
     const existing = this.app.vault.getAbstractFileByPath(rel);
     if (existing) {
-      new import_obsidian15.Notice("A file already exists at " + rel);
+      new import_obsidian16.Notice("A file already exists at " + rel);
       return;
     }
     const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
@@ -26424,22 +26459,22 @@ Edit the body with instructions used when this skill runs (local agent).
       await this.app.vault.create(rel, body);
     } catch (e) {
       console.error(e);
-      new import_obsidian15.Notice("Could not create skill file.");
+      new import_obsidian16.Notice("Could not create skill file.");
       return;
     }
     this.host.skillRegistry.invalidate();
-    new import_obsidian15.Notice("Skill created.");
+    new import_obsidian16.Notice("Skill created.");
     await this.reload();
   }
   async createEnricherDraft(id, name) {
     const rel = enricherJsonPathFromId(this.host.settings.enrichersFolder, id);
     if (!rel) {
-      new import_obsidian15.Notice("Invalid enricher id.");
+      new import_obsidian16.Notice("Invalid enricher id.");
       return;
     }
     const existing = this.app.vault.getAbstractFileByPath(rel);
     if (existing) {
-      new import_obsidian15.Notice("A file already exists at " + rel);
+      new import_obsidian16.Notice("A file already exists at " + rel);
       return;
     }
     const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
@@ -26450,11 +26485,11 @@ Edit the body with instructions used when this skill runs (local agent).
       await this.app.vault.create(rel, json);
     } catch (e) {
       console.error(e);
-      new import_obsidian15.Notice("Could not create enricher file.");
+      new import_obsidian16.Notice("Could not create enricher file.");
       return;
     }
     this.host.enricherRegistry.invalidate();
-    new import_obsidian15.Notice("Enricher draft created.");
+    new import_obsidian16.Notice("Enricher draft created.");
     await this.reload();
   }
   async onClose() {
@@ -26463,7 +26498,7 @@ Edit the body with instructions used when this skill runs (local agent).
 };
 
 // src/services/custom-types-service.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var CustomTypesService = class {
   constructor(app) {
     this.customSchemas = /* @__PURE__ */ new Map();
@@ -26476,15 +26511,7 @@ var CustomTypesService = class {
   }
   async ensureConfigDir() {
     try {
-      const norm = (0, import_obsidian16.normalizePath)(CUSTOM_TYPES_CONFIG_DIR);
-      const parts = norm.split("/").filter(Boolean);
-      let acc = "";
-      for (const p of parts) {
-        acc = acc ? `${acc}/${p}` : p;
-        if (!this.vault.getAbstractFileByPath(acc)) {
-          await this.vault.createFolder(acc);
-        }
-      }
+      await ensureFolderChain(this.app, (0, import_obsidian17.normalizePath)(CUSTOM_TYPES_CONFIG_DIR));
     } catch (error) {
       console.error("[CustomTypesService] Failed to create config folder:", error);
     }
@@ -26507,7 +26534,7 @@ var CustomTypesService = class {
         console.debug(`[CustomTypesService] Loaded ${this.customSchemas.size} custom entity types.`);
       } catch (e) {
         console.error("[CustomTypesService] Failed to load custom types:", e);
-        new import_obsidian16.Notice("Failed to load custom entity types config.");
+        new import_obsidian17.Notice("Failed to load custom entity types config.");
       }
     }
   }
@@ -26521,7 +26548,7 @@ var CustomTypesService = class {
       await this.vault.adapter.write(configPath, JSON.stringify(config, null, 2));
     } catch (e) {
       console.error("[CustomTypesService] Failed to save custom types:", e);
-      new import_obsidian16.Notice("Failed to save custom entity types config.");
+      new import_obsidian17.Notice("Failed to save custom entity types config.");
     }
   }
   async addCustomType(schema4) {
@@ -26530,7 +26557,7 @@ var CustomTypesService = class {
     this.customSchemas.set(schema4.name, schema4);
     ftmSchemaService.registerSchema(schema4);
     await this.saveCustomTypes();
-    new import_obsidian16.Notice(`Custom entity type '${schema4.label}' added.`);
+    new import_obsidian17.Notice(`Custom entity type '${schema4.label}' added.`);
   }
   async updateCustomType(schema4) {
     if (!schema4.name || !this.customSchemas.has(schema4.name)) {
@@ -26541,7 +26568,7 @@ var CustomTypesService = class {
   async deleteCustomType(name) {
     if (this.customSchemas.delete(name)) {
       await this.saveCustomTypes();
-      new import_obsidian16.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
+      new import_obsidian17.Notice(`Custom entity type '${name}' removed. Please reload plugin to fully remove from memory.`);
     }
   }
   getCustomSchemas() {
@@ -26553,7 +26580,7 @@ var CustomTypesService = class {
 };
 
 // src/services/orchestration-service.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/skills/skill-runtime.ts
 var SKILL_PLANNER_PREFIX = "SKILL_";
@@ -26565,26 +26592,26 @@ function parseVaultSkillPlannerTool(tool) {
 }
 
 // src/services/enrichers/enricher-executor.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 var ENRICHER_INVOCATION_SPACING_MS = 500;
 function pathIsUnderPrefix(path, prefix) {
-  const p = (0, import_obsidian17.normalizePath)(path);
-  const pre = (0, import_obsidian17.normalizePath)(prefix);
+  const p = (0, import_obsidian18.normalizePath)(path);
+  const pre = (0, import_obsidian18.normalizePath)(prefix);
   return p === pre || p.startsWith(pre + "/");
 }
 async function readVaultCredential(vault, credentialsFolder, vaultRelativePath) {
-  const root = (0, import_obsidian17.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+  const root = (0, import_obsidian18.normalizePath)(credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
   const rel = normalizeCredentialsRelativePath(vaultRelativePath);
   if (!rel) {
     throw new Error(
       `Invalid vault credential path "${vaultRelativePath}". Use a path relative to **Settings \u2192 OSINT Copilot \u2192 Credentials folder** (no leading /, no .. segments), e.g. leakcheck/api-key.txt.`
     );
   }
-  const full = (0, import_obsidian17.normalizePath)(`${root}/${rel}`);
+  const full = (0, import_obsidian18.normalizePath)(`${root}/${rel}`);
   if (!pathIsUnderPrefix(full, root))
     throw new Error("Credential path escapes credentials folder");
   const file = vault.getAbstractFileByPath(full);
-  if (!(file instanceof import_obsidian17.TFile)) {
+  if (!(file instanceof import_obsidian18.TFile)) {
     throw new Error(
       `Credential file not found in vault at: ${full}
 (credentials folder "${root}" + "${rel}"). Check that **Credentials folder** in plugin settings matches where chat **Apply** wrote the file, and that the note exists in this vault.`
@@ -26706,7 +26733,7 @@ async function executeEnricherHttp(spec, query, attachmentsContext, signal, vaul
       const urlStr = url.toString();
       const postBody = method === "POST" ? body : void 0;
       const contentType = method === "POST" && postBody ? postBody.trimStart().startsWith("{") || postBody.trimStart().startsWith("[") ? "application/json" : "text/plain; charset=utf-8" : void 0;
-      const runRequest = () => (0, import_obsidian17.requestUrl)({
+      const runRequest = () => (0, import_obsidian18.requestUrl)({
         url: urlStr,
         method,
         headers: strHeaders,
@@ -27744,7 +27771,7 @@ ${msg}`,
    */
   async runVaultGraphIngest(onFileProgress, abortSignal) {
     const vaultFiles = this.plugin.app.vault.getFiles();
-    const files = vaultFiles.filter((f) => f instanceof import_obsidian18.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+    const files = vaultFiles.filter((f) => f instanceof import_obsidian19.TFile).filter((f) => !this.shouldSkipVaultPath(f.path)).filter((f) => _OrchestrationService.VAULT_INGEST_EXTENSIONS.has((f.extension || "").toLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
     const maxFiles = Math.min(files.length, _OrchestrationService.VAULT_INGEST_MAX_FILES);
     const filesToProcess = files.slice(0, maxFiles);
     const BATCH = _OrchestrationService.VAULT_INGEST_BATCH_SIZE;
@@ -28174,7 +28201,7 @@ ${r.summary || ""}
         const msg = e instanceof Error ? e.message : String(e);
         lines.push(`\u26A0 Failed: ${msg.substring(0, 120)}${msg.length > 120 ? "\u2026" : ""}`);
         if (options.showErrorNotices) {
-          new import_obsidian18.Notice(`Error executing command: ${command.substring(0, 30)}...`);
+          new import_obsidian19.Notice(`Error executing command: ${command.substring(0, 30)}...`);
         }
       }
     }
@@ -28233,12 +28260,12 @@ ${r.summary || ""}
         ).open();
       });
       if (!confirmedValues) {
-        new import_obsidian18.Notice("Graph modifications cancelled by user.");
+        new import_obsidian19.Notice("Graph modifications cancelled by user.");
         return;
       }
       cmdsToExecute = commands.filter((_, idx) => confirmedValues.includes(idx.toString()));
       if (cmdsToExecute.length === 0) {
-        new import_obsidian18.Notice("No graph modifications selected.");
+        new import_obsidian19.Notice("No graph modifications selected.");
         return;
       }
     }
@@ -28248,7 +28275,7 @@ ${r.summary || ""}
     });
     const successCount = lines.filter((l) => l.startsWith("\u2713")).length;
     if (successCount > 0) {
-      new import_obsidian18.Notice(`Successfully executed ${successCount} graph modification(s).`);
+      new import_obsidian19.Notice(`Successfully executed ${successCount} graph modification(s).`);
       await this.plugin.refreshOpenInsightViews();
     }
   }
@@ -28320,7 +28347,7 @@ Synthesize the tool results, graph state, and the user's request into a conversa
   }
   handleError(error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    new import_obsidian18.Notice(`Orchestrator Error: ${errorMsg}`);
+    new import_obsidian19.Notice(`Orchestrator Error: ${errorMsg}`);
   }
 };
 _OrchestrationService.VAULT_INGEST_MAX_FILES = 200;
@@ -28342,7 +28369,7 @@ _OrchestrationService.VAULT_INGEST_EXTENSIONS = /* @__PURE__ */ new Set([
 var OrchestrationService = _OrchestrationService;
 
 // src/services/updater-service.ts
-var import_obsidian19 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 var UpdaterService = class {
   constructor(plugin) {
     this.REPO_URL = "https://api.github.com/repos/Probe-Point-Analytics-LLC/Obsidian-OSINT-Copilot-plugin/releases/latest";
@@ -28356,7 +28383,7 @@ var UpdaterService = class {
    */
   async checkLatestRelease() {
     try {
-      const response = await (0, import_obsidian19.requestUrl)({ url: this.REPO_URL });
+      const response = await (0, import_obsidian20.requestUrl)({ url: this.REPO_URL });
       if (response.status !== 200) {
         console.error("Failed to fetch latest release from GitHub", response.text);
         return null;
@@ -28383,7 +28410,7 @@ var UpdaterService = class {
         const asset = release.assets.find((a) => a.name === assetName);
         if (!asset)
           continue;
-        const response = await (0, import_obsidian19.requestUrl)({ url: asset.browser_download_url });
+        const response = await (0, import_obsidian20.requestUrl)({ url: asset.browser_download_url });
         if (response.status === 200) {
           const filePath = `${this.PLUGIN_FOLDER}/${assetName}`;
           await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -28410,7 +28437,7 @@ var UpdaterService = class {
       await plugins.enablePlugin(pluginId);
     } catch (error) {
       console.error("Error reloading plugin:", error);
-      new import_obsidian19.Notice("Error hot-reloading plugin. Please restart Obsidian.");
+      new import_obsidian20.Notice("Error hot-reloading plugin. Please restart Obsidian.");
     }
   }
   /**
@@ -28440,7 +28467,7 @@ var UpdaterService = class {
    */
   async downloadRawFile(url, fileName) {
     try {
-      const response = await (0, import_obsidian19.requestUrl)({ url });
+      const response = await (0, import_obsidian20.requestUrl)({ url });
       if (response.status === 200) {
         const filePath = `${this.PLUGIN_FOLDER}/${fileName}`;
         await this.app.vault.adapter.writeBinary(filePath, response.arrayBuffer);
@@ -28474,7 +28501,7 @@ var UpdaterService = class {
 };
 
 // src/services/vault-prompt-loader.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 function parseMarkdownWithFrontmatter(raw) {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed.startsWith("---")) {
@@ -28528,10 +28555,10 @@ var _VaultPromptLoader = class _VaultPromptLoader {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian20.normalizePath)(this.getPromptsRoot().trim());
+      const root = (0, import_obsidian21.normalizePath)(this.getPromptsRoot().trim());
       if (!root)
         return;
-      const norm = (0, import_obsidian20.normalizePath)(p);
+      const norm = (0, import_obsidian21.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.invalidateAll();
       }
@@ -28543,10 +28570,10 @@ var _VaultPromptLoader = class _VaultPromptLoader {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian20.normalizePath)(this.getPromptsRoot().trim());
+          const root = (0, import_obsidian21.normalizePath)(this.getPromptsRoot().trim());
           if (!root)
             return;
-          const op = (0, import_obsidian20.normalizePath)(oldPath);
+          const op = (0, import_obsidian21.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.invalidateAll();
           }
@@ -28559,15 +28586,15 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   root() {
     const r = this.getPromptsRoot().trim();
-    return (0, import_obsidian20.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
+    return (0, import_obsidian21.normalizePath)(r || DEFAULT_PROMPTS_FOLDER);
   }
   async readFileIfExists(relativePath) {
-    const path = (0, import_obsidian20.normalizePath)(`${this.root()}/${relativePath}`);
+    const path = (0, import_obsidian21.normalizePath)(`${this.root()}/${relativePath}`);
     const hit = this.cache.get(path);
     if (hit !== void 0)
       return hit;
     const f = this.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof import_obsidian20.TFile)) {
+    if (!(f instanceof import_obsidian21.TFile)) {
       this.cache.set(path, "");
       return null;
     }
@@ -28606,13 +28633,13 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   /** Recent text files under prompts/logs/ for unified-agent context (newest first, capped). */
   async getRecentLogsAugmentation() {
-    const logsPath = (0, import_obsidian20.normalizePath)(`${this.root()}/logs`);
+    const logsPath = (0, import_obsidian21.normalizePath)(`${this.root()}/logs`);
     const folder = this.app.vault.getAbstractFileByPath(logsPath);
-    if (!(folder instanceof import_obsidian20.TFolder))
+    if (!(folder instanceof import_obsidian21.TFolder))
       return "";
     const files = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian20.TFile))
+      if (!(child instanceof import_obsidian21.TFile))
         continue;
       const ext = (child.extension || "").toLowerCase();
       if (!_VaultPromptLoader.LOGS_EXTENSIONS.has(ext))
@@ -28666,13 +28693,13 @@ var _VaultPromptLoader = class _VaultPromptLoader {
   }
   /** List agent files under agents/ (for future UI). */
   async listAgents() {
-    const agentsPath = (0, import_obsidian20.normalizePath)(`${this.root()}/agents`);
+    const agentsPath = (0, import_obsidian21.normalizePath)(`${this.root()}/agents`);
     const folder = this.app.vault.getAbstractFileByPath(agentsPath);
-    if (!(folder instanceof import_obsidian20.TFolder))
+    if (!(folder instanceof import_obsidian21.TFolder))
       return [];
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian20.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian21.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -28705,7 +28732,7 @@ _VaultPromptLoader.LOGS_AUGMENT_MAX_FILES = 10;
 var VaultPromptLoader = _VaultPromptLoader;
 
 // src/services/vault-prompt-bootstrap.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/data/vault-prompt-defaults.ts
 var VAULT_PROMPT_DEFAULT_FILES = [
@@ -28817,40 +28844,16 @@ var VaultPromptBootstrapService = class {
     this.getPromptsRoot = getPromptsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian21.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
+    const root = (0, import_obsidian22.normalizePath)(this.getPromptsRoot().trim() || DEFAULT_PROMPTS_FOLDER);
     for (const def of VAULT_PROMPT_DEFAULT_FILES) {
-      const path = (0, import_obsidian21.normalizePath)(`${root}/${def.path}`);
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian21.TFile)
-        continue;
-      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
-      if (parent)
-        await this.ensureFolderChain(parent);
-      await this.app.vault.create(path, def.content);
-    }
-  }
-  async ensureFolderChain(path) {
-    const norm = (0, import_obsidian21.normalizePath)(path);
-    const parts = norm.split("/").filter(Boolean);
-    let acc = "";
-    for (const p of parts) {
-      acc = acc ? `${acc}/${p}` : p;
-      const f = this.app.vault.getAbstractFileByPath(acc);
-      if (!f) {
-        try {
-          await this.app.vault.createFolder(acc);
-        } catch (e) {
-          if (e instanceof Error && !e.message.includes("Folder already exists")) {
-            throw e;
-          }
-        }
-      }
+      const path = (0, import_obsidian22.normalizePath)(`${root}/${def.path}`);
+      await createFileIfMissing(this.app, path, def.content);
     }
   }
 };
 
 // src/task-agents/task-agent-registry.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/task-agents/normalize-vault-path.ts
 function normalizeVaultPath(p) {
@@ -28928,10 +28931,10 @@ var TaskAgentRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+      const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian22.normalizePath)(p);
+      const norm = (0, import_obsidian23.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -28943,10 +28946,10 @@ var TaskAgentRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+          const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian22.normalizePath)(oldPath);
+          const op = (0, import_obsidian23.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -28960,15 +28963,15 @@ var TaskAgentRegistry = class {
   async listAgents() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian22.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
+    const root = (0, import_obsidian23.normalizePath)(this.getFolder().trim() || DEFAULT_TASK_AGENTS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian22.TFolder)) {
+    if (!(folder instanceof import_obsidian23.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian22.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian23.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -28992,11 +28995,11 @@ var TaskAgentRegistry = class {
 };
 
 // src/task-agents/context-assembler.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 async function assembleTaskAgentContext(app, contextRoots, pluginIndex, maxNotes, maxChars, query) {
   if (contextRoots.length === 0)
     return "";
-  const roots = contextRoots.map((r) => (0, import_obsidian23.normalizePath)(r.trim())).filter(Boolean);
+  const roots = contextRoots.map((r) => (0, import_obsidian24.normalizePath)(r.trim())).filter(Boolean);
   const queryTerms = query.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   const candidates = [];
   for (const [, note] of pluginIndex) {
@@ -29176,7 +29179,7 @@ function parseVaultFilesJson(raw) {
 }
 
 // src/task-agents/write-applier.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 function buildNoteContent(entry) {
   const fm = (entry.frontmatter || "").trim();
   if (fm) {
@@ -29199,7 +29202,7 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
       result.errors.push("Skipping entry: missing path");
       continue;
     }
-    const rel = (0, import_obsidian24.normalizePath)(file.path.replace(/\\/g, "/"));
+    const rel = (0, import_obsidian25.normalizePath)(file.path.replace(/\\/g, "/"));
     if (!isPathAllowedForWrite(rel, agentOutputRoots, globalAllowlistRoots)) {
       result.errors.push(`Not allowed: ${rel}`);
       continue;
@@ -29211,19 +29214,13 @@ async function applyVaultFilesV1(app, data, agentOutputRoots, globalAllowlistRoo
     const content = buildNoteContent(file);
     try {
       const existing = app.vault.getAbstractFileByPath(rel);
-      if (existing instanceof import_obsidian24.TFile) {
+      if (existing instanceof import_obsidian25.TFile) {
         await app.vault.modify(existing, content);
         result.updated.push(rel);
       } else if (existing) {
         result.errors.push(`Path exists and is not a file: ${rel}`);
       } else {
-        const parent = rel.includes("/") ? rel.substring(0, rel.lastIndexOf("/")) : "";
-        if (parent) {
-          const folder = app.vault.getAbstractFileByPath(parent);
-          if (!folder) {
-            await app.vault.createFolder(parent);
-          }
-        }
+        await ensureFolderChainForFile(app, rel);
         await app.vault.create(rel, content);
         result.created.push(rel);
       }
@@ -29243,10 +29240,10 @@ function formatApplyNotice(res) {
   if (res.errors.length)
     parts.push(`Errors: ${res.errors.length}`);
   if (parts.length === 0) {
-    new import_obsidian24.Notice("Task agent: no files applied.");
+    new import_obsidian25.Notice("Task agent: no files applied.");
     return;
   }
-  new import_obsidian24.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
+  new import_obsidian25.Notice(`Task agent: ${parts.join(", ")}`, 6e3);
   if (res.errors.length) {
     console.warn("[TaskAgent] apply errors:", res.errors);
   }
@@ -29359,7 +29356,7 @@ ${paths.map((p) => `- \`${p}\``).join("\n")}`;
 };
 
 // src/task-agents/task-agent-bootstrap.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 
 // src/data/task-agent-defaults.ts
 var TASK_AGENT_DEFAULT_FILES = [
@@ -29491,42 +29488,18 @@ var TaskAgentBootstrapService = class {
     this.getTaskAgentsRoot = getTaskAgentsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian25.normalizePath)(
+    const root = (0, import_obsidian26.normalizePath)(
       this.getTaskAgentsRoot().trim() || DEFAULT_TASK_AGENTS_FOLDER
     );
     for (const def of TASK_AGENT_DEFAULT_FILES) {
-      const path = (0, import_obsidian25.normalizePath)(`${root}/${def.path}`);
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian25.TFile)
-        continue;
-      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
-      if (parent)
-        await this.ensureFolderChain(parent);
-      await this.app.vault.create(path, def.content);
-    }
-  }
-  async ensureFolderChain(path) {
-    const norm = (0, import_obsidian25.normalizePath)(path);
-    const parts = norm.split("/").filter(Boolean);
-    let acc = "";
-    for (const p of parts) {
-      acc = acc ? `${acc}/${p}` : p;
-      const f = this.app.vault.getAbstractFileByPath(acc);
-      if (!f) {
-        try {
-          await this.app.vault.createFolder(acc);
-        } catch (e) {
-          if (e instanceof Error && !e.message.includes("Folder already exists")) {
-            throw e;
-          }
-        }
-      }
+      const path = (0, import_obsidian26.normalizePath)(`${root}/${def.path}`);
+      await createFileIfMissing(this.app, path, def.content);
     }
   }
 };
 
 // src/skills/skill-registry.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian27 = require("obsidian");
 
 // src/skills/parse-skill-markdown.ts
 function parseSkillMarkdown(raw, sourcePath) {
@@ -29564,10 +29537,10 @@ var SkillRegistry = class {
       if (!file)
         return;
       const p = file.path;
-      const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+      const root = (0, import_obsidian27.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
       if (!root)
         return;
-      const norm = (0, import_obsidian26.normalizePath)(p);
+      const norm = (0, import_obsidian27.normalizePath)(p);
       if (norm === root || norm.startsWith(root + "/")) {
         this.cache = null;
       }
@@ -29579,10 +29552,10 @@ var SkillRegistry = class {
       this.app.vault.on("rename", (file, oldPath) => {
         maybeInvalidate(file);
         if (oldPath) {
-          const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+          const root = (0, import_obsidian27.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
           if (!root)
             return;
-          const op = (0, import_obsidian26.normalizePath)(oldPath);
+          const op = (0, import_obsidian27.normalizePath)(oldPath);
           if (op === root || op.startsWith(root + "/")) {
             this.cache = null;
           }
@@ -29596,15 +29569,15 @@ var SkillRegistry = class {
   async listVaultSkills() {
     if (this.cache)
       return this.cache;
-    const root = (0, import_obsidian26.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian27.normalizePath)(this.getFolder().trim() || DEFAULT_SKILLS_FOLDER);
     const folder = this.app.vault.getAbstractFileByPath(root);
-    if (!(folder instanceof import_obsidian26.TFolder)) {
+    if (!(folder instanceof import_obsidian27.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian26.TFile) || child.extension !== "md")
+      if (!(child instanceof import_obsidian27.TFile) || child.extension !== "md")
         continue;
       if (child.basename === "README")
         continue;
@@ -29628,7 +29601,7 @@ var SkillRegistry = class {
 };
 
 // src/skills/skill-bootstrap.ts
-var import_obsidian27 = require("obsidian");
+var import_obsidian28 = require("obsidian");
 
 // src/data/skill-defaults.ts
 var SKILL_DEFAULT_FILES = [
@@ -29676,34 +29649,10 @@ var SkillBootstrapService = class {
     this.getSkillsRoot = getSkillsRoot;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian27.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
+    const root = (0, import_obsidian28.normalizePath)(this.getSkillsRoot().trim() || DEFAULT_SKILLS_FOLDER);
     for (const def of SKILL_DEFAULT_FILES) {
-      const path = (0, import_obsidian27.normalizePath)(`${root}/${def.path}`);
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian27.TFile)
-        continue;
-      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
-      if (parent)
-        await this.ensureFolderChain(parent);
-      await this.app.vault.create(path, def.content);
-    }
-  }
-  async ensureFolderChain(path) {
-    const norm = (0, import_obsidian27.normalizePath)(path);
-    const parts = norm.split("/").filter(Boolean);
-    let acc = "";
-    for (const p of parts) {
-      acc = acc ? `${acc}/${p}` : p;
-      const f = this.app.vault.getAbstractFileByPath(acc);
-      if (!f) {
-        try {
-          await this.app.vault.createFolder(acc);
-        } catch (e) {
-          if (e instanceof Error && !e.message.includes("Folder already exists")) {
-            throw e;
-          }
-        }
-      }
+      const path = (0, import_obsidian28.normalizePath)(`${root}/${def.path}`);
+      await createFileIfMissing(this.app, path, def.content);
     }
   }
 };
@@ -29749,36 +29698,36 @@ async function getChatRuntimeAvailability(plugin, forceRefresh = false) {
 }
 
 // src/services/custom-vault-writer.ts
-var import_obsidian28 = require("obsidian");
+var import_obsidian29 = require("obsidian");
 function pathIsUnderPrefix2(path, prefix) {
-  const p = (0, import_obsidian28.normalizePath)(path);
-  const pre = (0, import_obsidian28.normalizePath)(prefix);
+  const p = (0, import_obsidian29.normalizePath)(path);
+  const pre = (0, import_obsidian29.normalizePath)(prefix);
   return p === pre || p.startsWith(pre + "/");
 }
 function assertPathUnderCustomRoot(resolvedPath, purpose) {
-  const p = (0, import_obsidian28.normalizePath)(resolvedPath);
-  const root = (0, import_obsidian28.normalizePath)(OSINT_COPILOT_CUSTOM_ROOT);
+  const p = (0, import_obsidian29.normalizePath)(resolvedPath);
+  const root = (0, import_obsidian29.normalizePath)(OSINT_COPILOT_CUSTOM_ROOT);
   if (!pathIsUnderPrefix2(p, root)) {
     throw new Error(`${purpose}: path must stay under ${root}`);
   }
 }
 function skillsRoot(plugin) {
-  return (0, import_obsidian28.normalizePath)(plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
+  return (0, import_obsidian29.normalizePath)(plugin.settings.skillsFolder.trim() || DEFAULT_SKILLS_FOLDER);
 }
 function credentialsRoot(plugin) {
-  return (0, import_obsidian28.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
+  return (0, import_obsidian29.normalizePath)(plugin.settings.credentialsFolder.trim() || DEFAULT_CREDENTIALS_FOLDER);
 }
 function enrichersRoot(plugin) {
-  return (0, import_obsidian28.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
+  return (0, import_obsidian29.normalizePath)(plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER);
 }
 function scriptsRoot(plugin) {
-  return (0, import_obsidian28.normalizePath)(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
+  return (0, import_obsidian29.normalizePath)(plugin.settings.scriptsFolder.trim() || DEFAULT_SCRIPTS_FOLDER);
 }
 function resolveSkillMarkdownPath(plugin, skillId) {
   const id = parseSkillIdForVault(skillId);
   if (!id || id === "readme")
     throw new Error("Invalid skill id");
-  const file = (0, import_obsidian28.normalizePath)(`${skillsRoot(plugin)}/${id}.md`);
+  const file = (0, import_obsidian29.normalizePath)(`${skillsRoot(plugin)}/${id}.md`);
   assertPathUnderCustomRoot(file, "Skill file");
   return file;
 }
@@ -29787,7 +29736,7 @@ function resolveCredentialFilePath(plugin, relativePath) {
   if (!rel)
     throw new Error("Invalid credentials relative path");
   const root = credentialsRoot(plugin);
-  const file = (0, import_obsidian28.normalizePath)(`${root}/${rel}`);
+  const file = (0, import_obsidian29.normalizePath)(`${root}/${rel}`);
   assertPathUnderCustomRoot(file, "Credentials file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Credential path escapes credentials folder");
@@ -29800,7 +29749,7 @@ function resolveEnricherJsonPath(plugin, enricherId) {
     throw new Error("Invalid enricher id");
   const root = enrichersRoot(plugin);
   assertPathUnderCustomRoot(root, "Enrichers root");
-  const file = (0, import_obsidian28.normalizePath)(`${root}/${id}.json`);
+  const file = (0, import_obsidian29.normalizePath)(`${root}/${id}.json`);
   assertPathUnderCustomRoot(file, "Enricher file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Enricher path escapes enrichers folder");
@@ -29814,7 +29763,7 @@ function resolveScriptFilePath(plugin, relativePath) {
   }
   const root = scriptsRoot(plugin);
   assertPathUnderCustomRoot(root, "Scripts root");
-  const file = (0, import_obsidian28.normalizePath)(`${root}/${rel}`);
+  const file = (0, import_obsidian29.normalizePath)(`${root}/${rel}`);
   assertPathUnderCustomRoot(file, "Script file");
   if (!pathIsUnderPrefix2(file, root)) {
     throw new Error("Script path escapes scripts folder");
@@ -29827,16 +29776,6 @@ The unified agent can propose **create / update / delete** for text files in thi
 
 Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
 `;
-async function ensureFolderChain2(app, filePath) {
-  const parts = (0, import_obsidian28.normalizePath)(filePath).split("/").slice(0, -1);
-  let current = "";
-  for (const p of parts) {
-    current = current ? `${current}/${p}` : p;
-    if (!app.vault.getAbstractFileByPath(current)) {
-      await app.vault.createFolder(current);
-    }
-  }
-}
 function yamlScalar(s) {
   return JSON.stringify(s);
 }
@@ -29864,10 +29803,10 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "upsert_skill": {
           const path = resolveSkillMarkdownPath(plugin, op.id);
           skillsTouched = true;
-          await ensureFolderChain2(plugin.app, path);
+          await ensureFolderChainForFile(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
           const body = buildSkillMarkdown(op);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.modify(existing, body);
           } else {
             await plugin.app.vault.create(path, body);
@@ -29879,7 +29818,7 @@ async function applyCustomVaultOperations(plugin, ops) {
           const path = resolveSkillMarkdownPath(plugin, op.id);
           skillsTouched = true;
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29887,9 +29826,9 @@ async function applyCustomVaultOperations(plugin, ops) {
         }
         case "put_credentials": {
           const path = resolveCredentialFilePath(plugin, op.relativePath);
-          await ensureFolderChain2(plugin.app, path);
+          await ensureFolderChainForFile(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.modify(existing, op.content);
           } else {
             await plugin.app.vault.create(path, op.content);
@@ -29900,7 +29839,7 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "delete_credentials": {
           const path = resolveCredentialFilePath(plugin, op.relativePath);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29909,10 +29848,10 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "upsert_enricher": {
           const path = resolveEnricherJsonPath(plugin, op.id);
           enrichersTouched = true;
-          await ensureFolderChain2(plugin.app, path);
+          await ensureFolderChainForFile(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
           const body = JSON.stringify(op.spec, null, 2);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.modify(existing, body);
           } else {
             await plugin.app.vault.create(path, body);
@@ -29924,7 +29863,7 @@ async function applyCustomVaultOperations(plugin, ops) {
           const path = resolveEnricherJsonPath(plugin, op.id);
           enrichersTouched = true;
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29932,9 +29871,9 @@ async function applyCustomVaultOperations(plugin, ops) {
         }
         case "upsert_script": {
           const path = resolveScriptFilePath(plugin, op.relativePath);
-          await ensureFolderChain2(plugin.app, path);
+          await ensureFolderChainForFile(plugin.app, path);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.modify(existing, op.content);
           } else {
             await plugin.app.vault.create(path, op.content);
@@ -29945,7 +29884,7 @@ async function applyCustomVaultOperations(plugin, ops) {
         case "delete_script": {
           const path = resolveScriptFilePath(plugin, op.relativePath);
           const existing = plugin.app.vault.getAbstractFileByPath(path);
-          if (existing instanceof import_obsidian28.TFile) {
+          if (existing instanceof import_obsidian29.TFile) {
             await plugin.app.vault.delete(existing);
             applied++;
           }
@@ -29969,33 +29908,23 @@ async function applyCustomVaultOperations(plugin, ops) {
 async function ensureCredentialsFolder(plugin) {
   const root = credentialsRoot(plugin);
   assertPathUnderCustomRoot(root, "Credentials root");
-  const f = plugin.app.vault.getAbstractFileByPath(root);
-  if (!f) {
-    await plugin.app.vault.createFolder(root);
-  } else if (!(f instanceof import_obsidian28.TFolder)) {
-    console.warn("[custom-vault-writer] credentials path is not a folder:", root);
-  }
+  await ensureFolderExists(plugin.app, root);
 }
 async function ensureScriptsFolder(plugin) {
   const root = scriptsRoot(plugin);
   assertPathUnderCustomRoot(root, "Scripts root");
-  const f = plugin.app.vault.getAbstractFileByPath(root);
-  if (!f) {
-    await plugin.app.vault.createFolder(root);
-  } else if (!(f instanceof import_obsidian28.TFolder)) {
-    console.warn("[custom-vault-writer] scripts path is not a folder:", root);
-  }
+  await ensureFolderExists(plugin.app, root);
 }
 async function ensureScriptsDefaultsInstalled(plugin) {
   await ensureScriptsFolder(plugin);
-  const readme = (0, import_obsidian28.normalizePath)(`${scriptsRoot(plugin)}/README.md`);
+  const readme = (0, import_obsidian29.normalizePath)(`${scriptsRoot(plugin)}/README.md`);
   if (!plugin.app.vault.getAbstractFileByPath(readme)) {
     await plugin.app.vault.create(readme, DEFAULT_SCRIPTS_README);
   }
 }
 
 // src/services/vault-lock-service.ts
-var import_obsidian29 = require("obsidian");
+var import_obsidian30 = require("obsidian");
 var VaultLockService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -30004,12 +29933,12 @@ var VaultLockService = class {
   /** Call after loadSettings(). */
   initializeFromSettings() {
     const paths = this.plugin.settings.lockedVaultPaths ?? [];
-    this.locked = new Set(paths.map((p) => (0, import_obsidian29.normalizePath)(p)));
+    this.locked = new Set(paths.map((p) => (0, import_obsidian30.normalizePath)(p)));
   }
   isPathLocked(path) {
     if (!path)
       return false;
-    return this.locked.has((0, import_obsidian29.normalizePath)(path));
+    return this.locked.has((0, import_obsidian30.normalizePath)(path));
   }
   /**
    * Add paths to the lock set. Returns count of newly added paths.
@@ -30019,7 +29948,7 @@ var VaultLockService = class {
     for (const p of paths) {
       if (!p)
         continue;
-      const np = (0, import_obsidian29.normalizePath)(p);
+      const np = (0, import_obsidian30.normalizePath)(p);
       if (!this.locked.has(np)) {
         this.locked.add(np);
         n++;
@@ -30030,7 +29959,7 @@ var VaultLockService = class {
     return n;
   }
   unlockPath(path) {
-    const np = (0, import_obsidian29.normalizePath)(path);
+    const np = (0, import_obsidian30.normalizePath)(path);
     if (!this.locked.has(np))
       return;
     this.locked.delete(np);
@@ -30050,11 +29979,11 @@ var VaultLockService = class {
   }
   /** Migrate lock entry when a file is renamed (same as Note Locker). */
   onVaultRename(_file, oldPath) {
-    const op = (0, import_obsidian29.normalizePath)(oldPath);
+    const op = (0, import_obsidian30.normalizePath)(oldPath);
     if (!this.locked.has(op))
       return;
     this.locked.delete(op);
-    this.locked.add((0, import_obsidian29.normalizePath)(_file.path));
+    this.locked.add((0, import_obsidian30.normalizePath)(_file.path));
     this.persist();
   }
   persist() {
@@ -30064,7 +29993,7 @@ var VaultLockService = class {
 };
 
 // src/services/schema-bootstrap-service.ts
-var import_obsidian30 = require("obsidian");
+var import_obsidian31 = require("obsidian");
 
 // src/data/schema-vault-defaults.ts
 var SCHEMA_VAULT_DEFAULT_FILES = [
@@ -30372,40 +30301,16 @@ var SchemaBootstrapService = class {
     this.getEntityBasePath = getEntityBasePath;
   }
   async ensureDefaultsInstalled() {
-    const root = (0, import_obsidian30.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
+    const root = (0, import_obsidian31.normalizePath)(this.getEntityBasePath().trim() || OSINT_COPILOT_VAULT_ROOT);
     for (const def of SCHEMA_VAULT_DEFAULT_FILES) {
-      const path = (0, import_obsidian30.normalizePath)(`${root}/${def.path}`);
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing instanceof import_obsidian30.TFile)
-        continue;
-      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : "";
-      if (parent)
-        await this.ensureFolderChain(parent);
-      await this.app.vault.create(path, def.content);
-    }
-  }
-  async ensureFolderChain(path) {
-    const norm = (0, import_obsidian30.normalizePath)(path);
-    const parts = norm.split("/").filter(Boolean);
-    let acc = "";
-    for (const p of parts) {
-      acc = acc ? `${acc}/${p}` : p;
-      const f = this.app.vault.getAbstractFileByPath(acc);
-      if (!f) {
-        try {
-          await this.app.vault.createFolder(acc);
-        } catch (e) {
-          if (e instanceof Error && !e.message.includes("Folder already exists")) {
-            throw e;
-          }
-        }
-      }
+      const path = (0, import_obsidian31.normalizePath)(`${root}/${def.path}`);
+      await createFileIfMissing(this.app, path, def.content);
     }
   }
 };
 
 // src/services/schema-catalog-service.ts
-var import_obsidian31 = require("obsidian");
+var import_obsidian32 = require("obsidian");
 
 // src/services/schema-definition-loader.ts
 function normalizeProperties(raw) {
@@ -30561,12 +30466,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultStix2() {
-    const base = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
+    const base = (0, import_obsidian32.normalizePath)(`${this.getEntityBasePath()}/schemas/stix2`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "stix2");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "stix2");
   }
   async loadVaultMitre() {
-    const base = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
+    const base = (0, import_obsidian32.normalizePath)(`${this.getEntityBasePath()}/schemas/mitre`);
     await this.loadEntityYamlFile(`${base}/entities.yaml`, "mitre");
     await this.loadRelationshipYamlFile(`${base}/relationships.yaml`, "mitre");
   }
@@ -30607,12 +30512,12 @@ var SchemaCatalogService = class {
     }
   }
   async loadVaultUser() {
-    const dir = (0, import_obsidian31.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
+    const dir = (0, import_obsidian32.normalizePath)(`${this.getEntityBasePath()}/schemas/user`);
     const folder = this.app.vault.getAbstractFileByPath(dir);
-    if (!folder || !(folder instanceof import_obsidian31.TFolder))
+    if (!folder || !(folder instanceof import_obsidian32.TFolder))
       return;
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian31.TFile))
+      if (!(child instanceof import_obsidian32.TFile))
         continue;
       const lower = child.name.toLowerCase();
       if (!lower.endsWith(".yaml") && !lower.endsWith(".yml"))
@@ -30761,7 +30666,7 @@ function mergeEnabledFamilies(partial) {
 }
 
 // src/services/enrichers/enricher-registry.ts
-var import_obsidian32 = require("obsidian");
+var import_obsidian33 = require("obsidian");
 var EnricherRegistry = class {
   constructor(app, getFolder) {
     this.app = app;
@@ -30770,7 +30675,7 @@ var EnricherRegistry = class {
     this.registered = false;
   }
   root() {
-    return (0, import_obsidian32.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
+    return (0, import_obsidian33.normalizePath)(this.getFolder().trim() || DEFAULT_ENRICHERS_FOLDER);
   }
   registerVaultEvents(plugin) {
     if (this.registered)
@@ -30780,7 +30685,7 @@ var EnricherRegistry = class {
       if (!file)
         return;
       const root = this.root();
-      const p = (0, import_obsidian32.normalizePath)(file.path);
+      const p = (0, import_obsidian33.normalizePath)(file.path);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     };
@@ -30792,7 +30697,7 @@ var EnricherRegistry = class {
       if (!oldPath)
         return;
       const root = this.root();
-      const p = (0, import_obsidian32.normalizePath)(oldPath);
+      const p = (0, import_obsidian33.normalizePath)(oldPath);
       if (p === root || p.startsWith(`${root}/`))
         this.cache = null;
     }));
@@ -30804,13 +30709,13 @@ var EnricherRegistry = class {
     if (this.cache)
       return this.cache;
     const folder = this.app.vault.getAbstractFileByPath(this.root());
-    if (!(folder instanceof import_obsidian32.TFolder)) {
+    if (!(folder instanceof import_obsidian33.TFolder)) {
       this.cache = [];
       return this.cache;
     }
     const out = [];
     for (const child of folder.children) {
-      if (!(child instanceof import_obsidian32.TFile) || child.extension !== "json")
+      if (!(child instanceof import_obsidian33.TFile) || child.extension !== "json")
         continue;
       try {
         const raw = await this.app.vault.read(child);
@@ -30861,6 +30766,7 @@ var DEFAULT_SETTINGS = {
   claudeCodeModel: "sonnet",
   claudeCodeExtraArgs: "",
   claudeCodeTimeoutMs: 3e5,
+  pdftotextPath: "",
   agentRuntimeProvider: CLAUDE_RUNTIME_ID,
   hermesAgentCliPath: "hermes",
   hermesAgentExtraArgs: "",
@@ -30879,7 +30785,7 @@ var DEFAULT_SETTINGS = {
 };
 
 // src/settings/vault-ai-setting-tab.ts
-var import_obsidian33 = require("obsidian");
+var import_obsidian34 = require("obsidian");
 
 // src/chat/runtime-settings-visibility.ts
 function runtimeSettingsVisibility(selectedRuntimeId) {
@@ -30904,7 +30810,7 @@ function isTaskAgentRunnable(manifest, settings) {
 }
 
 // src/settings/vault-ai-setting-tab.ts
-var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
+var VaultAISettingTab = class extends import_obsidian34.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this._settingsDisplayDepth = 0;
@@ -30947,49 +30853,49 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     this._settingsDisplayDepth++;
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian33.Setting(containerEl).setName("Plugin updates").setHeading();
-    new import_obsidian33.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Plugin updates").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Current version: " + this.plugin.manifest.version).setDesc(
       "Force update plugin to the latest version from GitHub main branch. This will overwrite local files with the newest code."
     ).addButton(
       (btn) => btn.setButtonText("Update plugin").setCta().setTooltip("Download and install the latest version from GitHub main branch").onClick(async () => {
         const originalText = btn.buttonEl.innerText;
         btn.setButtonText("Updating...");
         btn.setDisabled(true);
-        new import_obsidian33.Notice("Updating plugin from GitHub main branch...");
+        new import_obsidian34.Notice("Updating plugin from GitHub main branch...");
         try {
           const success = await this.plugin.updaterService.updateFromMain();
           if (success) {
             btn.setButtonText("Reloading...");
-            new import_obsidian33.Notice("Update successful! Reloading plugin...");
+            new import_obsidian34.Notice("Update successful! Reloading plugin...");
             await this.plugin.updaterService.reloadPlugin();
           } else {
             btn.setButtonText("Update failed");
             btn.setDisabled(false);
             setTimeout(() => btn.setButtonText(originalText), 3e3);
-            new import_obsidian33.Notice("Failed to download update. Check console for details.");
+            new import_obsidian34.Notice("Failed to download update. Check console for details.");
           }
         } catch (error) {
           console.error("[OSINT Copilot] Update failed:", error);
           btn.setButtonText("Update failed");
           btn.setDisabled(false);
           setTimeout(() => btn.setButtonText(originalText), 3e3);
-          new import_obsidian33.Notice("An error occurred during update.");
+          new import_obsidian34.Notice("An error occurred during update.");
         }
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Graph note lock").setHeading();
-    new import_obsidian33.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Graph note lock").setHeading();
+    new import_obsidian34.Setting(containerEl).setName(`Locked notes (${this.plugin.vaultLockService.getLockedCount()})`).setDesc(
       "Notes locked from the entity graph are read-only until you unlock them (editor toolbar or here). Task agents and orchestration skip writes to locked paths."
     ).addButton(
       (btn) => btn.setButtonText("Unlock all").onClick(async () => {
         if (!confirm("Unlock all notes locked from the graph?"))
           return;
         this.plugin.vaultLockService.unlockAll();
-        new import_obsidian33.Notice("All graph locks cleared.");
+        new import_obsidian34.Notice("All graph locks cleared.");
         this.display();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
+    new import_obsidian34.Setting(containerEl).setName("Max notes").setDesc("Maximum number of notes to include in context").addText(
       (text) => text.setPlaceholder("15").setValue(String(this.plugin.settings.maxNotes)).onChange(async (value) => {
         const num = parseInt(value);
         if (!isNaN(num) && num > 0) {
@@ -30998,7 +30904,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         }
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
+    new import_obsidian34.Setting(containerEl).setName("System prompt").setDesc("Default system prompt for q&a").addTextArea((text) => {
       text.setPlaceholder("You are a vault assistant...").setValue(this.plugin.settings.systemPrompt).onChange(async (value) => {
         this.plugin.settings.systemPrompt = value;
         await this.plugin.saveSettings();
@@ -31006,29 +30912,27 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
       text.inputEl.rows = 4;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian33.Setting(containerEl).setName("Vault prompts").setHeading();
-    new import_obsidian33.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
+    new import_obsidian34.Setting(containerEl).setName("Vault prompts").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Prompts folder").setDesc("Editable rules, agents, and graph-extraction skill (Markdown). Default copies on first run if files are missing.").addText(
       (text) => text.setPlaceholder(DEFAULT_PROMPTS_FOLDER).setValue(this.plugin.settings.promptsFolder).onChange(async (value) => {
         this.plugin.settings.promptsFolder = value.trim() || DEFAULT_PROMPTS_FOLDER;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
+    new import_obsidian34.Setting(containerEl).setName("Active agent id").setDesc("Matches agents/<id>.md under the prompts folder (see frontmatter id).").addText(
       (text) => text.setPlaceholder("default").setValue(this.plugin.settings.activeAgentId).onChange(async (value) => {
         this.plugin.settings.activeAgentId = value.trim() || "default";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
+    new import_obsidian34.Setting(containerEl).setName("Install missing default prompt files").setDesc("Creates any default files that are not present. Does not overwrite your edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new VaultPromptBootstrapService(this.plugin.app, () => this.plugin.settings.promptsFolder).ensureDefaultsInstalled();
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           await new SkillBootstrapService(this.plugin.app, () => this.plugin.settings.skillsFolder).ensureDefaultsInstalled();
           const enricherRoot = this.plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-          if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
-            await this.plugin.app.vault.createFolder(enricherRoot);
-          }
+          await ensureFolderExists(this.plugin.app, enricherRoot);
           await ensureCredentialsFolder(this.plugin);
           await ensureScriptsDefaultsInstalled(this.plugin);
           this.plugin.vaultPromptLoader?.invalidateAll();
@@ -31036,14 +30940,14 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
           this.plugin.skillRegistry?.invalidate();
           this.plugin.enricherRegistry?.invalidate();
           this.plugin.attachVaultSkillFromVault();
-          new import_obsidian33.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
+          new import_obsidian34.Notice("Done. Open the prompts, skills, and task-agents folders in the vault to edit.");
         } catch (e) {
-          new import_obsidian33.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian34.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Skills (vault)").setHeading();
-    new import_obsidian33.Setting(containerEl).setName("Skills folder").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Skills (vault)").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Skills folder").setDesc(
       "Markdown skill files for vault-defined workflows; the unified agent can propose creating or updating them via custom_vault_operations (same flow can propose enricher *.json under the enrichers folder; enricher HTTP tools use companion skills here)."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SKILLS_FOLDER).setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
@@ -31052,14 +30956,14 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
+    new import_obsidian34.Setting(containerEl).setName("Enrichers folder").setDesc("JSON enricher specs (HTTP tools) that can be proposed by the agent after explicit approval.").addText(
       (text) => text.setPlaceholder(DEFAULT_ENRICHERS_FOLDER).setValue(this.plugin.settings.enrichersFolder).onChange(async (value) => {
         this.plugin.settings.enrichersFolder = value.trim() || DEFAULT_ENRICHERS_FOLDER;
         this.plugin.enricherRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Credentials folder").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Credentials folder").setDesc(
       "Plain-text secrets the unified agent may propose storing (e.g. API keys). Paths must stay under OSINTCopilot/custom/. Use bearer_vault / header_vault / query_vault in enricher JSON to read a file here."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_CREDENTIALS_FOLDER).setValue(this.plugin.settings.credentialsFolder).onChange(async (value) => {
@@ -31067,7 +30971,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Scripts folder").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Scripts folder").setDesc(
       "Text scripts (e.g. .py, .sh, .ts) the unified agent may propose via upsert_script / delete_script. Review the side-by-side diff in chat; the plugin does not execute scripts."
     ).addText(
       (text) => text.setPlaceholder(DEFAULT_SCRIPTS_FOLDER).setValue(this.plugin.settings.scriptsFolder).onChange(async (value) => {
@@ -31075,8 +30979,8 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Task agents (vault)").setHeading();
-    new import_obsidian33.Setting(containerEl).setName("Enable task agents").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Task agents (vault)").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Enable task agents").setDesc(
       "In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration."
     ).addToggle(
       (t) => t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
@@ -31084,14 +30988,14 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
+    new import_obsidian34.Setting(containerEl).setName("Task agents folder").setDesc("Markdown manifests with agent_kind: task (separate from prompts/agents orchestration agents).").addText(
       (text) => text.setPlaceholder(DEFAULT_TASK_AGENTS_FOLDER).setValue(this.plugin.settings.taskAgentsFolder).onChange(async (value) => {
         this.plugin.settings.taskAgentsFolder = value.trim() || DEFAULT_TASK_AGENTS_FOLDER;
         this.plugin.taskAgentRegistry?.invalidate();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
+    new import_obsidian34.Setting(containerEl).setName("Global output allowlist").setDesc("Newlines or commas. Task agents may only write under these paths AND each agent's output_roots.").addTextArea((text) => {
       text.setPlaceholder(DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST).setValue(this.plugin.settings.taskAgentGlobalOutputAllowlist).onChange(async (value) => {
         this.plugin.settings.taskAgentGlobalOutputAllowlist = value;
         await this.plugin.saveSettings();
@@ -31099,21 +31003,21 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
       text.inputEl.rows = 3;
       text.inputEl.setCssProps({ width: "100%" });
     });
-    new import_obsidian33.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
+    new import_obsidian34.Setting(containerEl).setName("Install missing default task-agent files").setDesc("Creates README + sample agents when missing. Does not overwrite edits.").addButton(
       (btn) => btn.setButtonText("Install missing").onClick(async () => {
         try {
           await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
           this.plugin.taskAgentRegistry?.invalidate();
-          new import_obsidian33.Notice("Task-agent defaults installed where missing.");
+          new import_obsidian34.Notice("Task-agent defaults installed where missing.");
           this.display();
         } catch (e) {
-          new import_obsidian33.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+          new import_obsidian34.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
         }
       })
     );
     const taskAgentToggleHost = containerEl.createDiv("osint-copilot-task-agent-toggles");
     void this.populateTaskAgentToggleSettings(taskAgentToggleHost);
-    new import_obsidian33.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
+    new import_obsidian34.Setting(containerEl).setName("Conversation history folder").setDesc("Directory where chat conversations will be saved").addText(
       (text) => text.setPlaceholder(DEFAULT_CONVERSATION_FOLDER).setValue(this.plugin.settings.conversationFolder).onChange(async (value) => {
         const folder = value.trim() || DEFAULT_CONVERSATION_FOLDER;
         this.plugin.settings.conversationFolder = folder;
@@ -31122,7 +31026,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.conversationService.initialize();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Unified chat agent").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Unified chat agent").setHeading();
     containerEl.createEl("p", {
       text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
       cls: "setting-item-description"
@@ -31130,7 +31034,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     const selectedRuntimeId = this.plugin.settings.agentRuntimeProvider;
     const selectedCustomRuntime = (this.plugin.settings.customAgentRuntimes || []).find((rt) => rt.id === selectedRuntimeId);
     const visibility = runtimeSettingsVisibility(selectedRuntimeId);
-    new import_obsidian33.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown((dd) => {
+    new import_obsidian34.Setting(containerEl).setName("Agent runtime").setDesc("Default runtime for unified chat turns.").addDropdown((dd) => {
       const options = getConfiguredRuntimeOptions(this.plugin);
       for (const option of options)
         dd.addOption(option.id, option.displayName);
@@ -31143,26 +31047,26 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
       });
     });
     if (visibility.showHermesSettings) {
-      new import_obsidian33.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
+      new import_obsidian34.Setting(containerEl).setName("Hermes CLI path").setDesc("Executable for Hermes Agent (built-in runtime).").addText(
         (text) => text.setPlaceholder("hermes").setValue(this.plugin.settings.hermesAgentCliPath).onChange(async (value) => {
           this.plugin.settings.hermesAgentCliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
+      new import_obsidian34.Setting(containerEl).setName("Hermes extra CLI args").setDesc("Whitespace-separated argv after the executable (e.g. a subcommand your CLI requires). Prompt is sent on stdin.").addText(
         (text) => text.setPlaceholder("").setValue(this.plugin.settings.hermesAgentExtraArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentExtraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
+      new import_obsidian34.Setting(containerEl).setName("Hermes request timeout (ms)").addText(
         (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.hermesAgentTimeoutMs)).setValue(String(this.plugin.settings.hermesAgentTimeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           this.plugin.settings.hermesAgentTimeoutMs = Number.isFinite(n) && n >= 5e3 ? n : DEFAULT_SETTINGS.hermesAgentTimeoutMs;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
+      new import_obsidian34.Setting(containerEl).setName("Hermes health-check args").setDesc("Whitespace-separated argv used only by \u201CTest agent runtime\u201D (e.g. --version).").addText(
         (text) => text.setPlaceholder("--version").setValue(this.plugin.settings.hermesAgentHealthCheckArgs).onChange(async (value) => {
           this.plugin.settings.hermesAgentHealthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
@@ -31174,36 +31078,36 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         text: "Claude runtime selected. Claude CLI/model and extraction diagnostics are configured in the \u201CGraph extraction (Claude Code)\u201D section below.",
         cls: "setting-item-description"
       });
-      new import_obsidian33.Setting(containerEl).setName("Claude runtime quick view").setDesc(
+      new import_obsidian34.Setting(containerEl).setName("Claude runtime quick view").setDesc(
         `CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`
       );
     }
-    new import_obsidian33.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
+    new import_obsidian34.Setting(containerEl).setName("Test agent runtime").setDesc("Checks reachability for the currently selected runtime.").addButton(
       (btn) => btn.setButtonText("Test connection").onClick(async () => {
         btn.setButtonText("Testing...");
         btn.setDisabled(true);
         try {
           const provider = createAgentProvider(this.plugin);
           const ok = await provider.healthCheck();
-          new import_obsidian33.Notice(
+          new import_obsidian34.Notice(
             ok ? `${this.runtimeLabel(provider.id)} CLI is reachable.` : "CLI not reachable. Check path and health-check args."
           );
         } catch (e) {
-          new import_obsidian33.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
+          new import_obsidian34.Notice("Error: " + (e instanceof Error ? e.message : String(e)));
         }
         btn.setButtonText("Test connection");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Custom runtimes").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Custom runtimes").setHeading();
     containerEl.createEl("p", {
       text: "Manage Hermes-compatible local CLIs. Edit fields appear only when a custom runtime is selected as Agent runtime.",
       cls: "setting-item-description"
     });
-    new import_obsidian33.Setting(containerEl).setName("Configured custom runtimes").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Configured custom runtimes").setDesc(
       this.plugin.settings.customAgentRuntimes.length > 0 ? this.plugin.settings.customAgentRuntimes.map((rt) => `${rt.displayName} (${rt.id})`).join(", ") : "No custom runtime configured yet."
     );
-    new import_obsidian33.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
+    new import_obsidian34.Setting(containerEl).setName("Add custom runtime").setDesc("Creates a new runtime profile (Hermes-compatible stdin/stdout contract).").addButton(
       (btn) => btn.setButtonText("Add runtime").onClick(async () => {
         const next = this.createDefaultCustomRuntime(this.plugin.settings.customAgentRuntimes.length + 1);
         this.plugin.settings.customAgentRuntimes.push(next);
@@ -31214,7 +31118,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     if (visibility.showSelectedCustomSettings && selectedCustomRuntime) {
       const i = this.plugin.settings.customAgentRuntimes.findIndex((rt2) => rt2.id === selectedCustomRuntime.id);
       const rt = selectedCustomRuntime;
-      new import_obsidian33.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
+      new import_obsidian34.Setting(containerEl).setName(`Selected custom runtime: ${rt.displayName}`).setDesc(rt.id).addButton(
         (btn) => btn.setButtonText("Remove selected").setWarning().onClick(async () => {
           if (i < 0)
             return;
@@ -31227,13 +31131,13 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Display name").addText(
+      new import_obsidian34.Setting(containerEl).setName("Display name").addText(
         (text) => text.setValue(rt.displayName).onChange(async (value) => {
           rt.displayName = value.trim() || `Custom ${i + 1}`;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
+      new import_obsidian34.Setting(containerEl).setName("Runtime id").setDesc("Stored as custom:<id>. Lowercase letters, numbers, _ and -.").addText(
         (text) => text.setValue(rt.id.replace(/^custom:/, "")).onChange(async (value) => {
           const nextId = this.uniqueCustomRuntimeId(value, rt.id);
           const prevId = rt.id;
@@ -31245,7 +31149,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Enabled").addToggle(
+      new import_obsidian34.Setting(containerEl).setName("Enabled").addToggle(
         (toggle) => toggle.setValue(rt.enabled).onChange(async (value) => {
           rt.enabled = value;
           if (!value && this.plugin.settings.agentRuntimeProvider === rt.id) {
@@ -31255,50 +31159,50 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
           this.display();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("CLI path").addText(
+      new import_obsidian34.Setting(containerEl).setName("CLI path").addText(
         (text) => text.setValue(rt.cliPath).onChange(async (value) => {
           rt.cliPath = value.trim() || "hermes";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Extra CLI args").addText(
+      new import_obsidian34.Setting(containerEl).setName("Extra CLI args").addText(
         (text) => text.setValue(rt.extraArgs).onChange(async (value) => {
           rt.extraArgs = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Request timeout (ms)").addText(
+      new import_obsidian34.Setting(containerEl).setName("Request timeout (ms)").addText(
         (text) => text.setValue(String(rt.timeoutMs)).onChange(async (value) => {
           const n = parseInt(value.trim(), 10);
           rt.timeoutMs = Number.isFinite(n) && n >= 5e3 ? n : 12e4;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian33.Setting(containerEl).setName("Health-check args").addText(
+      new import_obsidian34.Setting(containerEl).setName("Health-check args").addText(
         (text) => text.setValue(rt.healthCheckArgs).onChange(async (value) => {
           rt.healthCheckArgs = value.trim() || "--version";
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian33.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
     containerEl.createEl("p", {
       text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
       cls: "setting-item-description"
     });
-    new import_obsidian33.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
+    new import_obsidian34.Setting(containerEl).setName("Claude CLI path").setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.").addText(
       (text) => text.setPlaceholder("claude").setValue(this.plugin.settings.claudeCodeCliPath).onChange(async (value) => {
         this.plugin.settings.claudeCodeCliPath = value || "claude";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
+    new import_obsidian34.Setting(containerEl).setName("Claude model").setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).").addText(
       (text) => text.setPlaceholder("sonnet").setValue(this.plugin.settings.claudeCodeModel).onChange(async (value) => {
         this.plugin.settings.claudeCodeModel = value || "sonnet";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Claude Code extra CLI args").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Claude Code extra CLI args").setDesc(
       "Whitespace-separated flags appended after --max-turns for every Claude Code invocation (chat, extraction, skills). Example: --permission-mode bypassPermissions (disables interactive Bash approval \u2014 dangerous: the model may run shell without prompts). Prefer vault enricher JSON + enricher_invocations in the agent JSON for HTTP APIs instead of curl."
     ).addText(
       (text) => text.setPlaceholder("").setValue(this.plugin.settings.claudeCodeExtraArgs).onChange(async (value) => {
@@ -31306,7 +31210,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Claude Code timeout (ms)").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Claude Code timeout (ms)").setDesc(
       "How long to wait for a single Claude Code CLI call (chat turns, extraction, skills) before it's killed. Raise this for large attachments or the opus model, which can take several minutes."
     ).addText(
       (text) => text.setValue(String(this.plugin.settings.claudeCodeTimeoutMs)).onChange(async (value) => {
@@ -31315,19 +31219,27 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
+    new import_obsidian34.Setting(containerEl).setName("pdftotext path").setDesc(
+      "Full path to the pdftotext binary (poppler-utils), used for local PDF attachment extraction. Leave blank to auto-detect common install locations. Set this if PDF extraction fails with 'spawn pdftotext ENOENT' even though poppler-utils is installed \u2014 GUI apps sometimes launch with a PATH that doesn't include it. Run 'which pdftotext' in the terminal/session Obsidian was launched from to find the right value."
+    ).addText(
+      (text) => text.setPlaceholder("/usr/bin/pdftotext").setValue(this.plugin.settings.pdftotextPath).onChange(async (value) => {
+        this.plugin.settings.pdftotextPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian34.Setting(containerEl).setName("Extraction log verbosity").setDesc("How much Claude extraction detail is shown in chat while processing attachments.").addDropdown(
       (dd) => dd.addOption("minimal", "Minimal (milestones)").addOption("detailed", "Detailed (stages + snippets)").setValue(this.plugin.settings.extractionLogVerbosity).onChange(async (value) => {
         this.plugin.settings.extractionLogVerbosity = value === "minimal" ? "minimal" : "detailed";
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
+    new import_obsidian34.Setting(containerEl).setName("Extraction debug: raw CLI output").setDesc("Include raw stdout/stderr in extraction logs. Warning: may expose sensitive content.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.extractionDebugRawCli).onChange(async (value) => {
         this.plugin.settings.extractionDebugRawCli = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Test Claude CLI (extraction)").setDesc(
       "Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr."
     ).addButton(
       (btn) => btn.setButtonText("Test Claude binary").onClick(async () => {
@@ -31345,28 +31257,28 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
           });
           const ok = await svc.isAvailable();
           if (!ok) {
-            new import_obsidian33.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
+            new import_obsidian34.Notice("Claude CLI not found. Check the path and PATH.", 8e3);
             btn.setButtonText("Test Claude binary");
             btn.setDisabled(false);
             return;
           }
           await svc.chat("", "Reply with exactly the single word: OK", void 0, void 0, 1);
-          new import_obsidian33.Notice("Claude CLI is available and responded to a test request.", 6e3);
+          new import_obsidian34.Notice("Claude CLI is available and responded to a test request.", 6e3);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          new import_obsidian33.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
+          new import_obsidian34.Notice(msg.length > 2e3 ? msg.slice(0, 2e3) + "\u2026" : msg, 12e3);
         }
         btn.setButtonText("Test Claude binary");
         btn.setDisabled(false);
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Graph view").setHeading();
-    new import_obsidian33.Setting(containerEl).setName("Schema families in type pickers").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("Graph view").setHeading();
+    new import_obsidian34.Setting(containerEl).setName("Schema families in type pickers").setDesc(
       "Filter which definitions appear when creating entities and connections: FTM (bundled), STIX 2 and MITRE vault YAML under your entity folder, and optional user YAML in schemas/user/."
     );
     const fam = this.plugin.settings.enabledSchemaFamilies;
     const addFamToggle = (key, name) => {
-      new import_obsidian33.Setting(containerEl).setName(name).addToggle(
+      new import_obsidian34.Setting(containerEl).setName(name).addToggle(
         (toggle) => toggle.setValue(fam[key]).onChange(async (value) => {
           fam[key] = value;
           await this.plugin.saveSettings();
@@ -31377,12 +31289,12 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     addFamToggle("stix2", "STIX 2 (vault YAML)");
     addFamToggle("mitre", "MITRE ATT&CK (vault YAML)");
     addFamToggle("user", "User YAML (schemas/user)");
-    new import_obsidian33.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
+    new import_obsidian34.Setting(containerEl).setName("OIDSF bundled schema layers (type pickers)").setDesc(
       "Filter the bundled ontology (OIDSF) in FTM pickers: World (default entities), Links (relationship/interval types), Cyber (STIX-aligned), Analysis (claims/ACH/etc.). Graph still resolves any type already in the vault."
     );
     const layers = this.plugin.settings.oidsfModalLayers;
     const addLayerToggle = (key, caption) => {
-      new import_obsidian33.Setting(containerEl).setName(caption).addToggle(
+      new import_obsidian34.Setting(containerEl).setName(caption).addToggle(
         (toggle) => toggle.setValue(layers[key]).onChange(async (value) => {
           layers[key] = value;
           await this.plugin.saveSettings();
@@ -31393,13 +31305,13 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
     addLayerToggle("links", "Links (relationship / interval types)");
     addLayerToggle("cyber", "Cyber (STIX / CTI-aligned entities)");
     addLayerToggle("analysis", "Analysis (claims, ACH, evidence chains, \u2026)");
-    new import_obsidian33.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
+    new import_obsidian34.Setting(containerEl).setName("Auto-refresh graph view").setDesc("Automatically refresh the graph view when new entities are created through AI generation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoRefreshGraph).onChange(async (value) => {
         this.plugin.settings.autoRefreshGraph = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian33.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
+    new import_obsidian34.Setting(containerEl).setName("Auto-open graph view").setDesc("Automatically open the graph view when entities are created (if not already open)").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoOpenGraphOnEntityCreation).onChange(async (value) => {
         this.plugin.settings.autoOpenGraphOnEntityCreation = value;
         await this.plugin.saveSettings();
@@ -31424,7 +31336,7 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
       }
       for (const a of list) {
         const runnable = isTaskAgentRunnable(a, this.plugin.settings);
-        new import_obsidian33.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
+        new import_obsidian34.Setting(host).setName(a.name).setDesc(`${a.description || a.id} \u2014 output: ${a.outputRoots.join(", ")}`).addToggle((t) => {
           t.setValue(runnable);
           t.onChange(async (v) => {
             if (v) {
@@ -31450,8 +31362,8 @@ var VaultAISettingTab = class extends import_obsidian33.PluginSettingTab {
 };
 
 // src/modals/ask-modal.ts
-var import_obsidian34 = require("obsidian");
-var AskModal = class extends import_obsidian34.Modal {
+var import_obsidian35 = require("obsidian");
+var AskModal = class extends import_obsidian35.Modal {
   constructor(app, host) {
     super(app);
     this.host = host;
@@ -31479,7 +31391,7 @@ var AskModal = class extends import_obsidian34.Modal {
   async handleAsk() {
     const query = this.queryInput.value.trim();
     if (!query) {
-      new import_obsidian34.Notice("Please enter a question.");
+      new import_obsidian35.Notice("Please enter a question.");
       return;
     }
     this.answerContainer.empty();
@@ -31495,7 +31407,7 @@ var AskModal = class extends import_obsidian34.Modal {
       });
       copyButton.addEventListener("click", () => {
         void navigator.clipboard.writeText(result.answer);
-        new import_obsidian34.Notice("Answer copied to clipboard.");
+        new import_obsidian35.Notice("Answer copied to clipboard.");
       });
       if (result.notes.length > 0) {
         this.notesContainer.innerHTML = "";
@@ -31506,7 +31418,7 @@ var AskModal = class extends import_obsidian34.Modal {
           noteItem.addEventListener("click", () => {
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian34.TFile) {
+              if (file instanceof import_obsidian35.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
                 this.close();
               }
@@ -31530,11 +31442,11 @@ var AskModal = class extends import_obsidian34.Modal {
 };
 
 // src/views/chat-view.ts
-var import_obsidian37 = require("obsidian");
+var import_obsidian38 = require("obsidian");
 
 // src/modals/rename-conversation-modal.ts
-var import_obsidian35 = require("obsidian");
-var RenameConversationModal = class extends import_obsidian35.Modal {
+var import_obsidian36 = require("obsidian");
+var RenameConversationModal = class extends import_obsidian36.Modal {
   constructor(app, currentTitle, onSubmit) {
     super(app);
     this.currentTitle = currentTitle;
@@ -31594,7 +31506,7 @@ var RenameConversationModal = class extends import_obsidian35.Modal {
 };
 
 // src/ui/vault-op-previews.ts
-var import_obsidian36 = require("obsidian");
+var import_obsidian37 = require("obsidian");
 
 // node_modules/diff/libesm/diff/base.js
 var Diff = class {
@@ -31930,7 +31842,7 @@ async function appendVaultOpPreviewBlock(plugin, parent, op) {
     try {
       const path = resolveScriptFilePath(plugin, op.relativePath);
       const f = plugin.app.vault.getAbstractFileByPath(path);
-      if (f instanceof import_obsidian36.TFile) {
+      if (f instanceof import_obsidian37.TFile) {
         current = await plugin.app.vault.cachedRead(f);
       }
     } catch {
@@ -31975,7 +31887,7 @@ ${op.body}`;
 
 // src/views/chat-view.ts
 var CHAT_VIEW_TYPE = "vault-ai-chat-view";
-var _ChatView = class _ChatView extends import_obsidian37.ItemView {
+var _ChatView = class _ChatView extends import_obsidian38.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.chatHistory = [];
@@ -32083,7 +31995,7 @@ ${ev.details}`;
     if (fallback && fallback !== cur) {
       this.plugin.settings.agentRuntimeProvider = fallback;
       await this.plugin.saveSettings();
-      new import_obsidian37.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
+      new import_obsidian38.Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
   buildRuntimeHeaderRow(buttonGroup, av) {
@@ -32108,7 +32020,7 @@ ${ev.details}`;
       });
       return;
     }
-    new import_obsidian37.Setting(wrap).setName("Runtime").addDropdown((dd) => {
+    new import_obsidian38.Setting(wrap).setName("Runtime").addDropdown((dd) => {
       for (const rt of available) {
         dd.addOption(rt.id, rt.displayName);
       }
@@ -32368,18 +32280,18 @@ ${ev.details}`;
           "files =",
           draggable.files?.length
         );
-        if (draggable.file instanceof import_obsidian37.TFolder) {
+        if (draggable.file instanceof import_obsidian38.TFolder) {
           await this.handleDroppedFolder(draggable.file);
           handled = true;
-        } else if (draggable.file instanceof import_obsidian37.TFile) {
+        } else if (draggable.file instanceof import_obsidian38.TFile) {
           await this.handleDroppedAbstractFile(draggable.file);
           handled = true;
         }
         if (!handled && Array.isArray(draggable.files) && draggable.files.length > 0) {
           for (const f of draggable.files) {
-            if (f instanceof import_obsidian37.TFolder)
+            if (f instanceof import_obsidian38.TFolder)
               await this.handleDroppedFolder(f);
-            else if (f instanceof import_obsidian37.TFile)
+            else if (f instanceof import_obsidian38.TFile)
               await this.handleDroppedAbstractFile(f);
           }
           handled = true;
@@ -32388,10 +32300,10 @@ ${ev.details}`;
           const info = draggable.info;
           if (typeof info === "string") {
             const resolved = this.app.vault.getAbstractFileByPath(info);
-            if (resolved instanceof import_obsidian37.TFolder) {
+            if (resolved instanceof import_obsidian38.TFolder) {
               await this.handleDroppedFolder(resolved);
               handled = true;
-            } else if (resolved instanceof import_obsidian37.TFile) {
+            } else if (resolved instanceof import_obsidian38.TFile) {
               await this.handleDroppedAbstractFile(resolved);
               handled = true;
             }
@@ -32402,10 +32314,10 @@ ${ev.details}`;
         const data = e.dataTransfer.getData("text/plain");
         if (data) {
           const abstractFile = this.app.vault.getAbstractFileByPath(data);
-          if (abstractFile instanceof import_obsidian37.TFolder) {
+          if (abstractFile instanceof import_obsidian38.TFolder) {
             await this.handleDroppedFolder(abstractFile);
             handled = true;
-          } else if (abstractFile instanceof import_obsidian37.TFile) {
+          } else if (abstractFile instanceof import_obsidian38.TFile) {
             await this.handleDroppedAbstractFile(abstractFile);
             handled = true;
           }
@@ -32548,7 +32460,7 @@ ${ev.details}`;
         const displayUrl = url;
         this.chatHistory.push({ role: "user", content: `\u{1F517} ${displayUrl}` });
         await this.renderMessages();
-        new import_obsidian37.Notice(`Extracted content from URL. Processing entities...`);
+        new import_obsidian38.Notice(`Extracted content from URL. Processing entities...`);
         await this.handleGraphOnlyMode(extractedText);
         await this.saveCurrentConversation();
       } catch (error) {
@@ -32592,12 +32504,12 @@ ${ev.details}`;
     target.value = "";
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian37.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian38.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian37.Notice(`Attached: ${file.name}`);
+    new import_obsidian38.Notice(`Attached: ${file.name}`);
   }
   static isImageFile(name) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -32608,12 +32520,12 @@ ${ev.details}`;
       return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian37.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
+      new import_obsidian38.Notice(`File type .${ext} not supported. Use images (.jpg, .png, etc.) or documents (.pdf, .docx, .txt)`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian37.Notice(`Attached: ${file.name}`);
+    new import_obsidian38.Notice(`Attached: ${file.name}`);
   }
   getVaultAbsolutePath() {
     const adapter = this.app.vault.adapter;
@@ -32627,12 +32539,12 @@ ${ev.details}`;
       return;
     const ext = (file.extension || "").toLowerCase();
     if (!_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
-      new import_obsidian37.Notice(`File type .${ext} not supported. Use images or documents.`);
+      new import_obsidian38.Notice(`File type .${ext} not supported. Use images or documents.`);
       return;
     }
     this.attachedFiles.push({ file, extracted: false });
     this.renderAttachments();
-    new import_obsidian37.Notice(`Attached: ${file.name}`);
+    new import_obsidian38.Notice(`Attached: ${file.name}`);
   }
   /**
    * Handle a dropped folder — recursively collect all allowed files and attach them.
@@ -32642,24 +32554,24 @@ ${ev.details}`;
       return;
     const files = this.collectFilesFromFolder(folder);
     if (files.length === 0) {
-      new import_obsidian37.Notice(`No supported files found in folder "${folder.name}"`);
+      new import_obsidian38.Notice(`No supported files found in folder "${folder.name}"`);
       return;
     }
     for (const file of files) {
       this.attachedFiles.push({ file, extracted: false });
     }
     this.renderAttachments();
-    new import_obsidian37.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
+    new import_obsidian38.Notice(`Attached ${files.length} file${files.length > 1 ? "s" : ""} from folder "${folder.name}"`);
   }
   collectFilesFromFolder(folder) {
     const results = [];
     for (const child of folder.children) {
-      if (child instanceof import_obsidian37.TFile) {
+      if (child instanceof import_obsidian38.TFile) {
         const ext = (child.extension || "").toLowerCase();
         if (_ChatView.ALLOWED_EXTENSIONS.has(ext)) {
           results.push(child);
         }
-      } else if (child instanceof import_obsidian37.TFolder) {
+      } else if (child instanceof import_obsidian38.TFolder) {
         results.push(...this.collectFilesFromFolder(child));
       }
     }
@@ -32723,19 +32635,19 @@ ${ev.details}`;
       const originalPlaceholder = this.inputEl.placeholder;
       this.inputEl.placeholder = "Extracting text from URL...";
       this.inputEl.disabled = true;
-      new import_obsidian37.Notice(`Extracting text from URL: ${url}...`);
+      new import_obsidian38.Notice(`Extracting text from URL: ${url}...`);
       const text = await this.plugin.graphApiService.extractTextFromUrl(url);
       this.inputEl.value = text;
-      new import_obsidian37.Notice(`Text extracted from URL`);
+      new import_obsidian38.Notice(`Text extracted from URL`);
       return true;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (isLikelyExpectedUrlFetchFailure(msg)) {
         console.debug("URL extraction skipped:", msg.slice(0, 120));
-        new import_obsidian37.Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
+        new import_obsidian38.Notice("Could not open this link from Obsidian. Paste the page text into the chat instead.");
       } else {
         console.error("URL extraction error:", error);
-        new import_obsidian37.Notice(`Error extracting URL: ${msg}`);
+        new import_obsidian38.Notice(`Error extracting URL: ${msg}`);
       }
       return false;
     } finally {
@@ -32750,7 +32662,7 @@ ${ev.details}`;
   // Show notice when entering Graph only Mode
   checkGraphOnlyMode() {
     if (this.isGraphOnlyMode()) {
-      new import_obsidian37.Notice("Graph only mode - enter text to extract entities");
+      new import_obsidian38.Notice("Graph only mode - enter text to extract entities");
     }
   }
   // Get the appropriate input placeholder based on current mode
@@ -32922,7 +32834,7 @@ ${ev.details}`;
       this.plugin.conversationService.setCurrentConversationId(id);
       await this.render();
     } else {
-      new import_obsidian37.Notice("Failed to load conversation");
+      new import_obsidian38.Notice("Failed to load conversation");
     }
   }
   async startNewConversation() {
@@ -32935,7 +32847,7 @@ ${ev.details}`;
     this.selectedTaskAgentId = this.plugin.settings.preferredTaskAgentId ?? "";
     this.plugin.conversationService.setCurrentConversationId(null);
     await this.render();
-    new import_obsidian37.Notice("Started new conversation");
+    new import_obsidian38.Notice("Started new conversation");
   }
   async deleteConversation(id) {
     new ConfirmModal(
@@ -32951,9 +32863,9 @@ ${ev.details}`;
         this.renderConversationList();
         await this.renderMessages();
         if (success) {
-          new import_obsidian37.Notice("Conversation deleted");
+          new import_obsidian38.Notice("Conversation deleted");
         } else {
-          new import_obsidian37.Notice("Failed to delete conversation");
+          new import_obsidian38.Notice("Failed to delete conversation");
         }
       },
       void 0,
@@ -32971,7 +32883,7 @@ ${ev.details}`;
           }
           await this.plugin.conversationService.loadConversationList();
           this.renderConversationList();
-          new import_obsidian37.Notice("Conversation renamed");
+          new import_obsidian38.Notice("Conversation renamed");
         }
       })();
     }).open();
@@ -32995,7 +32907,7 @@ ${ev.details}`;
         text: item.role === "user" ? "You: " : "AI: "
       });
       const contentDiv = messageDiv.createDiv("vault-ai-chat-content");
-      await import_obsidian37.MarkdownRenderer.render(
+      await import_obsidian38.MarkdownRenderer.render(
         this.app,
         item.content,
         contentDiv,
@@ -33122,7 +33034,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(note.path);
-              if (file instanceof import_obsidian37.TFile) {
+              if (file instanceof import_obsidian38.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -33172,10 +33084,10 @@ ${ev.details}`;
             if (fullEntity.filePath) {
               void (async () => {
                 const file = this.app.vault.getAbstractFileByPath(fullEntity.filePath);
-                if (file instanceof import_obsidian37.TFile) {
+                if (file instanceof import_obsidian38.TFile) {
                   await this.app.workspace.getLeaf().openFile(file);
                 } else {
-                  new import_obsidian37.Notice("Linked note file not found");
+                  new import_obsidian38.Notice("Linked note file not found");
                 }
               })();
             }
@@ -33238,7 +33150,7 @@ ${ev.details}`;
             e.preventDefault();
             void (async () => {
               const file = this.app.vault.getAbstractFileByPath(entity.filePath);
-              if (file instanceof import_obsidian37.TFile) {
+              if (file instanceof import_obsidian38.TFile) {
                 await this.app.workspace.getLeaf().openFile(file);
               }
             })();
@@ -33466,11 +33378,11 @@ ${ev.details}`;
           e.preventDefault();
           void (async () => {
             const file = this.app.vault.getAbstractFileByPath(item.reportFilePath);
-            if (file instanceof import_obsidian37.TFile) {
+            if (file instanceof import_obsidian38.TFile) {
               await this.app.workspace.getLeaf().openFile(file);
-              new import_obsidian37.Notice(`Opened report: ${item.reportFilePath}`);
+              new import_obsidian38.Notice(`Opened report: ${item.reportFilePath}`);
             } else {
-              new import_obsidian37.Notice(`Companies&People file not found: ${item.reportFilePath}`);
+              new import_obsidian38.Notice(`Companies&People file not found: ${item.reportFilePath}`);
             }
           })();
         });
@@ -33572,7 +33484,7 @@ ${ev.details}`;
           text: `Applied to graph (${vaultLive.length}) \u2014 one line per entity or link`
         }).style.marginBottom = "8px";
         const mdBox = ingestPreview.createDiv();
-        void import_obsidian37.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
+        void import_obsidian38.MarkdownRenderer.render(this.app, vaultLive.join("\n\n"), mdBox, "", this);
       } else if (vaultPreviewCmds && vaultPreviewCmds.length > 0) {
         const ingestPreview = existingIngestPreview || (() => {
           const el = document.createElement("div");
@@ -33790,7 +33702,7 @@ ${ev.details}`;
           item.multiProgress[display] = { message: "Cancelled by user", percent: 100 };
         }
         this.updateMultiProgressBar(messageIndex, display, { message: "Cancelled by user", percent: 100 });
-        new import_obsidian37.Notice("Task cancelled");
+        new import_obsidian38.Notice("Task cancelled");
       },
       () => {
       },
@@ -33821,7 +33733,7 @@ ${ev.details}`;
           hist.multiProgress = void 0;
           this.renderMessages();
         }
-        new import_obsidian37.Notice("Operation cancelled");
+        new import_obsidian38.Notice("Operation cancelled");
       },
       () => {
       },
@@ -33843,7 +33755,7 @@ ${ev.details}`;
     }
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
     if (sendRuntimeAvailability.availableIds.length === 0) {
-      new import_obsidian37.Notice(
+      new import_obsidian38.Notice(
         "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8e3
       );
@@ -33902,21 +33814,18 @@ ${ev.details}`;
             text = attachment.content;
           } else if (isImage) {
             let absolutePath;
-            if (attachment.file instanceof import_obsidian37.TFile) {
+            if (attachment.file instanceof import_obsidian38.TFile) {
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
-              const evidencePath = (0, import_obsidian37.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
-              const folder = this.app.vault.getAbstractFileByPath(evidencePath);
-              if (!folder) {
-                await this.app.vault.createFolder(evidencePath);
-              }
+              const evidencePath = (0, import_obsidian38.normalizePath)(`${this.plugin.entityManager.getBasePath()}/Evidence`);
+              await ensureFolderExists(this.app, evidencePath);
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, "_");
-              const destPath = (0, import_obsidian37.normalizePath)(`${evidencePath}/${safeName}`);
+              const destPath = (0, import_obsidian38.normalizePath)(`${evidencePath}/${safeName}`);
               const buffer = await attachment.file.arrayBuffer();
               const existing = this.app.vault.getAbstractFileByPath(destPath);
               let tFile;
-              if (existing instanceof import_obsidian37.TFile) {
+              if (existing instanceof import_obsidian38.TFile) {
                 tFile = existing;
               } else {
                 tFile = await this.app.vault.createBinary(destPath, buffer);
@@ -33932,7 +33841,7 @@ ${ev.details}`;
                 rawCli: this.plugin.settings.extractionDebugRawCli
               }
             );
-          } else if (attachment.file instanceof import_obsidian37.TFile) {
+          } else if (attachment.file instanceof import_obsidian38.TFile) {
             const ext = (attachment.file.extension || "").toLowerCase();
             const textExts = ["md", "txt", "csv", "json", "xml", "html", "htm", "log", "yaml", "yml", "toml", "ini"];
             if (textExts.includes(ext)) {
@@ -33966,7 +33875,7 @@ ${text}`);
           } else if (errorStr.includes("not yet supported")) {
             userMessage = `${fileName}: ${errorStr}`;
           }
-          new import_obsidian37.Notice(userMessage, 8e3);
+          new import_obsidian38.Notice(userMessage, 8e3);
         }
       }
       this.activeAbortControllers.delete(extractionMsgIndex);
@@ -34006,9 +33915,9 @@ ${text}`);
 ${fileList}` : fileList;
       }
       if (extractedCount > 0 && failedCount === 0) {
-        new import_obsidian37.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
+        new import_obsidian38.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}`);
       } else if (extractedCount > 0 && failedCount > 0) {
-        new import_obsidian37.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
+        new import_obsidian38.Notice(`Processed ${extractedCount} file${extractedCount > 1 ? "s" : ""}, ${failedCount} failed`);
       }
     }
     this.chatHistory.push({ role: "user", content: displayValue });
@@ -34378,13 +34287,13 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
       } else {
         displayText = String(result);
       }
-      import_obsidian37.MarkdownRenderer.render(this.app, displayText, content, "", this);
+      import_obsidian38.MarkdownRenderer.render(this.app, displayText, content, "", this);
       if (tool === "VAULT_GRAPH_INGEST" && item.vaultIngestLiveLog && item.vaultIngestLiveLog.length > 0) {
         content.createEl("hr");
         content.createEl("strong", { text: "Applied to graph (during ingest):" });
         const logDiv = content.createDiv();
         logDiv.style.marginTop = "8px";
-        void import_obsidian37.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
+        void import_obsidian38.MarkdownRenderer.render(this.app, item.vaultIngestLiveLog.join("\n\n"), logDiv, "", this);
       }
       details.appendChild(summary);
       details.appendChild(content);
@@ -34447,12 +34356,12 @@ ${r.snippet || r.content || ""}` : JSON.stringify(r, null, 2);
     try {
       const { applied, errors } = await applyCustomVaultOperations(this.plugin, ops);
       if (errors.length) {
-        new import_obsidian37.Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8e3);
+        new import_obsidian38.Notice(`Applied ${applied} change(s). Errors: ${errors.join("; ")}`, 8e3);
       } else {
-        new import_obsidian37.Notice(`Applied ${applied} vault change(s).`);
+        new import_obsidian38.Notice(`Applied ${applied} vault change(s).`);
       }
     } catch (e) {
-      new import_obsidian37.Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+      new import_obsidian38.Notice(`Vault apply failed: ${e instanceof Error ? e.message : String(e)}`, 8e3);
     }
     item.proposedCustomVaultOps = void 0;
     await this.renderMessages();
@@ -34612,7 +34521,7 @@ Please review and apply the changes below:`;
 **Error:** ${errorMsg}`;
         await this.renderMessages();
       }
-      new import_obsidian37.Notice(`Graph generation failed: ${errorMsg}`);
+      new import_obsidian38.Notice(`Graph generation failed: ${errorMsg}`);
     }
   }
   async handleNormalChat(query) {
@@ -34729,7 +34638,7 @@ Drafting the answer...
           updateProgress("Streaming response...", Math.min(95, streamProgress));
         }
         if (contentEl) {
-          import_obsidian37.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
+          import_obsidian38.MarkdownRenderer.renderMarkdown(streamed, contentEl, "", this.plugin);
           const scrollContainer = this.messagesContainer.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -35145,7 +35054,7 @@ _ChatView.ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([
 var ChatView = _ChatView;
 
 // src/plugin/osint-workspace-controller.ts
-var import_obsidian38 = require("obsidian");
+var import_obsidian39 = require("obsidian");
 var OsintWorkspaceController = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -35189,7 +35098,7 @@ var OsintWorkspaceController = class {
    */
   async openGraphView(forceNew = false) {
     if (!this.plugin.settings.enableGraphFeatures) {
-      new import_obsidian38.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
+      new import_obsidian39.Notice("Graph features are disabled. Enable them in settings \u2192 osint copilot \u2192 enable graph features", 5e3);
       console.warn("[VaultAIPlugin] Attempted to open graph view but graph features are disabled");
       return;
     }
@@ -35234,7 +35143,7 @@ var OsintWorkspaceController = class {
         console.debug("[OSINT Copilot] Refreshing graph view with new entities...");
         await graphView.refreshWithSavedPositions();
         if (!options?.silent) {
-          new import_obsidian38.Notice("Graph view updated with new entities");
+          new import_obsidian39.Notice("Graph view updated with new entities");
         }
       }
     }
@@ -35286,7 +35195,7 @@ var OsintWorkspaceController = class {
       if (this.plugin.settings.autoOpenGraphOnEntityCreation) {
         console.debug("[OSINT Copilot] Auto-opening graph view with new entities...");
         await this.openGraphView();
-        new import_obsidian38.Notice("Graph view opened with new entities");
+        new import_obsidian39.Notice("Graph view opened with new entities");
       }
     }
   }
@@ -35340,16 +35249,16 @@ var OsintWorkspaceController = class {
   async showEntityOnMap(entityId) {
     const entity = this.plugin.entityManager.getEntity(entityId);
     if (!entity) {
-      new import_obsidian38.Notice("Entity not found");
+      new import_obsidian39.Notice("Entity not found");
       return;
     }
     const mapCapable = entity.type === "Location" /* Location */ || entity.type === "Address" || entityHasMapCoordinates(entity);
     if (!mapCapable) {
-      new import_obsidian38.Notice("Map needs a Location or Address entity, or latitude/longitude on the entity.");
+      new import_obsidian39.Notice("Map needs a Location or Address entity, or latitude/longitude on the entity.");
       return;
     }
     if (!entityHasMapCoordinates(entity)) {
-      new import_obsidian38.Notice("Entity has no coordinates. Add latitude and longitude (e.g. in frontmatter) to show it on the map.");
+      new import_obsidian39.Notice("Entity has no coordinates. Add latitude and longitude (e.g. in frontmatter) to show it on the map.");
       return;
     }
     await this.openMapView();
@@ -35390,7 +35299,7 @@ var OsintWorkspaceController = class {
 // src/plugin/vault-ai-plugin.ts
 var ENTITY_EXTRACTION_MODEL = "claude-code";
 var LOCAL_VAULT_MODEL = "claude-code";
-var VaultAIPlugin = class extends import_obsidian39.Plugin {
+var VaultAIPlugin = class extends import_obsidian40.Plugin {
   constructor() {
     super(...arguments);
     this.index = /* @__PURE__ */ new Map();
@@ -35461,7 +35370,8 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
       customApiKey: "",
       customModel: "",
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
-      claudeCodeModel: this.settings.claudeCodeModel
+      claudeCodeModel: this.settings.claudeCodeModel,
+      pdftotextPath: this.settings.pdftotextPath
     });
     this.vaultPromptLoader = new VaultPromptLoader(
       this.app,
@@ -35491,9 +35401,7 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
     }
     try {
       const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-      if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
-        await this.app.vault.createFolder(enricherRoot);
-      }
+      await ensureFolderExists(this.app, enricherRoot);
     } catch (e) {
       console.warn("OSINTCopilot: enricher folder bootstrap failed:", e);
     }
@@ -35597,21 +35505,21 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
     await this.buildIndex();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian39.TFile) {
+        if (file instanceof import_obsidian40.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian39.TFile) {
+        if (file instanceof import_obsidian40.TFile) {
           void this.indexFile(file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian39.TFile) {
+        if (file instanceof import_obsidian40.TFile) {
           this.index.delete(file.path);
         }
       })
@@ -35625,21 +35533,21 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
       }, 650);
     };
     const isUnderEntitySchemas = (path) => {
-      const base = (0, import_obsidian39.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
-      const prefix = (0, import_obsidian39.normalizePath)(`${base}/schemas`);
-      const p = (0, import_obsidian39.normalizePath)(path);
+      const base = (0, import_obsidian40.normalizePath)(this.settings.entityBasePath.trim() || "OSINTCopilot");
+      const prefix = (0, import_obsidian40.normalizePath)(`${base}/schemas`);
+      const p = (0, import_obsidian40.normalizePath)(path);
       return p === prefix || p.startsWith(`${prefix}/`);
     };
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof import_obsidian39.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian40.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian39.TFile && isUnderEntitySchemas(file.path)) {
+        if (file instanceof import_obsidian40.TFile && isUnderEntitySchemas(file.path)) {
           scheduleSchemaCatalogRebuild();
         }
       })
@@ -35728,10 +35636,10 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
           a.download = `osint-investigation-${timestamp2}.json`;
           a.click();
           URL.revokeObjectURL(url);
-          new import_obsidian39.Notice("Investigation exported successfully");
+          new import_obsidian40.Notice("Investigation exported successfully");
         } catch (error) {
           console.error("[OSINT Copilot] Export failed:", error);
-          new import_obsidian39.Notice("Failed to export investigation");
+          new import_obsidian40.Notice("Failed to export investigation");
         }
       }
     });
@@ -35747,7 +35655,7 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
       name: "Reindex vault",
       callback: () => {
         void this.buildIndex().then(() => {
-          new import_obsidian39.Notice("Vault reindexed successfully.");
+          new import_obsidian40.Notice("Vault reindexed successfully.");
         });
       }
     });
@@ -35756,7 +35664,7 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
       name: "Reload entities from notes",
       callback: () => {
         void this.entityManager.loadEntitiesFromNotes().then(() => {
-          new import_obsidian39.Notice("Entities reloaded from notes.");
+          new import_obsidian40.Notice("Entities reloaded from notes.");
         });
       }
     });
@@ -35774,14 +35682,14 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
         void (async () => {
           try {
             const summary = await this.entityManager.migrateReservedPropertyFrontmatter();
-            new import_obsidian39.Notice(
+            new import_obsidian40.Notice(
               `Frontmatter normalization complete: scanned ${summary.scanned}, fixed ${summary.fixed}, skipped ${summary.skipped}, errors ${summary.errors}.`,
               9e3
             );
             await this.entityManager.loadEntitiesFromNotes();
             await this.refreshOrOpenGraphView();
           } catch (e) {
-            new import_obsidian39.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
+            new import_obsidian40.Notice(`Normalization failed: ${e instanceof Error ? e.message : String(e)}`, 9e3);
           }
         })();
       }
@@ -35795,7 +35703,7 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
         this.skillRegistry?.invalidate();
         this.enricherRegistry?.invalidate();
         this.attachVaultSkillFromVault();
-        new import_obsidian39.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
+        new import_obsidian40.Notice("Vault prompts, skills, enrichers, and task-agent registry refreshed.");
       }
     });
     this.addCommand({
@@ -35808,18 +35716,16 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
             await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
             await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
             const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-            if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
-              await this.app.vault.createFolder(enricherRoot);
-            }
+            await ensureFolderExists(this.app, enricherRoot);
             await ensureCredentialsFolder(this);
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
             this.skillRegistry?.invalidate();
             this.enricherRegistry?.invalidate();
             this.attachVaultSkillFromVault();
-            new import_obsidian39.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
+            new import_obsidian40.Notice("Missing default prompt, skills, enricher, and task-agent folders/files were created (existing files unchanged).");
           } catch (e) {
-            new import_obsidian39.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
+            new import_obsidian40.Notice(`Failed: ${e instanceof Error ? e.message : String(e)}`, 5e3);
           }
         })();
       }
@@ -35858,34 +35764,28 @@ var VaultAIPlugin = class extends import_obsidian39.Plugin {
     }
   }
   async appendEnricherAuditLine(line) {
-    const path = `${this.settings.enrichersFolder}/audit.log.md`;
+    const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+    const path = (0, import_obsidian40.normalizePath)(`${enricherRoot}/audit.log.md`);
     const stamped = `- ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `;
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian39.TFile) {
+    if (existing instanceof import_obsidian40.TFile) {
       const prev = await this.app.vault.read(existing);
       await this.app.vault.modify(existing, prev + stamped);
       return;
     }
-    const parts = path.split("/").slice(0, -1);
-    let current = "";
-    for (const p of parts) {
-      current = current ? `${current}/${p}` : p;
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
-    }
+    await ensureFolderChainForFile(this.app, path);
     await this.app.vault.create(path, "# Enricher audit log\n\n" + stamped);
   }
   async draftHttpEnricherFromUserDetails() {
     const docUrl = (window.prompt("API documentation URL for this enricher:") || "").trim();
     if (!docUrl) {
-      new import_obsidian39.Notice("Cancelled: API documentation URL is required.");
+      new import_obsidian40.Notice("Cancelled: API documentation URL is required.");
       return;
     }
     const details = (window.prompt("What should this enricher search and return? Include required params.") || "").trim();
     if (!details) {
-      new import_obsidian39.Notice("Cancelled: integration details are required.");
+      new import_obsidian40.Notice("Cancelled: integration details are required.");
       return;
     }
     const system = [
@@ -35953,7 +35853,7 @@ ${details}`;
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
     if (!draft) {
-      new import_obsidian39.Notice("Failed to build enricher draft.");
+      new import_obsidian40.Notice("Failed to build enricher draft.");
       return;
     }
     const enricherPath = `${this.settings.enrichersFolder}/${draft.id}.json`;
@@ -35984,27 +35884,17 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       confirmMsg,
       () => {
         void (async () => {
-          const ensureFolder = async (path) => {
-            const parts = path.split("/").slice(0, -1);
-            let current = "";
-            for (const p of parts) {
-              current = current ? `${current}/${p}` : p;
-              if (!this.app.vault.getAbstractFileByPath(current)) {
-                await this.app.vault.createFolder(current);
-              }
-            }
-          };
           try {
-            await ensureFolder(enricherPath);
-            await ensureFolder(skillPath);
+            await ensureFolderChainForFile(this.app, enricherPath);
+            await ensureFolderChainForFile(this.app, skillPath);
             const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
-            if (existingSpec instanceof import_obsidian39.TFile) {
+            if (existingSpec instanceof import_obsidian40.TFile) {
               await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
             } else {
               await this.app.vault.create(enricherPath, JSON.stringify(draft, null, 2));
             }
             const existingSkill = this.app.vault.getAbstractFileByPath(skillPath);
-            if (existingSkill instanceof import_obsidian39.TFile) {
+            if (existingSkill instanceof import_obsidian40.TFile) {
               await this.app.vault.modify(existingSkill, skillMd);
             } else {
               await this.app.vault.create(skillPath, skillMd);
@@ -36012,13 +35902,13 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
             this.enricherRegistry.invalidate();
             this.skillRegistry.invalidate();
             await this.appendEnricherAuditLine(`approved create_or_update id=${draft.id} doc=${docUrl}`);
-            new import_obsidian39.Notice(`Enricher ${draft.name} saved and activated.`);
+            new import_obsidian40.Notice(`Enricher ${draft.name} saved and activated.`);
           } catch (e) {
-            new import_obsidian39.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
+            new import_obsidian40.Notice(`Failed to save enricher: ${e instanceof Error ? e.message : String(e)}`, 8e3);
           }
         })();
       },
-      () => new import_obsidian39.Notice("Enricher draft cancelled."),
+      () => new import_obsidian40.Notice("Enricher draft cancelled."),
       false,
       void 0,
       "Install",
@@ -36032,19 +35922,19 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     const nextRaw = (window.prompt("Set state: active or disabled") || "").trim().toLowerCase();
     const nextStatus = nextRaw === "disabled" ? "disabled" : nextRaw === "active" ? "active" : "";
     if (!nextStatus) {
-      new import_obsidian39.Notice("Cancelled: state must be 'active' or 'disabled'.");
+      new import_obsidian40.Notice("Cancelled: state must be 'active' or 'disabled'.");
       return;
     }
     const path = `${this.settings.enrichersFolder}/${idInput}.json`;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian39.TFile)) {
-      new import_obsidian39.Notice(`Enricher not found: ${path}`);
+    if (!(file instanceof import_obsidian40.TFile)) {
+      new import_obsidian40.Notice(`Enricher not found: ${path}`);
       return;
     }
     const raw = await this.app.vault.read(file);
     const parsed = normalizeEnricherSpec(JSON.parse(raw));
     if (!parsed) {
-      new import_obsidian39.Notice("Invalid enricher spec JSON.");
+      new import_obsidian40.Notice("Invalid enricher spec JSON.");
       return;
     }
     const nextEnabled = nextStatus === "active";
@@ -36061,10 +35951,10 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
           await this.app.vault.modify(file, JSON.stringify(parsed, null, 2));
           this.enricherRegistry.invalidate();
           await this.appendEnricherAuditLine(`approved set_state id=${parsed.id} status=${nextStatus}`);
-          new import_obsidian39.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
+          new import_obsidian40.Notice(`Enricher ${parsed.name} is now ${nextStatus}.`);
         })();
       },
-      () => new import_obsidian39.Notice("State change cancelled.")
+      () => new import_obsidian40.Notice("State change cancelled.")
     ).open();
   }
   onunload() {
@@ -36162,7 +36052,8 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
         customApiKey: "",
         customModel: "",
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
-        claudeCodeModel: this.settings.claudeCodeModel
+        claudeCodeModel: this.settings.claudeCodeModel,
+        pdftotextPath: this.settings.pdftotextPath
       });
       this.initClaudeCodeService();
     }
@@ -36226,7 +36117,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian39.MarkdownView)
+          if (leaf.view instanceof import_obsidian40.MarkdownView)
             update(leaf);
         });
       })
@@ -36243,12 +36134,12 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       })
     );
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (leaf.view instanceof import_obsidian39.MarkdownView)
+      if (leaf.view instanceof import_obsidian40.MarkdownView)
         update(leaf);
     });
   }
   updateVaultLockLeafMode(leaf) {
-    if (!leaf || !(leaf.view instanceof import_obsidian39.MarkdownView))
+    if (!leaf || !(leaf.view instanceof import_obsidian40.MarkdownView))
       return;
     const path = leaf.view.file?.path;
     if (!path || path.endsWith(".canvas"))
@@ -36299,12 +36190,12 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     const btn = document.createElement("div");
     btn.addClass("view-action", "clickable-icon", "osint-copilot-vault-unlock-btn");
     btn.setAttribute("aria-label", "Locked \u2014 click to unlock");
-    (0, import_obsidian39.setIcon)(btn, "lock");
+    (0, import_obsidian40.setIcon)(btn, "lock");
     btn.addEventListener("click", () => {
       new VaultUnlockModal(this.app, () => {
         this.vaultLockService.unlockPath(path);
         this.app.workspace.iterateAllLeaves((leaf) => {
-          if (leaf.view instanceof import_obsidian39.MarkdownView && leaf.view.file?.path === path) {
+          if (leaf.view instanceof import_obsidian40.MarkdownView && leaf.view.file?.path === path) {
             this.updateVaultLockLeafMode(leaf);
           }
         });
@@ -36351,7 +36242,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
    * Rewrites `type` / `ftmSchema` frontmatter under the entity base path from legacy names to OIDSF canonical names.
    */
   async normalizeLegacyOidsfSchemaNamesInVault() {
-    const base = (0, import_obsidian39.normalizePath)(this.settings.entityBasePath);
+    const base = (0, import_obsidian40.normalizePath)(this.settings.entityBasePath);
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(base + "/"));
     let updated = 0;
     for (const file of files) {
@@ -36384,7 +36275,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     if (this.schemaCatalogService) {
       await this.schemaCatalogService.rebuild();
     }
-    new import_obsidian39.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
+    new import_obsidian40.Notice(`OIDSF: normalized schema names in ${updated} note(s). Entities reloaded.`);
   }
   onEntityClick(entityId) {
     void this.entityManager.openEntityNote(entityId);

@@ -1,6 +1,7 @@
 import { App, normalizePath, Notice, TFile } from "obsidian";
 import type { VaultFileEntryV1, VaultFilesV1 } from "./types";
 import { isPathAllowedForWrite } from "./path-allowlist";
+import { ensureFolderChainForFile } from "../utils/vault-bootstrap-fs";
 
 function buildNoteContent(entry: VaultFileEntryV1): string {
 	const fm = (entry.frontmatter || "").trim();
@@ -58,13 +59,7 @@ export async function applyVaultFilesV1(
 			} else if (existing) {
 				result.errors.push(`Path exists and is not a file: ${rel}`);
 			} else {
-				const parent = rel.includes("/") ? rel.substring(0, rel.lastIndexOf("/")) : "";
-				if (parent) {
-					const folder = app.vault.getAbstractFileByPath(parent);
-					if (!folder) {
-						await app.vault.createFolder(parent);
-					}
-				}
+				await ensureFolderChainForFile(app, rel);
 				await app.vault.create(rel, content);
 				result.created.push(rel);
 			}

@@ -60,6 +60,8 @@ export interface ApiSettings {
     customModel: string;
     claudeCodeCliPath?: string;
     claudeCodeModel?: string;
+    /** Explicit override for the pdftotext binary; falls back to auto-detection when unset. */
+    pdftotextPath?: string;
 }
 
 /**
@@ -308,11 +310,15 @@ export class GraphApiService {
      * Resolves the pdftotext binary to run. GUI apps (Obsidian included) are often launched
      * with a PATH that's missing the login shell's additions — most commonly seen when the app
      * is started from a desktop launcher rather than a terminal — so a plain `execFile('pdftotext', ...)`
-     * can fail with ENOENT even though poppler-utils is genuinely installed. Prefer a known
+     * can fail with ENOENT even though poppler-utils is genuinely installed. An explicit setting
+     * always wins (the user knows their own install location best); otherwise prefer a known
      * absolute path if one exists on disk; otherwise fall back to bare `pdftotext` (unchanged
      * behavior for environments where PATH already resolves it, e.g. Windows).
      */
     private resolvePdftotextPath(): string {
+        const override = this.settings?.pdftotextPath?.trim();
+        if (override) return override;
+
         const nodeFs = require('fs') as typeof import('fs');
         const candidates = [
             '/usr/bin/pdftotext',
@@ -352,10 +358,14 @@ export class GraphApiService {
                 }, (error: any, stdout: string, stderr: string) => {
                     if (error) {
                         reject(new Error(
-                            `PDF text extraction failed. Please install poppler-utils:\n` +
+                            `PDF text extraction failed (tried "${pdftotextPath}"). Please install poppler-utils:\n` +
                             `  Ubuntu/Debian: sudo apt install poppler-utils\n` +
                             `  Arch/Manjaro: sudo pacman -S poppler\n` +
                             `  macOS: brew install poppler\n\n` +
+                            `If poppler-utils is already installed but Obsidian can't find it, set ` +
+                            `"pdftotext path" under Settings → Graph extraction (Claude Code) to its ` +
+                            `full path (run 'which pdftotext' in the terminal/session Obsidian was ` +
+                            `launched from to find it).\n\n` +
                             `Error: ${stderr || error.message}`
                         ));
                     } else {

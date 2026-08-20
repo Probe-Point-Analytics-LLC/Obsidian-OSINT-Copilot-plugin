@@ -1,6 +1,7 @@
 import { App, Notice, Vault, normalizePath } from 'obsidian';
 import { ftmSchemaService, FTMSchemaDefinition } from './ftm-schema-service';
 import { CUSTOM_TYPES_CONFIG_DIR, CUSTOM_TYPES_FILE_NAME } from '../constants/vault-layout';
+import { ensureFolderChain } from '../utils/vault-bootstrap-fs';
 
 /** JSON-backed FTM extensions. Non-FTM families use YAML under OSINTCopilot/schemas/ (see schema catalog). */
 
@@ -25,15 +26,7 @@ export class CustomTypesService {
 
     private async ensureConfigDir(): Promise<void> {
         try {
-            const norm = normalizePath(CUSTOM_TYPES_CONFIG_DIR);
-            const parts = norm.split("/").filter(Boolean);
-            let acc = "";
-            for (const p of parts) {
-                acc = acc ? `${acc}/${p}` : p;
-                if (!this.vault.getAbstractFileByPath(acc)) {
-                    await this.vault.createFolder(acc);
-                }
-            }
+            await ensureFolderChain(this.app, normalizePath(CUSTOM_TYPES_CONFIG_DIR));
         } catch (error) {
             console.error('[CustomTypesService] Failed to create config folder:', error);
         }

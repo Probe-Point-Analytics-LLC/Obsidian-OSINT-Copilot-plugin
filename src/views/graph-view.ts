@@ -13,6 +13,7 @@ import {
     type OsintConfidence,
 } from '../entities/types';
 import { EntityManager } from '../services/entity-manager';
+import { ensureFolderExists } from '../utils/vault-bootstrap-fs';
 import { EntityTypeSelectorModal, ConnectionCreationModal, ConnectionQuickModal, EntityEditModal, FTMEntityTypeSelectorModal, FTMEntityEditModal, FTMIntervalTypeSelectorModal, ConnectionEditModal } from '../modals/entity-modal';
 import { ConfirmModal } from '../modals/confirm-modal';
 import { VaultUnlockModal } from '../modals/vault-unlock-modal';
@@ -461,7 +462,7 @@ export class GraphView extends ItemView {
 
     private async handleExternalFileDrop(fileList: FileList, position: { x: number; y: number }): Promise<void> {
         const evidencePath = normalizePath(`${this.entityManager.getBasePath()}/Evidence`);
-        await this.ensureFolderExists(evidencePath);
+        await ensureFolderExists(this.app, evidencePath);
 
         const tFiles: TFile[] = [];
         for (let i = 0; i < fileList.length; i++) {
@@ -577,13 +578,6 @@ export class GraphView extends ItemView {
             return this.app.vault.getResourcePath(file);
         }
         return undefined;
-    }
-
-    private async ensureFolderExists(path: string): Promise<void> {
-        const folder = this.app.vault.getAbstractFileByPath(path);
-        if (!folder) {
-            await this.app.vault.createFolder(path);
-        }
     }
 
     async onClose(): Promise<void> {

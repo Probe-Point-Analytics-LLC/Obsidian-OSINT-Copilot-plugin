@@ -74,6 +74,7 @@ describe('ChatView send routing', () => {
       claudeCodeModel: 'sonnet',
       claudeCodeExtraArgs: '',
       claudeCodeTimeoutMs: 300_000,
+      pdftotextPath: '',
       agentRuntimeProvider: 'claude-code' as const,
       hermesAgentCliPath: 'hermes',
       hermesAgentExtraArgs: '',

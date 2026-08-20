@@ -101,6 +101,15 @@ export class TFile {
     }
 }
 
+export class TFolder {
+    path: string;
+    children: unknown[];
+    constructor() {
+        this.path = '';
+        this.children = [];
+    }
+}
+
 /** Minimal path normalizer for unit tests (forward slashes, trim). */
 export function normalizePath(path: string): string {
     return path.replace(/\\/g, '/').replace(/^\/+/, '').trim();

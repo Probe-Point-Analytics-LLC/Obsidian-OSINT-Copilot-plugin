@@ -19,6 +19,7 @@ import {
 } from '../entities/types';
 import { isLikelyExpectedUrlFetchFailure } from '../services/api-service';
 import type { ExtractionLogEvent } from '../services/claude-code-service';
+import { ensureFolderExists } from '../utils/vault-bootstrap-fs';
 import {
   Conversation,
   ConversationMetadata,
@@ -2384,10 +2385,7 @@ export class ChatView extends ItemView {
               absolutePath = vaultBase ? `${vaultBase}/${attachment.file.path}` : attachment.file.path;
             } else {
               const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
-              const folder = this.app.vault.getAbstractFileByPath(evidencePath);
-              if (!folder) {
-                await this.app.vault.createFolder(evidencePath);
-              }
+              await ensureFolderExists(this.app, evidencePath);
               const safeName = fileName.replace(/[\\/:*?"<>|]/g, '_');
               const destPath = normalizePath(`${evidencePath}/${safeName}`);
               const buffer = await (attachment.file as File).arrayBuffer();

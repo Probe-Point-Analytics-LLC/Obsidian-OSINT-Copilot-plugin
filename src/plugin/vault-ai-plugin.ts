@@ -96,6 +96,7 @@ import {
   ensureCredentialsFolder,
   ensureScriptsDefaultsInstalled,
 } from '../services/custom-vault-writer';
+import { ensureFolderExists, ensureFolderChainForFile } from '../utils/vault-bootstrap-fs';
 import { VaultLockService } from '../services/vault-lock-service';
 import { VaultUnlockModal } from '../modals/vault-unlock-modal';
 import { SchemaBootstrapService } from '../services/schema-bootstrap-service';
@@ -239,6 +240,7 @@ export default class VaultAIPlugin extends Plugin {
       customModel: '',
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
       claudeCodeModel: this.settings.claudeCodeModel,
+      pdftotextPath: this.settings.pdftotextPath,
     });
     this.vaultPromptLoader = new VaultPromptLoader(
       this.app,
@@ -269,9 +271,7 @@ export default class VaultAIPlugin extends Plugin {
     }
     try {
       const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-      if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
-        await this.app.vault.createFolder(enricherRoot);
-      }
+      await ensureFolderExists(this.app, enricherRoot);
     } catch (e) {
       console.warn('OSINTCopilot: enricher folder bootstrap failed:', e);
     }
@@ -623,9 +623,7 @@ export default class VaultAIPlugin extends Plugin {
             await new TaskAgentBootstrapService(this.app, () => this.settings.taskAgentsFolder).ensureDefaultsInstalled();
             await new SkillBootstrapService(this.app, () => this.settings.skillsFolder).ensureDefaultsInstalled();
             const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-            if (!this.app.vault.getAbstractFileByPath(enricherRoot)) {
-              await this.app.vault.createFolder(enricherRoot);
-            }
+            await ensureFolderExists(this.app, enricherRoot);
             await ensureCredentialsFolder(this);
             this.vaultPromptLoader?.invalidateAll();
             this.taskAgentRegistry?.invalidate();
@@ -677,7 +675,8 @@ export default class VaultAIPlugin extends Plugin {
   }
 
   private async appendEnricherAuditLine(line: string): Promise<void> {
-    const path = `${this.settings.enrichersFolder}/audit.log.md`;
+    const enricherRoot = this.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
+    const path = normalizePath(`${enricherRoot}/audit.log.md`);
     const stamped = `- ${new Date().toISOString()} ${line}\n`;
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFile) {
@@ -685,14 +684,7 @@ export default class VaultAIPlugin extends Plugin {
       await this.app.vault.modify(existing, prev + stamped);
       return;
     }
-    const parts = path.split("/").slice(0, -1);
-    let current = "";
-    for (const p of parts) {
-      current = current ? `${current}/${p}` : p;
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
-    }
+    await ensureFolderChainForFile(this.app, path);
     await this.app.vault.create(path, "# Enricher audit log\n\n" + stamped);
   }
 
@@ -798,19 +790,9 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
       confirmMsg,
       () => {
         void (async () => {
-          const ensureFolder = async (path: string) => {
-            const parts = path.split("/").slice(0, -1);
-            let current = "";
-            for (const p of parts) {
-              current = current ? `${current}/${p}` : p;
-              if (!this.app.vault.getAbstractFileByPath(current)) {
-                await this.app.vault.createFolder(current);
-              }
-            }
-          };
           try {
-            await ensureFolder(enricherPath);
-            await ensureFolder(skillPath);
+            await ensureFolderChainForFile(this.app, enricherPath);
+            await ensureFolderChainForFile(this.app, skillPath);
             const existingSpec = this.app.vault.getAbstractFileByPath(enricherPath);
             if (existingSpec instanceof TFile) {
               await this.app.vault.modify(existingSpec, JSON.stringify(draft, null, 2));
@@ -987,6 +969,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
         customModel: '',
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
         claudeCodeModel: this.settings.claudeCodeModel,
+        pdftotextPath: this.settings.pdftotextPath,
       });
       this.initClaudeCodeService();
     }

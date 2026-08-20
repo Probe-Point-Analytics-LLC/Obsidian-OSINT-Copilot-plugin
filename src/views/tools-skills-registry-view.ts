@@ -18,6 +18,7 @@ import type { VaultSkillManifest } from "../skills/skill-types";
 import { DEFAULT_ENRICHERS_FOLDER, DEFAULT_SKILLS_FOLDER } from "../constants/vault-layout";
 import { ConfirmModal } from "../modals/confirm-modal";
 import { enricherJsonPathFromId, skillMarkdownPathFromId } from "../utils/registry-paths";
+import { ensureFolderChain } from "../utils/vault-bootstrap-fs";
 
 export const TOOLS_SKILLS_REGISTRY_VIEW_TYPE = "osint-copilot-tools-skills-registry";
 
@@ -54,25 +55,6 @@ function buildDraftEnricherJson(id: string, name: string): string {
 function yamlDoubleQuoted(s: string): string {
 	const oneLine = s.replace(/\r?\n/g, " ").trim();
 	return `"${oneLine.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-async function ensureFolderChain(app: App, path: string): Promise<void> {
-	const norm = normalizePath(path);
-	const parts = norm.split("/").filter(Boolean);
-	let acc = "";
-	for (const p of parts) {
-		acc = acc ? `${acc}/${p}` : p;
-		const f = app.vault.getAbstractFileByPath(acc);
-		if (!f) {
-			try {
-				await app.vault.createFolder(acc);
-			} catch (e) {
-				if (e instanceof Error && !e.message.includes("Folder already exists")) {
-					throw e;
-				}
-			}
-		}
-	}
 }
 
 class AddSkillModal extends Modal {

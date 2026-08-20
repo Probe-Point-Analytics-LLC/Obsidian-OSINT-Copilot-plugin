@@ -1,4 +1,4 @@
-import { normalizePath, TFile, TFolder, type App } from 'obsidian';
+import { normalizePath, TFile } from 'obsidian';
 import type VaultAIPlugin from '../plugin/vault-ai-plugin';
 import {
 	DEFAULT_CREDENTIALS_FOLDER,
@@ -13,6 +13,7 @@ import {
 	parseSkillIdForVault,
 	relativePathHasAllowedScriptExtension,
 } from './custom-vault-operations';
+import { ensureFolderExists, ensureFolderChainForFile } from '../utils/vault-bootstrap-fs';
 
 function pathIsUnderPrefix(path: string, prefix: string): boolean {
 	const p = normalizePath(path);
@@ -102,17 +103,6 @@ The unified agent can propose **create / update / delete** for text files in thi
 Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
 `;
 
-async function ensureFolderChain(app: App, filePath: string): Promise<void> {
-	const parts = normalizePath(filePath).split('/').slice(0, -1);
-	let current = '';
-	for (const p of parts) {
-		current = current ? `${current}/${p}` : p;
-		if (!app.vault.getAbstractFileByPath(current)) {
-			await app.vault.createFolder(current);
-		}
-	}
-}
-
 function yamlScalar(s: string): string {
 	// JSON double-quoted strings are valid YAML scalars
 	return JSON.stringify(s);
@@ -157,7 +147,7 @@ export async function applyCustomVaultOperations(
 				case 'upsert_skill': {
 					const path = resolveSkillMarkdownPath(plugin, op.id);
 					skillsTouched = true;
-					await ensureFolderChain(plugin.app, path);
+					await ensureFolderChainForFile(plugin.app, path);
 					const existing = plugin.app.vault.getAbstractFileByPath(path);
 					const body = buildSkillMarkdown(op);
 					if (existing instanceof TFile) {
@@ -180,7 +170,7 @@ export async function applyCustomVaultOperations(
 				}
 				case 'put_credentials': {
 					const path = resolveCredentialFilePath(plugin, op.relativePath);
-					await ensureFolderChain(plugin.app, path);
+					await ensureFolderChainForFile(plugin.app, path);
 					const existing = plugin.app.vault.getAbstractFileByPath(path);
 					if (existing instanceof TFile) {
 						await plugin.app.vault.modify(existing, op.content);
@@ -202,7 +192,7 @@ export async function applyCustomVaultOperations(
 				case 'upsert_enricher': {
 					const path = resolveEnricherJsonPath(plugin, op.id);
 					enrichersTouched = true;
-					await ensureFolderChain(plugin.app, path);
+					await ensureFolderChainForFile(plugin.app, path);
 					const existing = plugin.app.vault.getAbstractFileByPath(path);
 					const body = JSON.stringify(op.spec, null, 2);
 					if (existing instanceof TFile) {
@@ -225,7 +215,7 @@ export async function applyCustomVaultOperations(
 				}
 				case 'upsert_script': {
 					const path = resolveScriptFilePath(plugin, op.relativePath);
-					await ensureFolderChain(plugin.app, path);
+					await ensureFolderChainForFile(plugin.app, path);
 					const existing = plugin.app.vault.getAbstractFileByPath(path);
 					if (existing instanceof TFile) {
 						await plugin.app.vault.modify(existing, op.content);
@@ -266,24 +256,14 @@ export async function applyCustomVaultOperations(
 export async function ensureCredentialsFolder(plugin: VaultAIPlugin): Promise<void> {
 	const root = credentialsRoot(plugin);
 	assertPathUnderCustomRoot(root, 'Credentials root');
-	const f = plugin.app.vault.getAbstractFileByPath(root);
-	if (!f) {
-		await plugin.app.vault.createFolder(root);
-	} else if (!(f instanceof TFolder)) {
-		console.warn('[custom-vault-writer] credentials path is not a folder:', root);
-	}
+	await ensureFolderExists(plugin.app, root);
 }
 
 /** Ensure scripts root exists (under OSINTCopilot/custom/). */
 export async function ensureScriptsFolder(plugin: VaultAIPlugin): Promise<void> {
 	const root = scriptsRoot(plugin);
 	assertPathUnderCustomRoot(root, 'Scripts root');
-	const f = plugin.app.vault.getAbstractFileByPath(root);
-	if (!f) {
-		await plugin.app.vault.createFolder(root);
-	} else if (!(f instanceof TFolder)) {
-		console.warn('[custom-vault-writer] scripts path is not a folder:', root);
-	}
+	await ensureFolderExists(plugin.app, root);
 }
 
 /** Create scripts folder and a short README when missing (never overwrites README). */

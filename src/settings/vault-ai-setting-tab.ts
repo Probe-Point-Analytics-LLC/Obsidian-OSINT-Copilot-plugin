@@ -13,6 +13,7 @@ import { createAgentProvider } from "../services/agent-runtime/create-agent-prov
 import { isTaskAgentRunnable } from "../task-agents/task-agent-settings";
 import { ClaudeCodeService } from "../services/claude-code-service";
 import { DEFAULT_SETTINGS } from "./vault-ai-settings";
+import { ensureFolderExists } from "../utils/vault-bootstrap-fs";
 import {
 	DEFAULT_CONVERSATION_FOLDER,
 	DEFAULT_CREDENTIALS_FOLDER,
@@ -197,9 +198,7 @@ export class VaultAISettingTab extends PluginSettingTab {
 						await new TaskAgentBootstrapService(this.plugin.app, () => this.plugin.settings.taskAgentsFolder).ensureDefaultsInstalled();
 						await new SkillBootstrapService(this.plugin.app, () => this.plugin.settings.skillsFolder).ensureDefaultsInstalled();
 						const enricherRoot = this.plugin.settings.enrichersFolder.trim() || DEFAULT_ENRICHERS_FOLDER;
-						if (!this.plugin.app.vault.getAbstractFileByPath(enricherRoot)) {
-							await this.plugin.app.vault.createFolder(enricherRoot);
-						}
+						await ensureFolderExists(this.plugin.app, enricherRoot);
 						await ensureCredentialsFolder(this.plugin);
 						await ensureScriptsDefaultsInstalled(this.plugin);
 						this.plugin.vaultPromptLoader?.invalidateAll();
@@ -631,6 +630,21 @@ export class VaultAISettingTab extends PluginSettingTab {
 					this.plugin.settings.claudeCodeTimeoutMs = Number.isFinite(n) && n >= 5000 ? n : 300_000;
 					await this.plugin.saveSettings();
 				}),
+			);
+
+		new Setting(containerEl)
+			.setName("pdftotext path")
+			.setDesc(
+				"Full path to the pdftotext binary (poppler-utils), used for local PDF attachment extraction. Leave blank to auto-detect common install locations. Set this if PDF extraction fails with 'spawn pdftotext ENOENT' even though poppler-utils is installed — GUI apps sometimes launch with a PATH that doesn't include it. Run 'which pdftotext' in the terminal/session Obsidian was launched from to find the right value.",
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("/usr/bin/pdftotext")
+					.setValue(this.plugin.settings.pdftotextPath)
+					.onChange(async (value) => {
+						this.plugin.settings.pdftotextPath = value.trim();
+						await this.plugin.saveSettings();
+					}),
 			);
 
 		new Setting(containerEl)
