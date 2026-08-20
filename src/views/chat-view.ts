@@ -225,6 +225,7 @@ export class ChatView extends ItemView {
     return messages.map(m => ({
       role: m.role,
       content: m.content,
+      timestamp: m.timestamp,
       notes: m.notes as IndexedNote[],
       jobId: m.jobId,
       status: m.status,
@@ -241,20 +242,26 @@ export class ChatView extends ItemView {
   }
 
   historyToConversationMessages(): ConversationMessage[] {
-    return this.chatHistory.map(h => ({
-      role: h.role,
-      content: h.content,
-      timestamp: Date.now(),
-      notes: h.notes,
-      jobId: h.jobId,
-      status: h.status,
-      progress: h.progress,
-      reportFilePath: h.reportFilePath,
-      usedEntities: h.usedEntities,
-      proposedModifications: h.proposedModifications,
-      proposedCustomVaultOps: h.proposedCustomVaultOps as Record<string, unknown>[] | undefined,
-      proposedPlan: h.proposedPlan
-    }));
+    return this.chatHistory.map(h => {
+      // Assign a timestamp once, on first save, then keep it — otherwise every
+      // re-save (e.g. after each new turn) would stamp the whole history with
+      // the current time, collapsing all messages onto one identical value.
+      if (h.timestamp === undefined) h.timestamp = Date.now();
+      return {
+        role: h.role,
+        content: h.content,
+        timestamp: h.timestamp,
+        notes: h.notes,
+        jobId: h.jobId,
+        status: h.status,
+        progress: h.progress,
+        reportFilePath: h.reportFilePath,
+        usedEntities: h.usedEntities,
+        proposedModifications: h.proposedModifications,
+        proposedCustomVaultOps: h.proposedCustomVaultOps as Record<string, unknown>[] | undefined,
+        proposedPlan: h.proposedPlan
+      };
+    });
   }
 
   async saveCurrentConversation() {
@@ -2506,8 +2513,8 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
 
       const id = this.selectedTaskAgentId.trim();
@@ -2538,9 +2545,14 @@ export class ChatView extends ItemView {
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
     } catch (e) {
+      // handleCancel() already finalizes content/progress for a genuine user cancel — it
+      // aborts this exact controller synchronously before this catch runs. Checking the
+      // controller's own signal (rather than map membership, which the success path also
+      // mutates) avoids misclassifying an unrelated later error as a cancel.
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg === "Cancelled by user" || msg.includes("Aborted")) return;
+      if (wasUserCancelled || msg === "Cancelled by user") return;
       this.chatHistory[assistantIndex].content = `Task agent error: ${msg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       await this.renderMessages();
@@ -2576,12 +2588,12 @@ export class ChatView extends ItemView {
       this.updateProgressBar(assistantIndex, { message, percent });
     };
 
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
 
       const currentGraphState = {
-        entities: this.plugin.entityManager.getAllEntities(), // Send the current graph state 
+        entities: this.plugin.entityManager.getAllEntities(), // Send the current graph state
         connections: this.plugin.entityManager.getAllConnections() // Send connections to find orphaned nodes
       };
 
@@ -2632,12 +2644,17 @@ export class ChatView extends ItemView {
       await this.renderMessages();
 
     } catch (e) {
+      // handleCancel() already finalizes content/progress for a genuine user cancel — it
+      // aborts this exact controller synchronously before this catch runs. Checking the
+      // controller's own signal (rather than map membership, which the success path also
+      // mutates) avoids misclassifying an unrelated later error as a cancel.
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const item = this.chatHistory[assistantIndex];
       item.orchestrationAbortByToolId = undefined;
       item.orchestrationDisplayToToolId = undefined;
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
+      if (wasUserCancelled || errorMsg === 'Cancelled by user') return;
 
       this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
@@ -2658,8 +2675,8 @@ export class ChatView extends ItemView {
     });
     await this.renderMessages();
 
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(assistantIndex, controller);
 
       const q = (query || "").trim() || "Ingest vault documents for knowledge graph";
@@ -2702,9 +2719,14 @@ export class ChatView extends ItemView {
       this._awaitingToolReview = true;
       await this.renderMessages();
     } catch (e) {
+      // handleCancel() already finalizes content/progress for a genuine user cancel — it
+      // aborts this exact controller synchronously before this catch runs. Checking the
+      // controller's own signal (rather than map membership, which the success path also
+      // mutates) avoids misclassifying an unrelated later error as a cancel.
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(assistantIndex);
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === "Cancelled by user" || errorMsg.includes("Aborted")) return;
+      if (wasUserCancelled || errorMsg === "Cancelled by user") return;
       this.chatHistory[assistantIndex].content = `Vault ingest error: ${errorMsg}`;
       this.chatHistory[assistantIndex].progress = undefined;
       this.chatHistory[assistantIndex].vaultIngestPreviewCommands = undefined;
@@ -2758,8 +2780,8 @@ export class ChatView extends ItemView {
       }
     };
 
+    const controller = new AbortController();
     try {
-      const controller = new AbortController();
       this.activeAbortControllers.set(synthesisIndex, controller);
 
       const currentGraphState = {
@@ -2789,9 +2811,14 @@ export class ChatView extends ItemView {
       await this.saveCurrentConversation();
 
     } catch (e) {
+      // handleCancel() already finalizes content/progress for a genuine user cancel — it
+      // aborts this exact controller synchronously before this catch runs. Checking the
+      // controller's own signal (rather than map membership, which the success path also
+      // mutates) avoids misclassifying an unrelated later error as a cancel.
+      const wasUserCancelled = controller.signal.aborted;
       this.activeAbortControllers.delete(synthesisIndex);
       const errorMsg = e instanceof Error ? e.message : String(e);
-      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted')) return;
+      if (wasUserCancelled || errorMsg === 'Cancelled by user') return;
 
       this.chatHistory[synthesisIndex].content = `Synthesis Error: ${errorMsg}`;
       this.chatHistory[synthesisIndex].progress = undefined;
@@ -3015,6 +3042,7 @@ export class ChatView extends ItemView {
       this.updateProgressBar(messageIndex, { message, percent });
     };
 
+    let controller: AbortController | undefined;
     try {
       const existingEntities = this.plugin.entityManager.getAllEntities();
       updateProgress("Checking existing entities...", 20);
@@ -3045,7 +3073,7 @@ export class ChatView extends ItemView {
       console.log(`[OSINT Copilot] Calling graphApiService.processTextInChunks (Text length: ${inputText.length})...`);
 
       // Create AbortController so the cancel button in the progress bar works
-      const controller = new AbortController();
+      controller = new AbortController();
       this.activeAbortControllers.set(messageIndex, controller);
       this.updateProgressBar(messageIndex, { message: "Sending text to AI for entity extraction...", percent: 30 });
 
@@ -3152,13 +3180,19 @@ export class ChatView extends ItemView {
       await this.renderMessages();
       await this.saveCurrentConversation();
     } catch (error) {
+      // handleCancel() already finalizes content/progress for a genuine user cancel — it
+      // aborts this exact controller synchronously before this catch runs. Checking the
+      // controller's own signal (rather than map membership, which the success path also
+      // mutates) avoids misclassifying an unrelated later error as a cancel. No controller
+      // means the failure happened before one was created, so it can't have been a cancel.
+      const wasUserCancelled = controller?.signal.aborted ?? false;
       if (typeof messageIndex !== 'undefined') {
         this.activeAbortControllers.delete(messageIndex); // Ensure controller is cleared on error
       }
       const errorMsg = error instanceof Error ? error.message : String(error);
 
       // Handle user cancellation gracefully
-      if (errorMsg === 'Cancelled by user' || errorMsg.includes('Aborted') || errorMsg.includes('Request was cancelled')) {
+      if (wasUserCancelled || errorMsg === 'Cancelled by user') {
         return; // UI already handled by handleCancel
       }
 

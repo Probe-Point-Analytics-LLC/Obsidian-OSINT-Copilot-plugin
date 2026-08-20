@@ -374,41 +374,83 @@ export class GraphApiService {
 
     /**
      * Minimal ZIP extraction for a single file entry (no external dependencies).
+     *
+     * Reads the central directory (located via the End Of Central Directory record) rather
+     * than scanning local file headers sequentially from the start of the archive. Many real
+     * DOCX writers (streamed saves, some Word/LibreOffice/Pandoc output) set the ZIP
+     * "data descriptor" bit on compressed entries, which leaves compressed/uncompressed size
+     * as 0 in the *local* header — a sequential scan can't know how far to skip and desyncs
+     * on the first such entry. Central directory entries always carry accurate sizes.
      */
     private extractFileFromZip(data: Uint8Array, targetPath: string): Uint8Array | null {
-        let offset = 0;
-        while (offset < data.length - 4) {
-            const sig = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24);
-            if (sig !== 0x04034b50) break; // PK\x03\x04
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-            const compressionMethod = data[offset + 8] | (data[offset + 9] << 8);
-            const compressedSize = data[offset + 18] | (data[offset + 19] << 8) | (data[offset + 20] << 16) | (data[offset + 21] << 24);
-            const uncompressedSize = data[offset + 22] | (data[offset + 23] << 8) | (data[offset + 24] << 16) | (data[offset + 25] << 24);
-            const nameLen = data[offset + 26] | (data[offset + 27] << 8);
-            const extraLen = data[offset + 28] | (data[offset + 29] << 8);
-            const name = new TextDecoder().decode(data.slice(offset + 30, offset + 30 + nameLen));
-            const dataStart = offset + 30 + nameLen + extraLen;
+        const EOCD_SIGNATURE = 0x06054b50; // "PK\x05\x06"
+        const eocdSearchStart = Math.max(0, data.length - 22 - 0xffff); // EOCD comment is at most 65535 bytes
+        let eocdOffset = -1;
+        for (let i = data.length - 22; i >= eocdSearchStart; i--) {
+            if (view.getUint32(i, true) === EOCD_SIGNATURE) {
+                eocdOffset = i;
+                break;
+            }
+        }
+        if (eocdOffset === -1) return null;
+
+        const centralDirEntryCount = view.getUint16(eocdOffset + 10, true);
+        const centralDirOffset = view.getUint32(eocdOffset + 16, true);
+
+        const CENTRAL_DIR_SIGNATURE = 0x02014b50; // "PK\x01\x02"
+        let offset = centralDirOffset;
+        for (let i = 0; i < centralDirEntryCount; i++) {
+            if (offset + 46 > data.length || view.getUint32(offset, true) !== CENTRAL_DIR_SIGNATURE) break;
+
+            const compressionMethod = view.getUint16(offset + 10, true);
+            const compressedSize = view.getUint32(offset + 20, true);
+            const uncompressedSize = view.getUint32(offset + 24, true);
+            const nameLen = view.getUint16(offset + 28, true);
+            const extraLen = view.getUint16(offset + 30, true);
+            const commentLen = view.getUint16(offset + 32, true);
+            const localHeaderOffset = view.getUint32(offset + 42, true);
+            const name = new TextDecoder().decode(data.slice(offset + 46, offset + 46 + nameLen));
 
             if (name === targetPath) {
-                if (compressionMethod === 0) {
-                    return data.slice(dataStart, dataStart + uncompressedSize);
-                }
-                if (compressionMethod === 8) {
-                    try {
-                        const compressed = data.slice(dataStart, dataStart + compressedSize);
-                        const { inflateRawSync } = require('zlib') as typeof import('zlib');
-                        const result = inflateRawSync(Buffer.from(compressed));
-                        return new Uint8Array(result);
-                    } catch (e) {
-                        console.error('[GraphApiService] DOCX decompression failed:', e);
-                        return null;
-                    }
-                }
-                return null;
+                return this.readZipEntryData(data, view, localHeaderOffset, compressionMethod, compressedSize, uncompressedSize);
             }
 
-            const size = compressedSize > 0 ? compressedSize : uncompressedSize;
-            offset = dataStart + size;
+            offset += 46 + nameLen + extraLen + commentLen;
+        }
+        return null;
+    }
+
+    /** Reads and (if needed) inflates a single entry's data given its central-directory metadata. */
+    private readZipEntryData(
+        data: Uint8Array,
+        view: DataView,
+        localHeaderOffset: number,
+        compressionMethod: number,
+        compressedSize: number,
+        uncompressedSize: number,
+    ): Uint8Array | null {
+        const LOCAL_FILE_SIGNATURE = 0x04034b50; // "PK\x03\x04"
+        if (view.getUint32(localHeaderOffset, true) !== LOCAL_FILE_SIGNATURE) return null;
+
+        const nameLen = view.getUint16(localHeaderOffset + 26, true);
+        const extraLen = view.getUint16(localHeaderOffset + 28, true);
+        const dataStart = localHeaderOffset + 30 + nameLen + extraLen;
+
+        if (compressionMethod === 0) {
+            return data.slice(dataStart, dataStart + uncompressedSize);
+        }
+        if (compressionMethod === 8) {
+            try {
+                const compressed = data.slice(dataStart, dataStart + compressedSize);
+                const { inflateRawSync } = require('zlib') as typeof import('zlib');
+                const result = inflateRawSync(Buffer.from(compressed));
+                return new Uint8Array(result);
+            } catch (e) {
+                console.error('[GraphApiService] DOCX decompression failed:', e);
+                return null;
+            }
         }
         return null;
     }

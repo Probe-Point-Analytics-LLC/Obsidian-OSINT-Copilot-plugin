@@ -13,6 +13,8 @@ export interface CreatedEntityInfo {
 export interface ChatHistoryItem {
 	role: "user" | "assistant";
 	content: string;
+	/** Set once when the message is first persisted; preserved on every later save. */
+	timestamp?: number;
 	notes?: IndexedNote[];
 	jobId?: string;
 	status?: string;

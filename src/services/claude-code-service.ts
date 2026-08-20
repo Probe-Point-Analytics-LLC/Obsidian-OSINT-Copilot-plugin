@@ -209,6 +209,11 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
 
             const { execFile } = require('child_process') as typeof import('child_process');
 
+            // Tracks whether *our* AbortSignal triggered the kill, as opposed to execFile's own
+            // `timeout` option killing a slow-running process — both present identically as
+            // `error.killed`/`error.signal === 'SIGTERM'`, but only the former is a real cancel.
+            let killedByAbortSignal = false;
+
             const extra = splitCliArgsLine(this.config.extraCliArgs ?? '');
             const args = [
                 '--print',
@@ -239,7 +244,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                     const errOut = stderr?.trim() ?? '';
                     const stdOut = stdout?.trim() ?? '';
                     if (error) {
-                        if (error.killed || error.signal === 'SIGTERM') {
+                        if (killedByAbortSignal) {
                             logOptions?.emit?.({
                                 phase: 'invoke_aborted',
                                 level: 'warn',
@@ -250,7 +255,9 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                         } else {
                             // Claude Code often prints fatal messages on stdout; include both for Obsidian notices and logs.
                             const combined = [errOut, stdOut].filter(Boolean).join('\n');
-                            const tail = combined || error.message || 'unknown error';
+                            const timedOut = error.killed || error.signal === 'SIGTERM';
+                            const tail = combined || error.message ||
+                                (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : 'unknown error');
                             logOptions?.emit?.({
                                 phase: 'invoke_error',
                                 level: 'error',
@@ -287,6 +294,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
 
             if (signal) {
                 const onAbort = () => {
+                    killedByAbortSignal = true;
                     child.kill('SIGTERM');
                 };
                 signal.addEventListener('abort', onAbort, { once: true });
