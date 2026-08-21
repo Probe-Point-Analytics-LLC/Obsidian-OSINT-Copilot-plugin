@@ -18,7 +18,7 @@ export const BUILT_IN_ORCHESTRATION_TOOLS: BuiltInOrchestrationTool[] = [
 		id: 'EXTRACT_TO_GRAPH',
 		title: 'Extract to graph',
 		description:
-			'Runs local Claude on attachment text to propose graph commands (entities/relationships). Results are reviewed before applying to the vault graph.',
+			'Runs the selected local AI CLI on attachment text to propose graph commands (entities/relationships). Results are reviewed before applying to the vault graph.',
 	},
 	{
 		id: 'VAULT_GRAPH_INGEST',

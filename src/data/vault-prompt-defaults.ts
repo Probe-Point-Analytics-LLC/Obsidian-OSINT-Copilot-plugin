@@ -21,10 +21,10 @@ This folder is **managed by you**. The plugin copies these files once when they 
 |------|------|
 | \`rules/global.md\` | Prepended to orchestration planner context (tone, safety, citations). |
 | \`agents/*.md\` | One file per agent; YAML frontmatter \`id\`, \`name\`, \`description\`; body = extra system instructions. |
-| \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (Claude CLI). Edits apply on next extraction after reload. |
+| \`skills/graph-extraction.md\` | Instructions for **entity / graph extraction** (selected local AI CLI). Edits apply on next extraction after reload. |
 | \`logs/\` | Optional **.md / .txt / .log** traces (enricher debug, run notes). Recent files may be merged into unified-agent **vault augmentation** (size-capped). |
 
-**Task agents** (separate folder, default \`OSINTCopilot/custom/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via local Claude — see **Settings → Task agents** and the README inside that folder.
+**Task agents** (separate folder, default \`OSINTCopilot/custom/task-agents/\`) hold \`agent_kind: task\` manifests that create vault files via the selected local AI CLI — see **Settings → Task agents** and the README inside that folder.
 
 ## Settings
 
@@ -103,7 +103,7 @@ Example:
 Drop debugging traces here as **\`.md\`**, **\`.txt\`**, or **\`.log\`** files (for example enricher errors, excerpts from the Obsidian console).
 
 - The **unified chat agent** may include **recent** snippets from this folder in **vault augmentation** for each turn (newest files first, total size capped).
-- **Claude Code** or other tools scanning your vault can read these files like any other note.
+- **Claude Code**, **Codex**, or other tools scanning your vault can read these files like any other note.
 
 Do **not** store raw API keys here; use \`OSINTCopilot/custom/credentials/\` and enricher \`*_vault\` auth types instead.
 `,

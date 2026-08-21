@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../src/services/agent-runtime/chat-runtime-availability', () => ({
   getChatRuntimeAvailability: vi.fn().mockResolvedValue({
-    byId: { 'claude-code': true, 'hermes-agent': false },
+    byId: { 'claude-code': true, codex: false, 'hermes-agent': false },
     availableIds: ['claude-code'],
   }),
   invalidateChatRuntimeAvailabilityCache: vi.fn(),
@@ -74,6 +74,10 @@ describe('ChatView send routing', () => {
       claudeCodeModel: 'sonnet',
       claudeCodeExtraArgs: '',
       claudeCodeTimeoutMs: 300_000,
+      codexCliPath: 'codex',
+      codexCliModel: '',
+      codexCliExtraArgs: '',
+      codexCliTimeoutMs: 300_000,
       agentRuntimeProvider: 'claude-code' as const,
       hermesAgentCliPath: 'hermes',
       hermesAgentExtraArgs: '',
@@ -229,6 +233,30 @@ describe('ChatView send routing', () => {
 
     expect(plugin.orchestrationService.processRequest).toHaveBeenCalled();
     expect(plugin.askVaultStream).not.toHaveBeenCalled();
+  });
+
+  it('routes a selected task-agent workflow to the task-agent handler', async () => {
+    view.selectedTaskAgentId = 'evidence-report';
+    view.inputEl.value = 'Create the evidence report';
+    const taskAgent = vi.spyOn(view, 'handleVaultTaskAgent').mockResolvedValue(undefined);
+    const orchestration = vi.spyOn(view, 'handleOrchestrationAgent');
+
+    await view.handleSend();
+
+    expect(taskAgent).toHaveBeenCalledWith('Create the evidence report');
+    expect(orchestration).not.toHaveBeenCalled();
+  });
+
+  it('does not silently fail over or send when the selected runtime is unavailable', async () => {
+    plugin.settings.agentRuntimeProvider = 'codex';
+    plugin.settings.apiProvider = 'codex';
+    view.inputEl.value = 'Keep this prompt with Codex';
+
+    await view.handleSend();
+
+    expect(plugin.settings.agentRuntimeProvider).toBe('codex');
+    expect(plugin.orchestrationService.processRequest).not.toHaveBeenCalled();
+    expect(view.inputEl.value).toBe('Keep this prompt with Codex');
   });
 
   it('routes graph mode to orchestration (legacy graph-only path removed)', async () => {

@@ -17,15 +17,14 @@ export class ClaudeAgentProvider implements AgentProvider {
         onProgress?.('Running Claude Code agent (JSON turn)...', 25);
         const system = buildUnifiedAgentSystemPrompt('Claude Code');
         const user = buildUnifiedAgentUserPrompt(ctx);
-        const raw = await this.graphApi.callRemoteModel(
+        const raw = await this.graphApi.callLocalProviderModel(
+            'claude-code',
             [
                 { role: 'system', content: system },
                 { role: 'user', content: user },
             ],
             true,
-            undefined,
             signal,
-            undefined,
             logOptions,
         );
         onProgress?.('Parsing agent response...', 85);
@@ -33,7 +32,7 @@ export class ClaudeAgentProvider implements AgentProvider {
     }
 
     async healthCheck(): Promise<boolean> {
-        const health = await this.graphApi.checkHealth();
+        const health = await this.graphApi.checkHealth('claude-code');
         return health !== null && health.status === 'ok';
     }
 }

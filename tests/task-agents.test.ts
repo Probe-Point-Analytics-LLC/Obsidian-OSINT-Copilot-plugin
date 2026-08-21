@@ -1,9 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { App } from 'obsidian';
 import { parseTaskAgentMarkdown } from '../src/task-agents/parse-manifest';
 import { isPathAllowedForWrite } from '../src/task-agents/path-allowlist';
 import { parseVaultFilesJson } from '../src/task-agents/json-response';
 import { isTaskAgentRunnable } from '../src/task-agents/task-agent-settings';
 import type { TaskAgentManifest } from '../src/task-agents/types';
+import { TaskAgentRunner } from '../src/task-agents/task-agent-runner';
+import type { LocalCliService } from '../src/services/claude-code-service';
 
 describe('parseTaskAgentMarkdown', () => {
   it('returns null for orchestration agent (no agent_kind task)', () => {
@@ -149,5 +152,50 @@ describe('isTaskAgentRunnable', () => {
         taskAgentOverrides: { a: true },
       }),
     ).toBe(true);
+  });
+});
+
+describe('TaskAgentRunner cancellation', () => {
+  it('rethrows an aborted CLI call so the chat cancellation message is preserved', async () => {
+    const abortError = new DOMException('Aborted', 'AbortError');
+    const localCli = {
+      providerId: 'codex',
+      displayName: 'Codex CLI',
+      setVaultSkillResolver: vi.fn(),
+      updateConfig: vi.fn(),
+      extractEntities: vi.fn(),
+      chat: vi.fn().mockRejectedValue(abortError),
+      extractTextFromImage: vi.fn(),
+      isAvailable: vi.fn(),
+    } satisfies LocalCliService;
+    const runner = new TaskAgentRunner(
+      {} as App,
+      () => localCli,
+      { getGlobalRules: vi.fn().mockResolvedValue('') } as any,
+      () => new Map(),
+      () => '',
+      { globalOutputAllowlist: 'OSINTCopilot/custom/outputs' },
+    );
+    const manifest: TaskAgentManifest = {
+      agentKind: 'task',
+      id: 'cancel-test',
+      name: 'Cancel test',
+      description: '',
+      outputSchema: 'vault_files_v1',
+      outputRoots: ['OSINTCopilot/custom/outputs'],
+      contextRoots: [],
+      maxNotes: 1,
+      maxContextChars: 100,
+      enabledDefault: true,
+      model: '',
+      body: 'Return output.',
+      sourcePath: 'agents/cancel-test.md',
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(runner.run(manifest, 'Do work', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 });

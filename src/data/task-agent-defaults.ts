@@ -12,7 +12,7 @@ export const TASK_AGENT_DEFAULT_FILES: TaskAgentFileDef[] = [
 		path: "README.md",
 		content: `# Task agents (vault-pluggable)
 
-Task agents run **only** through your local **Claude Code CLI**. Each \`.md\` file defines instructions + metadata. The model returns **JSON**; the plugin creates or updates vault files under allowed folders.
+Task agents run through the selected **Local AI CLI** (**Claude Code** or **Codex CLI**). Each \`.md\` file defines instructions + metadata. The model returns **JSON**; the plugin creates or updates vault files under allowed folders.
 
 ## Layout
 

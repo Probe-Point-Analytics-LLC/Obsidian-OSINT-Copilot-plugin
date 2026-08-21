@@ -11,6 +11,7 @@ import { parseAgentTurnResult } from '../src/services/agent-runtime/parse-agent-
 import { AGENT_TURN_SCHEMA_VERSION } from '../src/services/agent-runtime/provider-types';
 import { aiOperationsToGraphCommands } from '../src/services/graph-commands-from-operations';
 import { createAgentProvider } from '../src/services/agent-runtime/create-agent-provider';
+import { getConfiguredRuntimeOptions } from '../src/services/agent-runtime/runtime-registry';
 import type { AIOperation } from '../src/entities/types';
 
 describe('parseAgentTurnResult', () => {
@@ -93,6 +94,18 @@ describe('aiOperationsToGraphCommands', () => {
 });
 
 describe('createAgentProvider', () => {
+    it('returns Codex provider when configured', () => {
+        const plugin = {
+            settings: {
+                agentRuntimeProvider: 'codex',
+                customAgentRuntimes: [],
+            },
+            graphApiService: {},
+        } as any;
+
+        expect(createAgentProvider(plugin).id).toBe('codex');
+    });
+
     it('returns Hermes provider when configured', () => {
         const plugin = {
             settings: {
@@ -122,6 +135,26 @@ describe('createAgentProvider', () => {
             graphApiService: {},
         } as any;
         expect(createAgentProvider(plugin).id).toBe('claude-code');
+    });
+});
+
+describe('getConfiguredRuntimeOptions', () => {
+    it('lists Codex between Claude and Hermes, followed by enabled custom runtimes', () => {
+        const plugin = {
+            settings: {
+                customAgentRuntimes: [
+                    { id: 'custom:enabled', displayName: 'Enabled', enabled: true },
+                    { id: 'custom:disabled', displayName: 'Disabled', enabled: false },
+                ],
+            },
+        } as any;
+
+        expect(getConfiguredRuntimeOptions(plugin)).toEqual([
+            { id: 'claude-code', displayName: 'Claude Code' },
+            { id: 'codex', displayName: 'Codex CLI' },
+            { id: 'hermes-agent', displayName: 'Hermes Agent' },
+            { id: 'custom:enabled', displayName: 'Enabled' },
+        ]);
     });
 });
 
@@ -155,7 +188,7 @@ describe('OrchestrationService unified path', () => {
             graphApiService: {
                 extractTextFromUrl: vi.fn(),
                 tryExtractTextFromUrl: vi.fn().mockResolvedValue({ ok: true, text: '' }),
-                callRemoteModel: vi.fn().mockResolvedValue(turnJson),
+                callLocalProviderModel: vi.fn().mockResolvedValue(turnJson),
             },
             vaultPromptLoader: {
                 getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),
@@ -215,7 +248,7 @@ describe('OrchestrationService unified path', () => {
             graphApiService: {
                 extractTextFromUrl: vi.fn(),
                 tryExtractTextFromUrl: vi.fn().mockResolvedValue({ ok: true, text: '' }),
-                callRemoteModel: vi.fn().mockResolvedValue(turnJson),
+                callLocalProviderModel: vi.fn().mockResolvedValue(turnJson),
             },
             vaultPromptLoader: {
                 getOrchestrationAugmentation: vi.fn().mockResolvedValue(''),

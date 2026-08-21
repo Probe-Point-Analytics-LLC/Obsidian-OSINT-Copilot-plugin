@@ -21,7 +21,7 @@ function tryParseVaultFiles(obj: unknown): VaultFilesV1 | null {
 }
 
 /**
- * Extract vault_files_v1 JSON from Claude CLI stdout (may include fences or prose).
+ * Extract vault_files_v1 JSON from local CLI stdout (may include fences or prose).
  */
 export function parseVaultFilesJson(raw: string): VaultFilesV1 | null {
 	const trimmed = raw.trim();

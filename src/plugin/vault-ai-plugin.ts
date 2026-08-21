@@ -34,7 +34,12 @@ import {
 import { EntityManager } from '../services/entity-manager';
 import { WaybackArchiveService } from '../services/wayback-archive-service';
 import { GraphApiService, isLikelyExpectedUrlFetchFailure } from '../services/api-service';
-import { ClaudeCodeService, type ExtractionLogEvent } from '../services/claude-code-service';
+import {
+  ClaudeCodeService,
+  type ExtractionLogEvent,
+  type LocalCliService,
+} from '../services/claude-code-service';
+import { CodexCliService } from '../services/codex-cli-service';
 import {
   ConversationService,
   Conversation,
@@ -73,6 +78,7 @@ import {
 } from '../services/agent-runtime/chat-runtime-availability';
 import {
   CLAUDE_RUNTIME_ID,
+  CODEX_RUNTIME_ID,
   HERMES_RUNTIME_ID,
   getConfiguredRuntimeOptions,
   normalizeCustomAgentRuntimes,
@@ -129,7 +135,7 @@ import { appendVaultOpPreviewBlock, entityHasMapCoordinates } from '../ui/vault-
 import { CHAT_VIEW_TYPE, ChatView } from '../views/chat-view';
 import { OsintWorkspaceController } from './osint-workspace-controller';
 
-// All AI calls are routed through Claude Code CLI (local).
+// AI calls are routed through a user-selected local CLI integration.
 // These model constants are no longer used for remote routing but kept for reference.
 const CHAT_MODEL = "claude-code";
 const ENTITY_EXTRACTION_MODEL = "claude-code";
@@ -156,6 +162,7 @@ export default class VaultAIPlugin extends Plugin {
   orchestrationService!: OrchestrationService;
   updaterService!: UpdaterService;
   claudeCodeService: ClaudeCodeService | null = null;
+  codexCliService: CodexCliService | null = null;
   vaultPromptLoader!: VaultPromptLoader;
   taskAgentRegistry!: TaskAgentRegistry;
   taskAgentRunner!: TaskAgentRunner;
@@ -166,28 +173,47 @@ export default class VaultAIPlugin extends Plugin {
   waybackArchiveService!: WaybackArchiveService;
 
   attachVaultSkillFromVault(): void {
-    if (this.claudeCodeService && this.vaultPromptLoader) {
-      this.claudeCodeService.setVaultSkillResolver(() =>
-        this.vaultPromptLoader.getGraphExtractionSkill()
-      );
+    if (!this.vaultPromptLoader) return;
+    const resolver = () => this.vaultPromptLoader.getGraphExtractionSkill();
+    for (const service of [this.claudeCodeService, this.codexCliService]) {
+      service?.setVaultSkillResolver(resolver);
     }
   }
 
-  initClaudeCodeService() {
+  getLocalCliService(providerId: 'claude-code' | 'codex' = this.settings.apiProvider): LocalCliService | null {
+    return providerId === 'codex' ? this.codexCliService : this.claudeCodeService;
+  }
+
+  getLocalCliModel(providerId: 'claude-code' | 'codex' = this.settings.apiProvider): string {
+    return providerId === 'codex'
+      ? this.settings.codexCliModel
+      : (this.settings.claudeCodeModel || 'sonnet');
+  }
+
+  initLocalCliServices() {
     const adapter = this.app.vault.adapter as any;
     const basePath = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
     const pluginDir = basePath && this.manifest.dir
         ? `${basePath}/${this.manifest.dir}`
         : '';
-    const svc = new ClaudeCodeService(pluginDir, {
+    const claude = new ClaudeCodeService(pluginDir, {
       cliPath: this.settings.claudeCodeCliPath || 'claude',
       model: this.settings.claudeCodeModel || 'sonnet',
       cliWorkingDirectory: basePath || undefined,
       extraCliArgs: this.settings.claudeCodeExtraArgs ?? '',
       timeoutMs: this.settings.claudeCodeTimeoutMs || 300_000,
     });
-    this.claudeCodeService = svc;
-    this.graphApiService.setClaudeCodeService(svc);
+    const codex = new CodexCliService(pluginDir, {
+      cliPath: this.settings.codexCliPath || 'codex',
+      model: this.settings.codexCliModel || '',
+      cliWorkingDirectory: basePath || undefined,
+      extraCliArgs: this.settings.codexCliExtraArgs ?? '',
+      timeoutMs: this.settings.codexCliTimeoutMs || 300_000,
+    });
+    this.claudeCodeService = claude;
+    this.codexCliService = codex;
+    this.graphApiService.setLocalCliService(claude);
+    this.graphApiService.setLocalCliService(codex);
     this.attachVaultSkillFromVault();
   }
 
@@ -234,7 +260,7 @@ export default class VaultAIPlugin extends Plugin {
 
     this.graphApiService = new GraphApiService();
     this.graphApiService.setSettings({
-      apiProvider: 'claude-code',
+      apiProvider: this.settings.apiProvider,
       customApiUrl: '',
       customApiKey: '',
       customModel: '',
@@ -252,7 +278,7 @@ export default class VaultAIPlugin extends Plugin {
       console.warn('OSINTCopilot: vault prompt bootstrap failed:', e);
     }
     this.vaultPromptLoader.registerVaultEvents(this);
-    this.initClaudeCodeService();
+    this.initLocalCliServices();
 
     this.taskAgentRegistry = new TaskAgentRegistry(this.app, () => this.settings.taskAgentsFolder);
     this.taskAgentRegistry.registerVaultEvents(this);
@@ -283,10 +309,10 @@ export default class VaultAIPlugin extends Plugin {
     this.enricherRegistry.registerVaultEvents(this);
     this.taskAgentRunner = new TaskAgentRunner(
       this.app,
-      () => this.claudeCodeService,
+      () => this.getLocalCliService(),
       this.vaultPromptLoader,
       () => this.index,
-      () => this.settings.claudeCodeModel || 'sonnet',
+      () => this.getLocalCliModel(),
       {
         globalOutputAllowlist: this.settings.taskAgentGlobalOutputAllowlist,
         isPathLocked: (p) => this.vaultLockService.isPathLocked(p),
@@ -324,13 +350,14 @@ export default class VaultAIPlugin extends Plugin {
       // Check API health in background (non-blocking)
       // This sets the online status for the API service
       this.graphApiService.checkHealth().then(health => {
+        const service = this.getLocalCliService();
         if (health) {
-          console.debug('OSINTCopilot: Claude Code CLI available for extraction', health);
+          console.debug(`OSINTCopilot: ${service?.displayName || 'Local AI CLI'} available for extraction`, health);
         } else {
-          console.debug('OSINTCopilot: Claude Code CLI not detected — install `claude` for entity extraction');
+          console.debug(`OSINTCopilot: ${service?.displayName || 'Local AI CLI'} not detected for entity extraction`);
         }
       }).catch(() => {
-        console.debug('OSINTCopilot: Claude Code health check failed');
+        console.debug('OSINTCopilot: Local AI CLI health check failed');
       });
     }
 
@@ -923,6 +950,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     merged.customAgentRuntimes = normalizeCustomAgentRuntimes(raw.customAgentRuntimes);
     const validRuntimeIds = new Set<string>([
       CLAUDE_RUNTIME_ID,
+      CODEX_RUNTIME_ID,
       HERMES_RUNTIME_ID,
       ...((merged.customAgentRuntimes as CustomAgentRuntime[]).map((rt) => rt.id)),
     ]);
@@ -935,6 +963,21 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     }
     if (typeof merged.claudeCodeExtraArgs !== 'string') {
       merged.claudeCodeExtraArgs = DEFAULT_SETTINGS.claudeCodeExtraArgs;
+    }
+    if (merged.apiProvider !== CLAUDE_RUNTIME_ID && merged.apiProvider !== CODEX_RUNTIME_ID) {
+      merged.apiProvider = DEFAULT_SETTINGS.apiProvider;
+    }
+    if (typeof merged.codexCliPath !== 'string' || !merged.codexCliPath.trim()) {
+      merged.codexCliPath = DEFAULT_SETTINGS.codexCliPath;
+    }
+    if (typeof merged.codexCliModel !== 'string') {
+      merged.codexCliModel = DEFAULT_SETTINGS.codexCliModel;
+    }
+    if (typeof merged.codexCliExtraArgs !== 'string') {
+      merged.codexCliExtraArgs = DEFAULT_SETTINGS.codexCliExtraArgs;
+    }
+    if (typeof merged.codexCliTimeoutMs !== 'number' || merged.codexCliTimeoutMs < 5000) {
+      merged.codexCliTimeoutMs = DEFAULT_SETTINGS.codexCliTimeoutMs;
     }
     if (typeof merged.hermesAgentExtraArgs !== 'string') {
       merged.hermesAgentExtraArgs = DEFAULT_SETTINGS.hermesAgentExtraArgs;
@@ -962,14 +1005,14 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
     await this.saveData(this.settings);
     if (this.graphApiService) {
       this.graphApiService.setSettings({
-        apiProvider: 'claude-code',
+        apiProvider: this.settings.apiProvider,
         customApiUrl: '',
         customApiKey: '',
         customModel: '',
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
         claudeCodeModel: this.settings.claudeCodeModel,
       });
-      this.initClaudeCodeService();
+      this.initLocalCliServices();
     }
     if (this.entityManager) {
       this.entityManager.setBasePath(this.settings.entityBasePath);
@@ -1387,21 +1430,7 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
   // ============================================================================
 
   async callRemoteModel(messages: ChatMessage[], stream: boolean = false, model?: string, signal?: AbortSignal, useLocal: boolean = false): Promise<string> {
-    if (!this.claudeCodeService) {
-      throw new Error("Claude Code not initialized. Check Settings → OSINT Copilot → Graph Extraction.");
-    }
-
-    let systemPrompt = '';
-    let userContent = '';
-    for (const msg of messages) {
-      if (msg.role === 'system') {
-        systemPrompt += (systemPrompt ? '\n' : '') + msg.content;
-      } else {
-        userContent += (userContent ? '\n' : '') + msg.content;
-      }
-    }
-
-    return this.claudeCodeService.chat(systemPrompt, userContent, signal);
+    return this.graphApiService.callRemoteModel(messages, false, model, signal);
   }
 
   // ============================================================================

@@ -1,12 +1,16 @@
 import type VaultAIPlugin from '../../plugin/vault-ai-plugin';
 import { ClaudeAgentProvider } from './claude-agent-provider';
+import { CodexAgentProvider } from './codex-agent-provider';
 import { HermesAgentProvider } from './hermes-agent-provider';
 import type { AgentProvider } from './provider-types';
-import { CLAUDE_RUNTIME_ID, HERMES_RUNTIME_ID, findCustomRuntime } from './runtime-registry';
+import { CLAUDE_RUNTIME_ID, CODEX_RUNTIME_ID, HERMES_RUNTIME_ID, findCustomRuntime } from './runtime-registry';
 
 export function createAgentProvider(plugin: VaultAIPlugin, runtimeId?: string): AgentProvider {
     const s = plugin.settings;
     const selected = runtimeId || s.agentRuntimeProvider;
+    if (selected === CODEX_RUNTIME_ID) {
+        return new CodexAgentProvider(plugin.graphApiService);
+    }
     if (selected === HERMES_RUNTIME_ID) {
         return new HermesAgentProvider({
             cliPath: s.hermesAgentCliPath || 'hermes',

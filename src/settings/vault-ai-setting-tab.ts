@@ -8,10 +8,11 @@ import {
 	ensureScriptsDefaultsInstalled,
 } from "../services/custom-vault-writer";
 import { runtimeSettingsVisibility } from "../chat/runtime-settings-visibility";
-import { CLAUDE_RUNTIME_ID, getConfiguredRuntimeOptions, normalizeCustomRuntimeId, type CustomAgentRuntime } from "../services/agent-runtime/runtime-registry";
+import { CLAUDE_RUNTIME_ID, CODEX_RUNTIME_ID, getConfiguredRuntimeOptions, normalizeCustomRuntimeId, type CustomAgentRuntime } from "../services/agent-runtime/runtime-registry";
 import { createAgentProvider } from "../services/agent-runtime/create-agent-provider";
 import { isTaskAgentRunnable } from "../task-agents/task-agent-settings";
 import { ClaudeCodeService } from "../services/claude-code-service";
+import { CodexCliService } from "../services/codex-cli-service";
 import { DEFAULT_SETTINGS } from "./vault-ai-settings";
 import { ensureFolderExists } from "../utils/vault-bootstrap-fs";
 import {
@@ -275,7 +276,7 @@ export class VaultAISettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Enable task agents")
 			.setDesc(
-				"In General mode, pick a task agent to run local Claude workflows that create vault files (JSON contract), or None for full orchestration.",
+				"In General mode, pick a task agent to run local AI CLI workflows that create vault files (JSON contract), or None for full orchestration.",
 			)
 			.addToggle((t) =>
 				t.setValue(this.plugin.settings.taskAgentsEnabled).onChange(async (v) => {
@@ -346,7 +347,7 @@ export class VaultAISettingTab extends PluginSettingTab {
 
 		new Setting(containerEl).setName("Unified chat agent").setHeading();
 		containerEl.createEl("p", {
-			text: "Chat uses one local agent turn (JSON contract). Claude Code is the default runtime. You can switch to Hermes or custom CLI runtimes from the chat header and settings.",
+			text: "Chat uses one local agent turn (JSON contract). Choose Claude Code, Codex CLI, Hermes, or a custom runtime here or in the chat header.",
 			cls: "setting-item-description",
 		});
 		const selectedRuntimeId = this.plugin.settings.agentRuntimeProvider;
@@ -365,6 +366,9 @@ export class VaultAISettingTab extends PluginSettingTab {
 				dd.setValue(selected);
 				dd.onChange(async (v) => {
 					this.plugin.settings.agentRuntimeProvider = v;
+					if (v === CLAUDE_RUNTIME_ID || v === CODEX_RUNTIME_ID) {
+						this.plugin.settings.apiProvider = v;
+					}
 					await this.plugin.saveSettings();
 					this.display();
 				});
@@ -427,13 +431,25 @@ export class VaultAISettingTab extends PluginSettingTab {
 
 		if (visibility.showClaudeRuntimeHint) {
 			containerEl.createEl("p", {
-				text: "Claude runtime selected. Claude CLI/model and extraction diagnostics are configured in the “Graph extraction (Claude Code)” section below.",
+				text: "Claude runtime selected. Its CLI, model, and extraction diagnostics are configured in the “Local AI CLI” section below.",
 				cls: "setting-item-description",
 			});
 			new Setting(containerEl)
 				.setName("Claude runtime quick view")
 				.setDesc(
 					`CLI: ${this.plugin.settings.claudeCodeCliPath || "claude"} | model: ${this.plugin.settings.claudeCodeModel || "sonnet"}`,
+				);
+		}
+
+		if (visibility.showCodexRuntimeHint) {
+			containerEl.createEl("p", {
+				text: "Codex runtime selected. Its CLI, model override, and extraction diagnostics are configured in the “Local AI CLI” section below.",
+				cls: "setting-item-description",
+			});
+			new Setting(containerEl)
+				.setName("Codex runtime quick view")
+				.setDesc(
+					`CLI: ${this.plugin.settings.codexCliPath || "codex"} | model: ${this.plugin.settings.codexCliModel || "Codex config default"}`,
 				);
 		}
 
@@ -449,8 +465,8 @@ export class VaultAISettingTab extends PluginSettingTab {
 						const ok = await provider.healthCheck();
 						new Notice(
 							ok
-								? `${this.runtimeLabel(provider.id)} CLI is reachable.`
-								: "CLI not reachable. Check path and health-check args.",
+								? `${this.runtimeLabel(provider.id)} is reachable.`
+								: "Runtime is not ready. Check its executable path and, where applicable, login, provider, or health-check configuration.",
 						);
 					} catch (e: unknown) {
 						new Notice("Error: " + (e instanceof Error ? e.message : String(e)));
@@ -571,70 +587,151 @@ export class VaultAISettingTab extends PluginSettingTab {
 				);
 		}
 
-		new Setting(containerEl).setName("Graph extraction (Claude Code)").setHeading();
+		new Setting(containerEl).setName("Local AI CLI").setHeading();
 
 		containerEl.createEl("p", {
-			text: "Bulk entity extraction (vault ingest, attachment pipeline, task agents) still uses Claude Code CLI unless you route those flows through Hermes separately. Install `claude` on your PATH for extraction features.",
+			text: "Select the CLI used for bulk entity extraction, image analysis, vault skills, and task agents. Choosing Claude or Codex as the chat runtime also selects it here; Hermes/custom chat leaves this choice unchanged.",
 			cls: "setting-item-description",
 		});
 
 		new Setting(containerEl)
-			.setName("Claude CLI path")
-			.setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.")
-			.addText((text) =>
-				text
-					.setPlaceholder("claude")
-					.setValue(this.plugin.settings.claudeCodeCliPath)
+			.setName("Extraction and task-agent CLI")
+			.setDesc("Both integrations run locally as child processes and reuse their CLI's existing sign-in.")
+			.addDropdown((dd) =>
+				dd
+					.addOption(CLAUDE_RUNTIME_ID, "Claude Code")
+					.addOption(CODEX_RUNTIME_ID, "Codex CLI")
+					.setValue(this.plugin.settings.apiProvider)
 					.onChange(async (value) => {
-						this.plugin.settings.claudeCodeCliPath = value || "claude";
+						this.plugin.settings.apiProvider = value === CODEX_RUNTIME_ID ? CODEX_RUNTIME_ID : CLAUDE_RUNTIME_ID;
 						await this.plugin.saveSettings();
+						this.display();
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Claude model")
-			.setDesc("Model to use for extraction (e.g. sonnet, opus, haiku).")
-			.addText((text) =>
-				text
-					.setPlaceholder("sonnet")
-					.setValue(this.plugin.settings.claudeCodeModel)
-					.onChange(async (value) => {
-						this.plugin.settings.claudeCodeModel = value || "sonnet";
-						await this.plugin.saveSettings();
-					}),
-			);
+		if (this.plugin.settings.apiProvider === CLAUDE_RUNTIME_ID) {
+			new Setting(containerEl)
+				.setName("Claude CLI path")
+				.setDesc("Path to the claude executable. Use 'claude' if it's on your PATH.")
+				.addText((text) =>
+					text
+						.setPlaceholder("claude")
+						.setValue(this.plugin.settings.claudeCodeCliPath)
+						.onChange(async (value) => {
+							this.plugin.settings.claudeCodeCliPath = value || "claude";
+							await this.plugin.saveSettings();
+						}),
+				);
 
-		new Setting(containerEl)
-			.setName("Claude Code extra CLI args")
-			.setDesc(
-				"Whitespace-separated flags appended after --max-turns for every Claude Code invocation (chat, extraction, skills). Example: --permission-mode bypassPermissions (disables interactive Bash approval — dangerous: the model may run shell without prompts). Prefer vault enricher JSON + enricher_invocations in the agent JSON for HTTP APIs instead of curl.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("")
-					.setValue(this.plugin.settings.claudeCodeExtraArgs)
-					.onChange(async (value) => {
+			new Setting(containerEl)
+				.setName("Claude model")
+				.setDesc("Model to use (for example sonnet, opus, or haiku).")
+				.addText((text) =>
+					text
+						.setPlaceholder("sonnet")
+						.setValue(this.plugin.settings.claudeCodeModel)
+						.onChange(async (value) => {
+							this.plugin.settings.claudeCodeModel = value || "sonnet";
+							await this.plugin.saveSettings();
+						}),
+				);
+
+			new Setting(containerEl)
+				.setName("Claude Code extra CLI args")
+				.setDesc(
+					"Whitespace-separated flags appended after --max-turns. Prefer vault enricher JSON for HTTP APIs instead of unattended shell access.",
+				)
+				.addText((text) =>
+					text.setValue(this.plugin.settings.claudeCodeExtraArgs).onChange(async (value) => {
 						this.plugin.settings.claudeCodeExtraArgs = value;
 						await this.plugin.saveSettings();
 					}),
-			);
+				);
 
-		new Setting(containerEl)
-			.setName("Claude Code timeout (ms)")
-			.setDesc(
-				"How long to wait for a single Claude Code CLI call (chat turns, extraction, skills) before it's killed. Raise this for large attachments or the opus model, which can take several minutes.",
-			)
-			.addText((text) =>
-				text.setValue(String(this.plugin.settings.claudeCodeTimeoutMs)).onChange(async (value) => {
-					const n = parseInt(value.trim(), 10);
-					this.plugin.settings.claudeCodeTimeoutMs = Number.isFinite(n) && n >= 5000 ? n : 300_000;
-					await this.plugin.saveSettings();
-				}),
-			);
+			new Setting(containerEl)
+				.setName("Claude Code timeout (ms)")
+				.addText((text) =>
+					text.setValue(String(this.plugin.settings.claudeCodeTimeoutMs)).onChange(async (value) => {
+						const n = parseInt(value.trim(), 10);
+						this.plugin.settings.claudeCodeTimeoutMs = Number.isFinite(n) && n >= 5000 ? n : 300_000;
+						await this.plugin.saveSettings();
+					}),
+				);
+		} else {
+			new Setting(containerEl)
+				.setName("Codex CLI path")
+				.setDesc("Path to the codex executable. Desktop launches may require an absolute path, such as /home/you/.local/bin/codex.")
+				.addText((text) =>
+					text
+						.setPlaceholder("codex")
+						.setValue(this.plugin.settings.codexCliPath)
+						.onChange(async (value) => {
+							this.plugin.settings.codexCliPath = value.trim() || "codex";
+							await this.plugin.saveSettings();
+						}),
+				);
+
+			new Setting(containerEl)
+				.setName("Codex sign-in")
+				.setDesc(
+					`Run “${this.plugin.settings.codexCliPath || "codex"} login” in a terminal. The plugin reuses that saved login and never stores it in the vault.`,
+				)
+				.addButton((btn) =>
+					btn.setButtonText("Check login").onClick(async () => {
+						btn.setDisabled(true);
+						btn.setButtonText("Checking...");
+						const adapter = this.plugin.app.vault.adapter as { getBasePath?: () => string };
+						const vaultRoot = typeof adapter.getBasePath === "function" ? String(adapter.getBasePath() || "") : "";
+						const status = await new CodexCliService("", {
+							cliPath: this.plugin.settings.codexCliPath || "codex",
+							cliWorkingDirectory: vaultRoot || undefined,
+						}).getLoginStatus();
+						const detail = status.message.length > 1000 ? status.message.slice(0, 1000) + "…" : status.message;
+						new Notice(status.authenticated ? detail : `Codex is not logged in: ${detail}`, 8000);
+						btn.setButtonText("Check login");
+						btn.setDisabled(false);
+					}),
+				);
+
+			new Setting(containerEl)
+				.setName("Codex model override")
+				.setDesc("Leave blank to use the model configured by your local Codex CLI.")
+				.addText((text) =>
+					text
+						.setPlaceholder("Use Codex config default")
+						.setValue(this.plugin.settings.codexCliModel)
+						.onChange(async (value) => {
+							this.plugin.settings.codexCliModel = value.trim();
+							await this.plugin.saveSettings();
+						}),
+				);
+
+			new Setting(containerEl)
+				.setName("Codex exec extra args")
+				.setDesc(
+					"Optional whitespace-separated codex exec flags (for example, --oss). Safety, output, model, image, working-directory, and session flags are managed by the plugin and rejected here.",
+				)
+				.addText((text) =>
+					text.setValue(this.plugin.settings.codexCliExtraArgs).onChange(async (value) => {
+						this.plugin.settings.codexCliExtraArgs = value;
+						await this.plugin.saveSettings();
+					}),
+				);
+
+			new Setting(containerEl)
+				.setName("Codex timeout (ms)")
+				.addText((text) =>
+					text.setValue(String(this.plugin.settings.codexCliTimeoutMs)).onChange(async (value) => {
+						const n = parseInt(value.trim(), 10);
+						this.plugin.settings.codexCliTimeoutMs = Number.isFinite(n) && n >= 5000 ? n : 300_000;
+						await this.plugin.saveSettings();
+					}),
+				);
+		}
 
 		new Setting(containerEl)
 			.setName("Extraction log verbosity")
-			.setDesc("How much Claude extraction detail is shown in chat while processing attachments.")
+			.setDesc("How much local CLI extraction detail is shown in chat while processing attachments.")
 			.addDropdown((dd) =>
 				dd
 					.addOption("minimal", "Minimal (milestones)")
@@ -659,38 +756,47 @@ export class VaultAISettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Test Claude CLI (extraction)")
-			.setDesc(
-				"Checks the executable, then runs a minimal --print request (same flags as image OCR / extraction). Surfaces auth and API errors from stdout/stderr.",
-			)
+			.setName("Test selected local AI CLI")
+			.setDesc("Checks the executable, then runs a minimal request using the same invocation path as chat and extraction.")
 			.addButton((btn) =>
-				btn.setButtonText("Test Claude binary").onClick(async () => {
+				btn.setButtonText("Test CLI").onClick(async () => {
 					btn.setButtonText("Testing...");
 					btn.setDisabled(true);
 					try {
 						const adapter = this.plugin.app.vault.adapter as { getBasePath?: () => string };
 						const vaultRoot = typeof adapter.getBasePath === "function" ? String(adapter.getBasePath() || "") : "";
-						const svc = new ClaudeCodeService("", {
-							cliPath: this.plugin.settings.claudeCodeCliPath || "claude",
-							model: this.plugin.settings.claudeCodeModel || "sonnet",
-							timeoutMs: 45_000,
-							cliWorkingDirectory: vaultRoot || undefined,
-							extraCliArgs: this.plugin.settings.claudeCodeExtraArgs ?? "",
-						});
+						const svc = this.plugin.settings.apiProvider === CODEX_RUNTIME_ID
+							? new CodexCliService("", {
+								cliPath: this.plugin.settings.codexCliPath || "codex",
+								model: this.plugin.settings.codexCliModel || "",
+								timeoutMs: 45_000,
+								cliWorkingDirectory: vaultRoot || undefined,
+								extraCliArgs: this.plugin.settings.codexCliExtraArgs ?? "",
+							})
+							: new ClaudeCodeService("", {
+								cliPath: this.plugin.settings.claudeCodeCliPath || "claude",
+								model: this.plugin.settings.claudeCodeModel || "sonnet",
+								timeoutMs: 45_000,
+								cliWorkingDirectory: vaultRoot || undefined,
+								extraCliArgs: this.plugin.settings.claudeCodeExtraArgs ?? "",
+							});
 						const ok = await svc.isAvailable();
 						if (!ok) {
-							new Notice("Claude CLI not found. Check the path and PATH.", 8000);
-							btn.setButtonText("Test Claude binary");
+							new Notice(
+								`${svc.displayName} is not ready. Check its executable path and, for Codex, its login or explicit provider configuration.`,
+								8000,
+							);
+							btn.setButtonText("Test CLI");
 							btn.setDisabled(false);
 							return;
 						}
 						await svc.chat("", "Reply with exactly the single word: OK", undefined, undefined, 1);
-						new Notice("Claude CLI is available and responded to a test request.", 6000);
+						new Notice(`${svc.displayName} is available and responded to a test request.`, 6000);
 					} catch (e: unknown) {
 						const msg = e instanceof Error ? e.message : String(e);
 						new Notice(msg.length > 2000 ? msg.slice(0, 2000) + "…" : msg, 12000);
 					}
-					btn.setButtonText("Test Claude binary");
+					btn.setButtonText("Test CLI");
 					btn.setDisabled(false);
 				}),
 			);

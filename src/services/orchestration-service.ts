@@ -107,7 +107,7 @@ export class OrchestrationService {
 
 
     private async verifyProviderAndCredits(): Promise<void> {
-        // All AI calls are routed through Claude Code CLI locally — no remote credits needed.
+        // AI calls are routed through the configured local CLI integration.
     }
 
     private mergeAbortSignals(global?: AbortSignal, perTool?: AbortSignal): AbortSignal | undefined {
@@ -212,7 +212,7 @@ export class OrchestrationService {
     }
 
     /**
-     * Single local agent turn (Claude Code or Hermes): vault search + graph extraction via the external agent's skills.
+     * Single local agent turn: vault search + graph extraction via the external agent's skills.
      */
     private async processRequestUnified(
         query: string,
@@ -434,7 +434,7 @@ export class OrchestrationService {
     }
 
     /**
-     * Walk ingestible vault files, extract entities per batch with local Claude CLI,
+     * Walk ingestible vault files, extract entities per batch with the selected local AI CLI,
      * and auto-apply graph commands as each batch completes.
      */
     private async runVaultGraphIngest(
@@ -500,7 +500,7 @@ export class OrchestrationService {
 
             let extraction: ProcessTextResponse;
             try {
-                onFileProgress(`${batchLabel}: extracting entities (local Claude)…`, basePct + 2);
+                onFileProgress(`${batchLabel}: extracting entities (local AI CLI)…`, basePct + 2);
                 extraction = await this.plugin.graphApiService.processTextInChunks(
                     combined,
                     this.plugin.entityManager.getAllEntities(),
@@ -556,7 +556,7 @@ export class OrchestrationService {
         const summary =
             (abortSignal?.aborted ? "**Cancelled by user.** " : "") +
             `Processed **${filesProcessed}** file(s) out of **${files.length}** eligible (cap ${OrchestrationService.VAULT_INGEST_MAX_FILES}), ` +
-            `in **${totalBatches}** batch(es) of up to ${BATCH} files (**local Claude** extraction). ` +
+            `in **${totalBatches}** batch(es) of up to ${BATCH} files (**local AI CLI** extraction). ` +
             (extractFailures > 0 ? `**${extractFailures}** file(s) or batch(es) had issues. ` : "") +
             `**${graphCommands.length}** graph operation(s) were **applied automatically** to your vault graph.`;
 
@@ -649,7 +649,7 @@ export class OrchestrationService {
                             onProgress(displayName, "Cancelled", 100);
                             break;
                         }
-                        onProgress(displayName, "Extracting entities to graph (local Claude)...", 40);
+                        onProgress(displayName, "Extracting entities to graph (local AI CLI)...", 40);
                         if (!attachmentsContext || attachmentsContext.trim() === '') {
                             results["EXTRACT_TO_GRAPH"] = "No attachments provided.";
                             onProgress(displayName, "No context", 100);
@@ -692,7 +692,7 @@ export class OrchestrationService {
                             graphCommands,
                             summary: extraction.success
                                 ? graphCommands.length > 0
-                                    ? `Claude extracted **${graphCommands.length}** graph command(s) from attachment text. Confirm with **📊 Generate Analysis & Graph**.`
+                                    ? `${this.plugin.getLocalCliService()?.displayName || "Local AI CLI"} extracted **${graphCommands.length}** graph command(s) from attachment text. Confirm with **📊 Generate Analysis & Graph**.`
                                     : "No entities or relationships were extracted from the attachment text."
                                 : `Extraction failed: ${extraction.error || "unknown error"}`,
                         };
@@ -707,7 +707,7 @@ export class OrchestrationService {
                                 onProgress(displayName, "Cancelled", 100);
                                 break;
                             }
-                            onProgress(displayName, "Running vault skill (local Claude)...", 35);
+                            onProgress(displayName, "Running vault skill (local AI CLI)...", 35);
                             const sig =
                                 options?.abortSignals?.[tool] ?? options?.globalAbort;
                             try {

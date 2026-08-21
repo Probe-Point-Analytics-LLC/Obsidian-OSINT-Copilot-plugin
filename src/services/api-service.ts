@@ -14,7 +14,11 @@
 
 import { requestUrl } from 'obsidian';
 import { AIOperation, Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
-import { ClaudeCodeService, type ExtractionLogOptions } from './claude-code-service';
+import {
+    ClaudeCodeService,
+    type ExtractionLogOptions,
+    type LocalCliService,
+} from './claude-code-service';
 
 /** Minimal surface of pdfjs-dist's legacy Node build used for text extraction (no bundled .d.ts for this subpath). */
 interface PdfTextItem {
@@ -76,7 +80,7 @@ export type UrlExtractResult =
 
 // Local interface to avoid circular dependency with main.ts
 export interface ApiSettings {
-    apiProvider: 'claude-code';
+    apiProvider: 'claude-code' | 'codex';
     customApiUrl: string;
     customApiKey: string;
     customModel: string;
@@ -100,12 +104,21 @@ export interface ApiSettings {
 export class GraphApiService {
     private isOnline: boolean = false;
     private settings: ApiSettings | null = null;
-    private claudeCodeService: ClaudeCodeService | null = null;
+    private localCliServices = new Map<string, LocalCliService>();
 
     constructor() {}
 
     setClaudeCodeService(service: ClaudeCodeService): void {
-        this.claudeCodeService = service;
+        this.setLocalCliService(service);
+    }
+
+    setLocalCliService(service: LocalCliService): void {
+        this.localCliServices.set(service.providerId, service);
+    }
+
+    private getLocalCliService(providerId?: string): LocalCliService | null {
+        const selected = providerId || this.settings?.apiProvider || 'claude-code';
+        return this.localCliServices.get(selected) || null;
     }
 
     /**
@@ -115,23 +128,24 @@ export class GraphApiService {
         this.settings = settings;
     }
 
-    /**
-     * Check if Claude Code CLI is available for entity extraction.
-     */
-    async checkHealth(): Promise<ApiHealthResponse | null> {
-        if (this.claudeCodeService) {
-            const available = await this.claudeCodeService.isAvailable();
-            this.isOnline = available;
+    /** Check whether the selected (or explicitly requested) local CLI is reachable. */
+    async checkHealth(providerId?: string): Promise<ApiHealthResponse | null> {
+        const activeProvider = this.settings?.apiProvider || 'claude-code';
+        const selectedProvider = providerId || activeProvider;
+        const service = this.getLocalCliService(selectedProvider);
+        if (service) {
+            const available = await service.isAvailable();
+            if (selectedProvider === activeProvider) this.isOnline = available;
             return available
-                ? { status: 'ok', openai_configured: true, version: 'claude-code-local' }
+                ? { status: 'ok', openai_configured: true, version: `${service.providerId}-local` }
                 : null;
         }
-        this.isOnline = false;
+        if (selectedProvider === activeProvider) this.isOnline = false;
         return null;
     }
 
     /**
-     * Get the current online status (Claude CLI probe).
+     * Get the current online status (selected local CLI probe).
      */
     getOnlineStatus(): boolean {
         return this.isOnline;
@@ -269,7 +283,7 @@ export class GraphApiService {
     /**
      * Extract text from a file locally.
      * Text formats are read directly. PDFs use the bundled pdfjs-dist. DOCX uses XML extraction.
-     * Other binary formats are saved to temp and processed by Claude Code CLI.
+     * Other binary formats are saved to temp and processed by the selected local AI CLI.
      */
     async extractTextFromFile(file: File): Promise<string> {
         const maxSize = 10 * 1024 * 1024;
@@ -299,13 +313,14 @@ export class GraphApiService {
     }
 
     /**
-     * Extract text/information from an image file using Claude Code vision.
+     * Extract text/information from an image file using the selected CLI's image support.
      */
     async extractTextFromImage(absolutePath: string, signal?: AbortSignal, logOptions?: ExtractionLogOptions): Promise<string> {
-        if (!this.claudeCodeService) {
-            throw new Error('Claude Code service not initialized.');
+        const service = this.getLocalCliService();
+        if (!service) {
+            throw new Error('Local AI CLI service not initialized.');
         }
-        return this.claudeCodeService.extractTextFromImage(absolutePath, signal, logOptions);
+        return service.extractTextFromImage(absolutePath, signal, logOptions);
     }
 
     private readFileAsText(file: File): Promise<string> {
@@ -516,7 +531,7 @@ export class GraphApiService {
     }
 
     /**
-     * Chat via Claude Code CLI. Replaces remote custom provider and backend calls.
+     * Chat via the selected local AI CLI. Replaces remote custom provider and backend calls.
      */
     async chatWithCustomProvider(
         text: string,
@@ -524,15 +539,16 @@ export class GraphApiService {
         settings?: { customApiUrl: string, customApiKey: string, customModel: string, type?: 'openai' | 'mindsdb' },
         signal?: AbortSignal
     ): Promise<string> {
-        if (!this.claudeCodeService) {
-            throw new Error('Claude Code service not initialized.');
+        const service = this.getLocalCliService();
+        if (!service) {
+            throw new Error('Local AI CLI service not initialized.');
         }
         const sys = systemPrompt || 'You are a helpful OSINT assistant. Answer the user\'s questions to the best of your ability.';
-        return this.claudeCodeService.chat(sys, text, signal);
+        return service.chat(sys, text, signal);
     }
 
     /**
-     * General-purpose LLM call via Claude Code CLI.
+     * General-purpose model call via the selected local AI CLI.
      */
     async callRemoteModel(
         messages: { role: string, content: string }[],
@@ -542,8 +558,26 @@ export class GraphApiService {
         orchestrationOptions?: { provider: 'osint-copilot' | 'local' | 'remote', url: string, apiKey: string },
         logOptions?: ExtractionLogOptions
     ): Promise<string> {
-        if (!this.claudeCodeService) {
-            throw new Error('Claude Code service not initialized.');
+        return this.callLocalProviderModel(
+            this.settings?.apiProvider || 'claude-code',
+            messages,
+            jsonResponse,
+            signal,
+            logOptions,
+        );
+    }
+
+    /** Run a model turn through a specific built-in local CLI, independent of extraction selection. */
+    async callLocalProviderModel(
+        providerId: 'claude-code' | 'codex',
+        messages: { role: string, content: string }[],
+        jsonResponse: boolean = false,
+        signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
+    ): Promise<string> {
+        const service = this.getLocalCliService(providerId);
+        if (!service) {
+            throw new Error(`${providerId === 'codex' ? 'Codex' : 'Claude Code'} service not initialized.`);
         }
         let systemPrompt = '';
         let userContent = '';
@@ -557,7 +591,7 @@ export class GraphApiService {
         if (jsonResponse) {
             systemPrompt += '\n\nRespond ONLY with valid JSON. No explanation, no markdown fences.';
         }
-        return this.claudeCodeService.chat(systemPrompt, userContent, signal, logOptions);
+        return service.chat(systemPrompt, userContent, signal, logOptions);
     }
 
     /**
@@ -709,6 +743,9 @@ export class GraphApiService {
                     }
                 }
             } catch (error) {
+                if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+                    throw error;
+                }
                 console.error(`[GraphApiService] Chunk ${chunkNum} error:`, error);
                 // Continue with other chunks
             }
@@ -760,14 +797,15 @@ export class GraphApiService {
         signal?: AbortSignal,
         useLocal: boolean = false
     ): Promise<ProcessTextResponse> {
-        if (!this.claudeCodeService) {
+        const service = this.getLocalCliService();
+        if (!service) {
             return {
                 success: false,
-                error: 'Claude Code service not initialized. Please check Settings → OSINT Copilot → Graph Extraction.',
+                error: 'Local AI CLI service not initialized. Please check Settings → OSINT Copilot → Local AI CLI.',
             };
         }
-        console.debug('[GraphApiService] Routing to Claude Code for entity extraction');
-        return this.claudeCodeService.extractEntities(text, existingEntities, undefined, signal);
+        console.debug(`[GraphApiService] Routing to ${service.displayName} for entity extraction`);
+        return service.extractEntities(text, existingEntities, undefined, signal);
     }
 }
 

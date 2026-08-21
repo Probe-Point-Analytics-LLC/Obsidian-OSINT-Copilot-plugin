@@ -8,7 +8,7 @@ export interface ClaudeCodeConfig {
     timeoutMs: number;
     /**
      * When set (e.g. Obsidian vault root from `adapter.getBasePath()`), passed as `cwd` to the CLI process
-     * so Claude Code resolves relative paths and sandbox allowlists consistently with the open vault.
+     * so the CLI resolves relative paths and sandbox allowlists consistently with the open vault.
      */
     cliWorkingDirectory?: string;
     /**
@@ -16,6 +16,34 @@ export interface ClaudeCodeConfig {
      * Dangerous: allows unattended Bash if the model requests it.
      */
     extraCliArgs?: string;
+}
+
+/** Common surface implemented by local AI CLIs used by extraction, task agents, and chat. */
+export interface LocalCliService {
+    readonly providerId: string;
+    readonly displayName: string;
+    setVaultSkillResolver(resolver: (() => Promise<string | null>) | null): void;
+    updateConfig(config: Partial<ClaudeCodeConfig>): void;
+    extractEntities(
+        text: string,
+        existingEntities?: Entity[],
+        onProgress?: (message: string, percent: number) => void,
+        signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
+    ): Promise<ProcessTextResponse>;
+    chat(
+        systemPrompt: string,
+        userMessage: string,
+        signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
+        maxTurns?: number,
+    ): Promise<string>;
+    extractTextFromImage(
+        absolutePath: string,
+        signal?: AbortSignal,
+        logOptions?: ExtractionLogOptions,
+    ): Promise<string>;
+    isAvailable(): Promise<boolean>;
 }
 
 export type ExtractionLogLevel = 'info' | 'warn' | 'error' | 'debug';
@@ -64,8 +92,10 @@ export function sanitizeCliOutput(text: string, maxLen = 500): string {
     return `${cleaned.slice(0, maxLen)}…`;
 }
 
-export class ClaudeCodeService {
-    private config: ClaudeCodeConfig;
+export class ClaudeCodeService implements LocalCliService {
+    readonly providerId: string = 'claude-code';
+    readonly displayName: string = 'Claude Code';
+    protected config: ClaudeCodeConfig;
     private pluginDir: string;
     /** When set, tried first for graph extraction skill (vault-editable). */
     private vaultSkillResolver: (() => Promise<string | null>) | null = null;
@@ -83,13 +113,24 @@ export class ClaudeCodeService {
         Object.assign(this.config, config);
     }
 
+    /** Build argv for one prompt. Subclasses can adapt another CLI while reusing extraction/parsing. */
+    protected buildCliArgs(maxTurns: number, extra: string[], _imagePaths: string[]): string[] {
+        return [
+            '--print',
+            '--output-format', 'text',
+            '--model', this.config.model,
+            '--max-turns', String(maxTurns),
+            ...extra,
+        ];
+    }
+
     private async resolveSkillContent(): Promise<string> {
         if (this.vaultSkillResolver) {
             try {
                 const v = await this.vaultSkillResolver();
                 if (v && v.trim().length > 0) return v.trim();
             } catch (e) {
-                console.warn('[ClaudeCodeService] vault skill resolver failed:', e);
+                console.warn(`[${this.displayName}] vault skill resolver failed:`, e);
             }
         }
         try {
@@ -147,11 +188,11 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
     ): Promise<ProcessTextResponse> {
         const prompt = await this.buildPrompt(text, existingEntities);
 
-        onProgress?.('Invoking Claude Code CLI...', 30);
+        onProgress?.(`Invoking ${this.displayName}...`, 30);
         logOptions?.emit?.({
             phase: 'invoke_start',
             level: 'info',
-            message: 'Invoking Claude Code CLI for entity extraction',
+            message: `Invoking ${this.displayName} for entity extraction`,
             timestamp: Date.now(),
         });
 
@@ -174,7 +215,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                     details: sanitizeCliOutput(raw, 900),
                     timestamp: Date.now(),
                 });
-                return { success: false, error: 'Could not parse JSON from Claude response' };
+                return { success: false, error: `Could not parse JSON from ${this.displayName} response` };
             }
 
             const operations = this.normalizeOperations(parsed);
@@ -189,12 +230,18 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             return { success: true, operations };
         } catch (err: any) {
             if (err.name === 'AbortError') throw err;
-            console.error('[ClaudeCodeService] extraction failed:', err);
+            console.error(`[${this.displayName}] extraction failed:`, err);
             return { success: false, error: err.message || String(err) };
         }
     }
 
-    private invokeCLI(prompt: string, signal?: AbortSignal, maxTurns: number = 1, logOptions?: ExtractionLogOptions): Promise<string> {
+    protected invokeCLI(
+        prompt: string,
+        signal?: AbortSignal,
+        maxTurns: number = 1,
+        logOptions?: ExtractionLogOptions,
+        imagePaths: string[] = [],
+    ): Promise<string> {
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
                 logOptions?.emit?.({
@@ -213,21 +260,23 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
             // `timeout` option killing a slow-running process — both present identically as
             // `error.killed`/`error.signal === 'SIGTERM'`, but only the former is a real cancel.
             let killedByAbortSignal = false;
+            let onAbort: (() => void) | null = null;
+            let settled = false;
+
+            const rejectOnce = (error: Error): void => {
+                if (settled) return;
+                settled = true;
+                reject(error);
+            };
 
             const extra = splitCliArgsLine(this.config.extraCliArgs ?? '');
-            const args = [
-                '--print',
-                '--output-format', 'text',
-                '--model', this.config.model,
-                '--max-turns', String(maxTurns),
-                ...extra,
-            ];
+            const args = this.buildCliArgs(maxTurns, extra, imagePaths);
 
             const cwd = this.config.cliWorkingDirectory?.trim();
             logOptions?.emit?.({
                 phase: 'invoke_start',
                 level: 'info',
-                message: `Running: ${this.config.cliPath} --print --output-format text --model ${this.config.model} --max-turns ${maxTurns}${extra.length ? ` +${extra.length} extra arg(s)` : ''}`,
+                message: `Running ${this.displayName}: ${this.config.cliPath}${extra.length ? ` (+${extra.length} extra arg(s))` : ''}`,
                 details: cwd ? `cwd=${cwd}` : 'cwd=(default)',
                 timestamp: Date.now(),
             });
@@ -241,6 +290,9 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                     ...(cwd ? { cwd } : {}),
                 },
                 (error: any, stdout: string, stderr: string) => {
+                    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+                    if (settled) return;
+                    settled = true;
                     const errOut = stderr?.trim() ?? '';
                     const stdOut = stdout?.trim() ?? '';
                     if (error) {
@@ -248,36 +300,36 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                             logOptions?.emit?.({
                                 phase: 'invoke_aborted',
                                 level: 'warn',
-                                message: 'Claude CLI process aborted',
+                                message: `${this.displayName} process aborted`,
                                 timestamp: Date.now(),
                             });
                             reject(new DOMException('Aborted', 'AbortError'));
                         } else {
-                            // Claude Code often prints fatal messages on stdout; include both for Obsidian notices and logs.
+                            // Some CLIs print fatal messages on stdout; include both for Obsidian notices and logs.
                             const combined = [errOut, stdOut].filter(Boolean).join('\n');
                             const timedOut = error.killed || error.signal === 'SIGTERM';
                             // A timeout kill leaves no useful stderr/stdout, and Node's own error.message
                             // ("Command failed: ...") is just the invoked command line, not a real
                             // explanation — prefer the clear timeout message over that generic text.
                             const tail = combined ||
-                                (timedOut ? `Claude CLI timed out after ${this.config.timeoutMs}ms and was killed` : null) ||
+                                (timedOut ? `${this.displayName} timed out after ${this.config.timeoutMs}ms and was killed` : null) ||
                                 error.message || 'unknown error';
                             logOptions?.emit?.({
                                 phase: 'invoke_error',
                                 level: 'error',
-                                message: `Claude CLI failed (code ${error.code})`,
+                                message: `${this.displayName} failed (code ${error.code})`,
                                 details: logOptions?.rawCli ? tail : sanitizeCliOutput(tail, 1200),
                                 timestamp: Date.now(),
                             });
-                            console.error('[ClaudeCodeService] CLI failed', { code: error.code, stderr: errOut, stdout: stdOut });
-                            reject(new Error(`Claude CLI error (code ${error.code}): ${tail}`));
+                            console.error(`[${this.displayName}] CLI failed`, { code: error.code, stderr: errOut, stdout: stdOut });
+                            reject(new Error(`${this.displayName} error (code ${error.code}): ${tail}`));
                         }
                         return;
                     }
                     logOptions?.emit?.({
                         phase: 'invoke_exit',
                         level: 'info',
-                        message: 'Claude CLI completed successfully',
+                        message: `${this.displayName} completed successfully`,
                         details: logOptions?.rawCli ? stdOut : sanitizeCliOutput(stdOut, 400),
                         timestamp: Date.now(),
                     });
@@ -285,21 +337,41 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
                 },
             );
 
-            child.stdin?.write(prompt);
-            child.stdin?.end();
-            logOptions?.emit?.({
-                phase: 'stdin_sent',
-                level: 'debug',
-                message: 'Prompt sent to Claude CLI stdin',
-                timestamp: Date.now(),
-            });
-
             if (signal) {
-                const onAbort = () => {
+                onAbort = () => {
                     killedByAbortSignal = true;
                     child.kill('SIGTERM');
                 };
                 signal.addEventListener('abort', onAbort, { once: true });
+                if (signal.aborted) onAbort();
+            }
+
+            if (!killedByAbortSignal) {
+                const stdin = child.stdin;
+                if (stdin) {
+                    // A CLI can reject argv and exit before a large prompt is written. Without
+                    // an error listener Node treats the resulting EPIPE as an uncaught exception.
+                    stdin.on('error', (stdinError: NodeJS.ErrnoException) => {
+                        if (stdinError.code === 'EPIPE' || killedByAbortSignal || child.killed) return;
+                        child.kill('SIGTERM');
+                        rejectOnce(new Error(`${this.displayName} stdin error: ${stdinError.message}`));
+                    });
+                    try {
+                        stdin.end(prompt, () => {
+                            if (settled || killedByAbortSignal) return;
+                            logOptions?.emit?.({
+                                phase: 'stdin_sent',
+                                level: 'debug',
+                                message: `Prompt sent to ${this.displayName} stdin`,
+                                timestamp: Date.now(),
+                            });
+                        });
+                    } catch (stdinError) {
+                        child.kill('SIGTERM');
+                        const message = stdinError instanceof Error ? stdinError.message : String(stdinError);
+                        rejectOnce(new Error(`${this.displayName} stdin error: ${message}`));
+                    }
+                }
             }
         });
     }
@@ -393,7 +465,7 @@ CRITICAL: Output ONLY the raw JSON object. No markdown fences, no prose, no inve
     }
 
     /**
-     * General-purpose chat: send system + user messages to Claude CLI, return text.
+     * General-purpose chat: send system + user messages to this CLI and return text.
      * Used for local search answer synthesis, entity extraction from queries, etc.
      */
     async chat(
@@ -433,14 +505,18 @@ Return ONLY the extracted information as plain text. No markdown formatting, no 
                     file: absolutePath,
                 });
             },
-        });
+        }, [absolutePath]);
     }
 
     async isAvailable(): Promise<boolean> {
         return new Promise((resolve) => {
             try {
                 const { execFile } = require('child_process') as typeof import('child_process');
-                execFile(this.config.cliPath, ['--version'], { timeout: 5000 }, (error: any) => {
+                const cwd = this.config.cliWorkingDirectory?.trim();
+                execFile(this.config.cliPath, ['--version'], {
+                    timeout: 5000,
+                    ...(cwd ? { cwd } : {}),
+                }, (error: any) => {
                     resolve(!error);
                 });
             } catch {

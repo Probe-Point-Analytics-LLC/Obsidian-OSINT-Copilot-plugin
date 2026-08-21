@@ -39,11 +39,15 @@ export interface VaultAISettings {
 	enrichersFolder: string;
 	credentialsFolder: string;
 	scriptsFolder: string;
-	apiProvider: "claude-code";
+	apiProvider: "claude-code" | "codex";
 	claudeCodeCliPath: string;
 	claudeCodeModel: string;
 	claudeCodeExtraArgs: string;
 	claudeCodeTimeoutMs: number;
+	codexCliPath: string;
+	codexCliModel: string;
+	codexCliExtraArgs: string;
+	codexCliTimeoutMs: number;
 	agentRuntimeProvider: string;
 	hermesAgentCliPath: string;
 	hermesAgentExtraArgs: string;
@@ -96,6 +100,10 @@ export const DEFAULT_SETTINGS: VaultAISettings = {
 	claudeCodeModel: "sonnet",
 	claudeCodeExtraArgs: "",
 	claudeCodeTimeoutMs: 300_000,
+	codexCliPath: "codex",
+	codexCliModel: "",
+	codexCliExtraArgs: "",
+	codexCliTimeoutMs: 300_000,
 	agentRuntimeProvider: CLAUDE_RUNTIME_ID,
 	hermesAgentCliPath: "hermes",
 	hermesAgentExtraArgs: "",

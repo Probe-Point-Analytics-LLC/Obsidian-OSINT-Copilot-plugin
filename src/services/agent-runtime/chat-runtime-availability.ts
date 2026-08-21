@@ -1,6 +1,6 @@
 import type VaultAIPlugin from '../../plugin/vault-ai-plugin';
 import { createAgentProvider } from './create-agent-provider';
-import { CLAUDE_RUNTIME_ID, getConfiguredRuntimeOptions } from './runtime-registry';
+import { getConfiguredRuntimeOptions } from './runtime-registry';
 
 export interface ChatRuntimeAvailability {
     byId: Record<string, boolean>;
@@ -16,15 +16,6 @@ export function invalidateChatRuntimeAvailabilityCache(): void {
     cache = null;
 }
 
-async function probeClaude(plugin: VaultAIPlugin): Promise<boolean> {
-    try {
-        const h = await plugin.graphApiService?.checkHealth();
-        return h !== null && h.status === 'ok';
-    } catch {
-        return false;
-    }
-}
-
 /**
  * Probe which local agent CLIs are reachable. Cached briefly to avoid exec spam on ChatView re-renders.
  */
@@ -36,9 +27,7 @@ export async function getChatRuntimeAvailability(
         return { ...cache.value };
     }
     const byId: Record<string, boolean> = {};
-    byId[CLAUDE_RUNTIME_ID] = await probeClaude(plugin);
-
-    const options = getConfiguredRuntimeOptions(plugin).filter((r) => r.id !== CLAUDE_RUNTIME_ID);
+    const options = getConfiguredRuntimeOptions(plugin);
     const probes = await Promise.all(
         options.map(async (runtime) => {
             try {

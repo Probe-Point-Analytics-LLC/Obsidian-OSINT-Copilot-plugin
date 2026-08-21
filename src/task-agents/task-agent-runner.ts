@@ -1,5 +1,5 @@
 import { App } from "obsidian";
-import type { ClaudeCodeService } from "../services/claude-code-service";
+import type { LocalCliService } from "../services/claude-code-service";
 import type { VaultPromptLoader } from "../services/vault-prompt-loader";
 import { assembleTaskAgentContext } from "./context-assembler";
 import type { IndexedNoteLike } from "./context-assembler";
@@ -17,7 +17,7 @@ export interface TaskAgentRunnerOptions {
 export class TaskAgentRunner {
 	constructor(
 		private app: App,
-		private getClaude: () => ClaudeCodeService | null,
+		private getLocalCli: () => LocalCliService | null,
 		private vaultPromptLoader: VaultPromptLoader,
 		private getPluginIndex: () => Map<string, IndexedNoteLike>,
 		private getDefaultModel: () => string,
@@ -33,10 +33,10 @@ export class TaskAgentRunner {
 		userMessage: string,
 		signal?: AbortSignal,
 	): Promise<{ assistantText: string; appliedPaths: string[] }> {
-		const claude = this.getClaude();
-		if (!claude) {
+		const localCli = this.getLocalCli();
+		if (!localCli) {
 			return {
-				assistantText: "Claude Code CLI is not initialized. Check plugin settings.",
+				assistantText: "Local AI CLI is not initialized. Check plugin settings.",
 				appliedPaths: [],
 			};
 		}
@@ -82,18 +82,21 @@ Paths must be vault-relative, use forward slashes, and stay within the agent out
 
 		const defaultModel = this.getDefaultModel();
 		if (manifest.model) {
-			claude.updateConfig({ model: manifest.model });
+			localCli.updateConfig({ model: manifest.model });
 		}
 
 		let raw: string;
 		try {
-			raw = await claude.chat(systemPrompt, userBlock, signal);
+			raw = await localCli.chat(systemPrompt, userBlock, signal);
 		} catch (e) {
+			if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) {
+				throw e;
+			}
 			const msg = e instanceof Error ? e.message : String(e);
 			return { assistantText: `Task agent error (CLI): ${msg}`, appliedPaths: [] };
 		} finally {
 			if (manifest.model) {
-				claude.updateConfig({ model: defaultModel });
+				localCli.updateConfig({ model: defaultModel });
 			}
 		}
 

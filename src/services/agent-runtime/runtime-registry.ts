@@ -16,6 +16,7 @@ export interface RuntimeOption {
 }
 
 export const CLAUDE_RUNTIME_ID = 'claude-code';
+export const CODEX_RUNTIME_ID = 'codex';
 export const HERMES_RUNTIME_ID = 'hermes-agent';
 const CUSTOM_ID_PREFIX = 'custom:';
 
@@ -72,6 +73,7 @@ export function normalizeCustomAgentRuntimes(raw: unknown): CustomAgentRuntime[]
 export function getConfiguredRuntimeOptions(plugin: VaultAIPlugin): RuntimeOption[] {
     const options: RuntimeOption[] = [
         { id: CLAUDE_RUNTIME_ID, displayName: 'Claude Code' },
+        { id: CODEX_RUNTIME_ID, displayName: 'Codex CLI' },
         { id: HERMES_RUNTIME_ID, displayName: 'Hermes Agent' },
     ];
     for (const rt of plugin.settings.customAgentRuntimes || []) {

@@ -98,7 +98,7 @@ export function resolveScriptFilePath(plugin: VaultAIPlugin, relativePath: strin
 
 const DEFAULT_SCRIPTS_README = `# Vault scripts (coding assets)
 
-The unified agent can propose **create / update / delete** for text files in this folder. Review changes in chat and use **Apply selected** — the plugin does **not** run these scripts. Run them in your own terminal or Claude Code when you trust the code.
+The unified agent can propose **create / update / delete** for text files in this folder. Review changes in chat and use **Apply selected** — the plugin does **not** run these scripts. Run them in your own terminal, Claude Code, or Codex when you trust the code.
 
 Do **not** store API keys or secrets in script bodies; use \`put_credentials\` and enricher \`*_vault\` auth instead.
 `;

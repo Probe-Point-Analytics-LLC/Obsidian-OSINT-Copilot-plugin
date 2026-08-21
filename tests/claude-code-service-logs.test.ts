@@ -35,4 +35,22 @@ describe('ClaudeCodeService extraction logging', () => {
     expect(res.success).toBe(true);
     expect(logs.some((l) => l.phase === 'parse_success')).toBe(true);
   });
+
+  it('handles stdin EPIPE when a CLI exits before accepting a large prompt', async () => {
+    class EarlyExitService extends ClaudeCodeService {
+      protected override buildCliArgs(): string[] {
+        return ['-e', 'process.stdin.destroy(); process.exit(2)'];
+      }
+
+      invokeLargePrompt(): Promise<string> {
+        return this.invokeCLI('x'.repeat(512 * 1024));
+      }
+    }
+    const svc = new EarlyExitService('', {
+      cliPath: process.execPath,
+      timeoutMs: 5_000,
+    });
+
+    await expect(svc.invokeLargePrompt()).rejects.toThrow(/Claude Code error/);
+  });
 });

@@ -40,12 +40,14 @@ import {
 } from '../services/agent-runtime/chat-runtime-availability';
 import {
   CLAUDE_RUNTIME_ID,
+  CODEX_RUNTIME_ID,
   getConfiguredRuntimeOptions,
 } from '../services/agent-runtime/runtime-registry';
 import type { CustomVaultOperation } from '../services/custom-vault-operations';
 import { normalizeCustomVaultOperations, summarizeCustomVaultOperation } from '../services/custom-vault-operations';
 import { applyCustomVaultOperations } from '../services/custom-vault-writer';
 import { isTaskAgentRunnable } from '../task-agents/task-agent-settings';
+import type { TaskAgentManifest } from '../task-agents/types';
 import type { IndexedNote } from '../chat/indexed-note';
 import type { ChatHistoryItem } from '../chat/chat-types';
 import { RenameConversationModal } from '../modals/rename-conversation-modal';
@@ -162,26 +164,14 @@ export class ChatView extends ItemView {
     return opt?.displayName || "Claude Code";
   }
 
-  /** Keep selected runtime valid and available. */
-  private async syncRuntimeSelectionToAvailability(av: ChatRuntimeAvailability): Promise<void> {
+  /** Keep a removed runtime id valid, but never fail over a valid user selection. */
+  private async syncRuntimeSelectionToAvailability(_av: ChatRuntimeAvailability): Promise<void> {
     const configured = getConfiguredRuntimeOptions(this.plugin).map((r) => r.id);
     const cur = this.plugin.settings.agentRuntimeProvider;
     if (!configured.includes(cur)) {
       this.plugin.settings.agentRuntimeProvider = CLAUDE_RUNTIME_ID;
       await this.plugin.saveSettings();
       return;
-    }
-    if (av.availableIds.length === 0) {
-      return;
-    }
-    if (av.byId[cur]) {
-      return;
-    }
-    const fallback = av.byId[CLAUDE_RUNTIME_ID] ? CLAUDE_RUNTIME_ID : av.availableIds[0];
-    if (fallback && fallback !== cur) {
-      this.plugin.settings.agentRuntimeProvider = fallback;
-      await this.plugin.saveSettings();
-      new Notice(`Using ${this.runtimeDisplayName(fallback)} (selected runtime not available).`);
     }
   }
 
@@ -193,34 +183,63 @@ export class ChatView extends ItemView {
     wrap.style.flexWrap = "wrap";
 
     const configured = getConfiguredRuntimeOptions(this.plugin);
-    const available = configured.filter((r) => av.byId[r.id]);
-    if (available.length === 0) {
+    if (av.availableIds.length === 0) {
       wrap.createEl("span", {
-        text: "No agent CLI detected. Configure Claude, Hermes, or a custom runtime under Settings → OSINT Copilot.",
+        text: "No agent CLI detected. Configure Claude, Codex, Hermes, or a custom runtime under Settings → OSINT Copilot.",
         cls: "setting-item-description",
       });
-      return;
-    }
-    if (available.length === 1) {
-      wrap.createEl("span", {
-        text: `Runtime: ${available[0].displayName} (only CLI available)`,
-        cls: "setting-item-description",
-      });
-      return;
     }
     new Setting(wrap)
       .setName("Runtime")
       .addDropdown((dd) => {
-        for (const rt of available) {
-          dd.addOption(rt.id, rt.displayName);
+        for (const rt of configured) {
+          dd.addOption(rt.id, av.byId[rt.id] ? rt.displayName : `${rt.displayName} (unavailable)`);
         }
-        const current = av.byId[this.plugin.settings.agentRuntimeProvider]
-          ? this.plugin.settings.agentRuntimeProvider
-          : available[0].id;
-        dd.setValue(current);
+        dd.setValue(this.plugin.settings.agentRuntimeProvider);
         dd.onChange(async (v) => {
           if (this.plugin.settings.agentRuntimeProvider === v) return;
           this.plugin.settings.agentRuntimeProvider = v;
+          if (v === CLAUDE_RUNTIME_ID || v === CODEX_RUNTIME_ID) {
+            this.plugin.settings.apiProvider = v;
+          }
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+
+  /** Select a vault task agent, or leave the unified agent as the conversation workflow. */
+  private async buildTaskAgentHeaderRow(buttonGroup: HTMLElement): Promise<void> {
+    if (!this.plugin.settings.taskAgentsEnabled) {
+      this.selectedTaskAgentId = "";
+      return;
+    }
+    let agents: TaskAgentManifest[];
+    try {
+      agents = (await this.plugin.taskAgentRegistry.listAgents())
+        .filter((agent) => isTaskAgentRunnable(agent, this.plugin.settings));
+    } catch (error) {
+      console.warn('[ChatView] Could not list task agents:', error);
+      return;
+    }
+    if (!agents.some((agent) => agent.id === this.selectedTaskAgentId)) {
+      this.selectedTaskAgentId = "";
+    }
+    if (agents.length === 0) return;
+
+    const wrap = buttonGroup.createDiv({ cls: "vault-ai-task-agent-header" });
+    new Setting(wrap)
+      .setName("Workflow")
+      .addDropdown((dd) => {
+        dd.addOption("", "Unified agent");
+        for (const agent of agents) dd.addOption(agent.id, agent.name);
+        dd.setValue(this.selectedTaskAgentId);
+        dd.onChange(async (value) => {
+          this.selectedTaskAgentId = value;
+          this.plugin.settings.preferredTaskAgentId = value;
+          if (this.currentConversation) {
+            this.currentConversation.taskAgentId = value || undefined;
+            await this.plugin.conversationService.saveConversation(this.currentConversation);
+          }
           await this.plugin.saveSettings();
         });
       });
@@ -359,6 +378,7 @@ export class ChatView extends ItemView {
     const runtimeAvailability = await getChatRuntimeAvailability(this.plugin);
     await this.syncRuntimeSelectionToAvailability(runtimeAvailability);
     this.buildRuntimeHeaderRow(buttonGroup, runtimeAvailability);
+    await this.buildTaskAgentHeaderRow(buttonGroup);
 
     // Settings shortcut button
     const settingsBtn = buttonGroup.createEl("button", {
@@ -477,7 +497,7 @@ export class ChatView extends ItemView {
     this.sendButtonEl = sendBtn;
     if (runtimeAvailability.availableIds.length === 0) {
       sendBtn.disabled = true;
-      sendBtn.title = "Install and configure Claude, Hermes, or a custom runtime in Settings → OSINT Copilot.";
+      sendBtn.title = "Install and configure Claude, Codex, Hermes, or a custom runtime in Settings → OSINT Copilot.";
     } else {
       sendBtn.disabled = false;
       sendBtn.title = "";
@@ -619,6 +639,13 @@ export class ChatView extends ItemView {
    * Returns object with content parts or null if no disclaimer needed.
    */
   private getModeDisclaimer(): { icon: string; title: string; text: string } | null {
+    if (this.selectedTaskAgentId.trim()) {
+      return {
+        icon: "🤖",
+        title: "Task agent:",
+        text: `The selected vault task agent runs through ${this.runtimeDisplayName(this.plugin.settings.apiProvider)} and may automatically create or update files, limited by both configured output allowlists.`,
+      };
+    }
     const p = this.runtimeDisplayName(this.plugin.settings.agentRuntimeProvider);
     return {
       icon: "🤖",
@@ -851,6 +878,21 @@ export class ChatView extends ItemView {
   private getVaultAbsolutePath(): string {
     const adapter = this.app.vault.adapter as any;
     return typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+  }
+
+  /** Preserve prior evidence when a browser upload reuses an existing filename. */
+  private getAvailableEvidencePath(evidenceFolder: string, rawName: string): string {
+    const safeName = rawName.replace(/[\\/:*?"<>|]/g, '_');
+    const dot = safeName.lastIndexOf('.');
+    const stem = dot > 0 ? safeName.slice(0, dot) : safeName;
+    const extension = dot > 0 ? safeName.slice(dot) : '';
+    let candidate = normalizePath(`${evidenceFolder}/${safeName}`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(candidate)) {
+      candidate = normalizePath(`${evidenceFolder}/${stem}-${suffix}${extension}`);
+      suffix++;
+    }
+    return candidate;
   }
 
   /**
@@ -2308,12 +2350,22 @@ export class ChatView extends ItemView {
     const sendRuntimeAvailability = await getChatRuntimeAvailability(this.plugin, true);
     if (sendRuntimeAvailability.availableIds.length === 0) {
       new Notice(
-        "No agent runtime is available. Install Claude, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
+        "No agent runtime is available. Install Claude, Codex, Hermes, or a custom runtime and confirm settings under OSINT Copilot.",
         8000,
       );
       return;
     }
-    await this.syncRuntimeSelectionToAvailability(sendRuntimeAvailability);
+    const requestRuntimeId = this.selectedTaskAgentId.trim()
+      ? this.plugin.settings.apiProvider
+      : this.plugin.settings.agentRuntimeProvider;
+    if (!sendRuntimeAvailability.byId[requestRuntimeId]) {
+      new Notice(
+        `${this.runtimeDisplayName(requestRuntimeId)} is unavailable, so your message was not sent. ` +
+        'Check its executable and login, or explicitly select another runtime.',
+        9000,
+      );
+      return;
+    }
 
     this.inputEl.value = "";
 
@@ -2386,16 +2438,9 @@ export class ChatView extends ItemView {
             } else {
               const evidencePath = normalizePath(`${this.plugin.entityManager.getBasePath()}/Evidence`);
               await ensureFolderExists(this.app, evidencePath);
-              const safeName = fileName.replace(/[\\/:*?"<>|]/g, '_');
-              const destPath = normalizePath(`${evidencePath}/${safeName}`);
+              const destPath = this.getAvailableEvidencePath(evidencePath, fileName);
               const buffer = await (attachment.file as File).arrayBuffer();
-              const existing = this.app.vault.getAbstractFileByPath(destPath);
-              let tFile: TFile;
-              if (existing instanceof TFile) {
-                tFile = existing;
-              } else {
-                tFile = await this.app.vault.createBinary(destPath, buffer);
-              }
+              const tFile = await this.app.vault.createBinary(destPath, buffer);
               const vaultBase = this.getVaultAbsolutePath();
               absolutePath = vaultBase ? `${vaultBase}/${tFile.path}` : tFile.path;
             }
@@ -2495,7 +2540,9 @@ export class ChatView extends ItemView {
     // Save conversation after user message
     await this.saveCurrentConversation();
 
-    if (this.vaultGraphIngestMode) {
+    if (this.selectedTaskAgentId.trim()) {
+      await this.handleVaultTaskAgent(processingValue);
+    } else if (this.vaultGraphIngestMode) {
       await this.handleVaultGraphIngestOnly(processingValue, "");
     } else {
       await this.handleOrchestrationAgent(processingValue, "");
@@ -2510,7 +2557,7 @@ export class ChatView extends ItemView {
     this.chatHistory.push({
       role: "assistant",
       content: "",
-      progress: { message: "Running task agent (local Claude)...", percent: 15 },
+      progress: { message: "Running task agent (local AI CLI)...", percent: 15 },
     });
     await this.renderMessages();
 

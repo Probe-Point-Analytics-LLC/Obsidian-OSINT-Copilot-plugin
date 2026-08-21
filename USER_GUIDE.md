@@ -17,8 +17,8 @@
 **OSINT Copilot** helps **SOC analysts**, **threat intelligence researchers**, and **investigators** work inside Obsidian with a **local-first** model:
 
 1. **Local workspace** — Entities, relationships, graph, timeline, and map are **Markdown in your vault** (default entity folder `OSINTCopilot/`). No cloud account is required for these.
-2. **Local AI** — Chat always uses a **unified agent turn**: **Claude Code** by default, or **Hermes Agent** / **custom runtimes** from Settings. The **chat header** runtime dropdown lists reachable CLIs (**Agent runtime**). The agent returns JSON (`answer_markdown`, optional `graph_operations`, `retrieval_hits`, optional `custom_vault_operations`); the plugin applies proposed vault/graph changes only after you confirm. **Vault prompts** under `**OSINTCopilot/custom/`** augment the agent. **Chat history** defaults to `**OSINTCopilot/conversations/`**.
-3. **No remote investigation API** — This build does not call a vendor backend for reports, dark-web jobs, digital-footprint search, or hosted evidence analysis. AI calls go through your selected **local** CLI (Claude Code and/or Hermes as configured).
+2. **Local AI CLI integration** — Chat always uses a **unified agent turn**: **Claude Code** by default, **Codex CLI** as a first-class alternative, or **Hermes Agent** / **custom runtimes** from Settings. The **chat header** runtime dropdown lists reachable CLIs (**Agent runtime**). The agent returns JSON (`answer_markdown`, optional `graph_operations`, `retrieval_hits`, optional `custom_vault_operations`); the plugin applies proposed vault/graph changes only after you confirm. **Vault prompts** under `**OSINTCopilot/custom/`** augment the agent. **Chat history** defaults to `**OSINTCopilot/conversations/`**.
+3. **No remote investigation API** — This build does not call a hosted OSINT backend for reports, dark-web jobs, digital-footprint search, or evidence analysis. The selected executable runs on your computer, but **local CLI** does not mean on-device inference: standard Claude Code requests go to Anthropic and standard Codex CLI requests go to OpenAI. Hermes/custom network behavior depends on your runtime.
 
 ### Who is this for?
 
@@ -86,22 +86,22 @@ Copy `main.js`, `manifest.json`, and `styles.css` from the repo root into your v
 
 Open **Settings → OSINT Copilot**.
 
-### 1. Unified chat agent (Claude default, Hermes/custom optional)
+### 1. Unified chat agent (Claude or Codex, with Hermes/custom options)
 
 Under **Settings → OSINT Copilot → Unified chat agent**:
 
 
 | Setting                                                                    | Purpose                                                                                                                                                                                                     |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Agent runtime**                                                          | **Claude Code** (default), **Hermes Agent**, or any enabled **custom runtime** — which CLI receives the unified JSON prompt on stdin.                                                                       |
+| **Agent runtime**                                                          | **Claude Code** (default), **Codex CLI**, **Hermes Agent**, or any enabled **custom runtime** — which CLI receives the unified JSON prompt on stdin.                                                        |
 | **Hermes CLI path** / **extra args** / **timeout** / **health-check args** | Used only when Agent runtime is **Hermes**. Extra args are split on whitespace and prepended before stdin is sent (your Hermes build may require a subcommand — set it here).                               |
 | **Custom runtimes**                                                        | Add/remove custom CLI runtimes in Settings. Each runtime has display name, id, path, args, timeout, health-check args, and enabled toggle. Enabled + reachable runtimes appear in the chat header dropdown. |
 | **Test agent runtime**                                                     | Health check for the **selected** runtime.                                                                                                                                                                  |
 
 
-Runtime-specific controls are now conditional: Hermes fields show only when **Hermes** is selected, custom runtime fields show only when that **custom runtime** is selected, and Claude selection shows a pointer to Claude CLI/model controls.
+Runtime-specific controls are conditional. Claude and Codex selections point to their controls under **Local AI CLI**; Hermes and custom runtime fields appear only when those runtimes are selected. Selecting Claude or Codex as the **Agent runtime** also selects it as the **Extraction and task-agent CLI**. Selecting Hermes/custom for chat leaves the Local AI CLI choice unchanged.
 
-Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code). For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
+Install **Claude Code** per [Anthropic’s Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code), or install **Codex CLI** per the [official OpenAI Codex documentation](https://learn.chatgpt.com/docs/codex/cli). For Codex, run `codex login` in a terminal and complete the browser flow; `codex login status` reports the active authentication method. For **Hermes**, install your Hermes Agent CLI and point **Hermes CLI path** at it; adjust **extra args** so the process accepts a prompt on stdin and prints **one JSON object** matching schema version `osint_copilot_agent_turn_v1` (see developer docs / `build-unified-agent-prompt.ts`).
 
 #### Register a custom runtime (step-by-step)
 
@@ -115,16 +115,25 @@ Install **Claude Code** per [Anthropic’s Claude Code documentation](https://do
    - **Enabled** — must be on for the runtime to appear in chat.
 3. Click **Test agent runtime** with that runtime selected in **Agent runtime**.
 4. In chat, pick your runtime from the header dropdown and send a short message; confirm the reply is valid plugin JSON or readable fallback text.
-5. If bulk extraction should stay on Claude, leave **Graph extraction (Claude Code)** pointed at `claude` even when chat uses a custom runtime.
+5. Choose the separate **Local AI CLI → Extraction and task-agent CLI** for bulk extraction even when chat uses Hermes or a custom runtime.
 
-**Graph extraction (Claude Code)** settings configure the `claude` binary used for **bulk** extraction (vault ingest, attachment pipeline, task agents) and for unified chat when **Agent runtime** is Claude.
+### 1b. Local AI CLI (extraction, task agents, and Claude/Codex chat)
 
-### 1b. Claude Code CLI (graph extraction & fallback)
+Under **Settings → OSINT Copilot → Local AI CLI**:
 
-- **Claude Code CLI path** — Default `claude` if the binary is on your `PATH`; otherwise the full path to the executable.  
-- **Model** — Passed through to the CLI (e.g. `sonnet`).
+- **Extraction and task-agent CLI** — Select **Claude Code** or **Codex CLI** for bulk extraction, attachment/image analysis, vault ingest/skills, and task agents.
+- **Claude CLI path / model / extra args / timeout** — Used when Claude is selected.
+- **Codex CLI path** — Default `codex` if the executable is on Obsidian's `PATH`. Desktop-launched Obsidian may inherit a narrower `PATH` than your terminal, so use an absolute path when necessary (for example `/home/you/.local/bin/codex`; run `command -v codex` on Linux/macOS to locate it).
+- **Codex sign-in** — Run `codex login` outside Obsidian, then use **Check login** or `codex login status`.
+- **Codex model override** — Leave blank to use the default model in your Codex configuration (`~/.codex/config.toml`). Set a value only when this plugin should override that default.
+- **Codex exec extra args / timeout** — Optional `codex exec` arguments (for example, `--oss`) and the request limit. The plugin rejects approval, sandbox, output, model, image, working-directory, and session flags here because it owns that non-interactive contract. Standard OpenAI readiness requires `codex login`; explicit `--oss`, `--profile`/`-p`, `--local-provider`, or `model_provider` overrides delegate authentication to that configured provider. If your default `config.toml` uses a no-login custom provider, make the profile/provider override explicit here so the plugin can distinguish it from a logged-out OpenAI setup.
+- **Test selected local AI CLI** — Checks the provider currently selected in **Extraction and task-agent CLI**.
 
-Used for **entity extraction** when not using the unified Hermes-only setup, and for **task agents**. When **Agent runtime** is Claude, unified chat also uses this service.
+Each Codex request is **stateless**: the plugin starts a fresh `codex exec` process and includes the relevant Obsidian conversation memory in the prompt instead of resuming a Codex session. Execution is **ephemeral**, uses a **read-only sandbox**, disables approval prompts, and permits non-Git vaults. Unified-chat graph and vault writes are returned as proposals for confirmation in Obsidian; an explicitly selected vault task agent may apply file output automatically through Obsidian, restricted by both its own and the global output allowlists. Codex itself is not granted direct write access by this integration.
+
+The chat header never silently switches providers for a pending message. An unavailable or logged-out selected runtime stops the send and asks you to restore it or explicitly choose another. If enabled vault task agents are installed, select one from **Workflow** in the chat header; choose **Unified agent** for normal chat. Codex CLI does not accept SVG image attachments in this integration, so export SVG evidence as PNG or JPEG before attaching it.
+
+Codex CLI runs locally as a process, but its normal inference is remote OpenAI processing. Codex supports ChatGPT sign-in and API-key authentication; billing and data controls depend on the method you use. Review your organization's provider and data-handling policy before sending vault context.
 
 ### 2. Vault prompts (first run + edits)
 
@@ -156,7 +165,7 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 
 **LeakCheck-style `query_vault`:** The API key is read from the credential file and appended as a query parameter (`queryParam`, often `key`). If enrichers failed with **Missing credential env var: (unset)** while your JSON already used `**auth.type`: `query_vault`** and a valid `**vaultRelativePath**`, update to the latest plugin — older builds mishandled query-string vault auth. After updating, reload Obsidian and retry.
 
-**Agent-drafted specs (Claude or unified `upsert_enricher`):** The plugin performs enricher HTTP with **Obsidian `requestUrl`** (not your browser tab). Put the **real API hostname** in `allowedDomains` (not only the docs website). Prefer **vault-backed auth** with `vaultRelativePath` for API keys. Avoid APIs that only work with a **logged-in browser cookie**—those will fail the same way authenticated webmail URLs fail for “fetch link” features.
+**Agent-drafted specs (`upsert_enricher`):** The selected unified agent can propose specs. The plugin performs enricher HTTP with **Obsidian `requestUrl`** (not your browser tab). Put the **real API hostname** in `allowedDomains` (not only the docs website). Prefer **vault-backed auth** with `vaultRelativePath` for API keys. Avoid APIs that only work with a **logged-in browser cookie**—those will fail the same way authenticated webmail URLs fail for “fetch link” features.
 
 **URL templates:** In `request.urlTemplate`, `{{query}}` and `{{attachments_context}}` are **URL-encoded** (e.g. spaces → `%20`, `@` → `%40`) so path-style APIs like LeakCheck’s `/api/v2/query/{{query}}` accept names and emails. JSON `**bodyTemplate`** still uses **raw** values.
 
@@ -164,17 +173,17 @@ Use command **OSINT Copilot: Draft HTTP enricher skill from API documentation** 
 
 **Review before Apply:** In chat, each proposed vault row can show an expandable **Preview enricher JSON** or **Preview skill** so you read the full draft (not only the one-line summary) before **Apply selected**.
 
-**Unified chat — agent-proposed vault scripts:** The unified agent can emit `upsert_script` and `delete_script` in `custom_vault_operations`. Paths are **relative to the scripts folder** (default `OSINTCopilot/custom/scripts/`; configurable under **Settings → OSINT Copilot → Scripts folder**). Only allowlisted **text** extensions are accepted (for example `.py`, `.sh`, `.ts`, `.md`, `.json`); oversized bodies are dropped during normalization. In chat, script proposals show a **side-by-side diff** (current vault file versus proposed content; deletes show the current file versus a delete marker). The plugin **does not run** these scripts inside Obsidian — after **Apply selected**, run code only in environments you trust (your own terminal, Claude Code, etc.). Do not put API keys into script bodies; keep using `put_credentials` and enricher `*_vault` auth.
+**Unified chat — agent-proposed vault scripts:** The unified agent can emit `upsert_script` and `delete_script` in `custom_vault_operations`. Paths are **relative to the scripts folder** (default `OSINTCopilot/custom/scripts/`; configurable under **Settings → OSINT Copilot → Scripts folder**). Only allowlisted **text** extensions are accepted (for example `.py`, `.sh`, `.ts`, `.md`, `.json`); oversized bodies are dropped during normalization. In chat, script proposals show a **side-by-side diff** (current vault file versus proposed content; deletes show the current file versus a delete marker). The plugin **does not run** these scripts inside Obsidian — after **Apply selected**, run code only in environments you trust (your own terminal or a deliberately configured coding agent). Do not put API keys into script bodies; keep using `put_credentials` and enricher `*_vault` auth.
 
-**Debug logs folder:** Under `**OSINTCopilot/custom/prompts/logs/`** (default path; created when you run **Install missing vault prompt files**), add `**.md`**, `**.txt**`, or `**.log**` traces if you want recent file contents merged into **vault augmentation** on the next unified-agent turns (newest files first, size-capped). Claude Code or any vault scan can read that folder too.
+**Debug logs folder:** Under `**OSINTCopilot/custom/prompts/logs/`** (default path; created when you run **Install missing vault prompt files**), add `**.md`**, `**.txt**`, or `**.log**` traces if you want recent file contents merged into **vault augmentation** on the next unified-agent turns (newest files first, size-capped). Treat that folder as prompt context that the selected agent may receive.
 
-**Unified chat — calling enrichers without Bash:** The agent’s JSON response can include `enricher_invocations`, e.g. `[{ "enricher_id": "leakcheck", "query": "user@domain.com" }]`. The plugin then runs those HTTP requests **inside Obsidian** via `**requestUrl`**, so you do not need `curl` or shell approval. Prefer this for APIs like LeakCheck instead of vault skills that tell Claude Code to run terminal commands.
+**Unified chat — calling enrichers without Bash:** The agent’s JSON response can include `enricher_invocations`, e.g. `[{ "enricher_id": "leakcheck", "query": "user@domain.com" }]`. The plugin then runs those HTTP requests **inside Obsidian** via `**requestUrl`**, so you do not need `curl` or shell approval. Prefer this for APIs like LeakCheck instead of vault skills that tell an agent to run terminal commands.
 
 **Id must match the spec:** `enricher_id` is resolved with the same rules as the `id` field inside each `OSINTCopilot/custom/enrichers/*.json` file (normalized to lowercase and hyphenated). The model’s guessed name is not enough — e.g. `leakcheck_v2` in the agent JSON will not resolve if your file only has `"id": "leakcheck"`. If you see **Unknown enricher**, check the message’s **Available enricher ids** line or copy `id` exactly from the JSON. The chat progress bar shows **Enricher i/n** while enrichers run.
 
 **Truthfulness:** The markdown answer is produced before enrichers run. Read **Plugin status** and **Enricher results** at the bottom for what actually happened.
 
-**If you see “Shell execution blocked” / Bash approval:** Claude Code is trying to run `curl` or other shell from a skill. Obsidian has no terminal to click **Allow**. Fix by (1) using an enricher JSON + `enricher_invocations`, or (2) only if you accept the risk: **Settings → OSINT Copilot → Graph extraction (Claude Code) → Claude Code extra CLI args** — for example `--permission-mode bypassPermissions` (see [Anthropic permission modes](https://docs.anthropic.com/en/docs/claude-code/permission-modes)). That disables interactive gating and allows unattended shell; use only in environments you trust.
+**If you see “Shell execution blocked” / Bash approval:** Prefer an enricher JSON + `enricher_invocations`, which lets Obsidian perform an allowlisted request without agent shell access. For Claude only, advanced users can add a Claude permission-mode flag under **Local AI CLI → Claude Code extra CLI args**, but unattended shell access materially changes the risk. The Codex integration intentionally remains non-interactive and read-only; it does not grant Codex shell writes to your vault.
 
 Detailed setup + example spec mapping: `docs/ENRICHERS_SETUP.md`.
 
@@ -213,11 +222,11 @@ Default text for vault-oriented answers; combine with **vault rules/agents** for
 ### What needs what?
 
 
-| Capability                                         | Local AI                                                                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Graph / timeline / map                             | No (pure Obsidian)                                                                                            |
-| Default chat (unified agent)                       | **Claude Code** by default; can switch to **Hermes** or enabled **custom runtime** (Settings → Agent runtime) |
-| Bulk graph extraction / vault ingest / task agents | **Claude Code** CLI (Graph extraction settings)                                                               |
+| Capability                                         | Runtime                                                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Graph / timeline / map                             | No AI CLI (pure Obsidian)                                                                                                            |
+| Default chat (unified agent)                       | **Claude Code** by default; choose **Codex CLI**, **Hermes**, or an enabled **custom runtime** under **Agent runtime**                |
+| Bulk graph extraction / image analysis / vault ingest / vault skills / task agents | **Claude Code** or **Codex CLI**, selected under **Local AI CLI → Extraction and task-agent CLI** |
 
 
 ---
@@ -232,7 +241,7 @@ Default text for vault-oriented answers; combine with **vault rules/agents** for
 4. Review/confirm proposed graph changes.
 5. Open Graph/Timeline/Map views to validate entities and links.
 
-If extraction fails with Claude access messages, fix CLI auth first (see Troubleshooting), then retry the same workflow.
+If extraction fails with access or spawn messages, fix the selected CLI's authentication/path first (see Troubleshooting), then retry the same workflow.
 
 ### Opening the OSINT Copilot Interface
 
@@ -243,7 +252,7 @@ Access the main chat interface via:
 
 ### Orchestration and runtime
 
-Each message runs **one** **Agent runtime** turn (Claude, Hermes, or custom CLI). The process prints JSON matching `osint_copilot_agent_turn_v1` so the plugin can show **proposed graph changes** and optional **vault skill/credential** proposals for you to confirm. Behavior follows your **message and attachments** plus **vault prompts** (`rules/global.md`, agents) as **vault augmentation**.
+Each message runs **one** **Agent runtime** turn (Claude, Codex, Hermes, or custom CLI). The process prints JSON matching `osint_copilot_agent_turn_v1` so the plugin can show **proposed graph changes** and optional **vault skill/credential** proposals for you to confirm. Behavior follows your **message and attachments** plus **vault prompts** (`rules/global.md`, agents) as **vault augmentation**.
 
 Vault markdown skills live under `**OSINTCopilot/custom/skills/`**; you can add files by hand or approve agent-proposed `**custom_vault_operations**`.
 
@@ -362,7 +371,7 @@ These filters affect type pickers; they do not delete existing notes. Existing e
 
 ### Feature 3: Entity extraction (graph generation)
 
-**Purpose:** Turn unstructured text into **entity notes** and **relationships** using **Claude Code CLI**. Extraction instructions can be edited in `**OSINTCopilot/custom/prompts/skills/graph-extraction.md`**.
+**Purpose:** Turn unstructured text into **entity notes** and **relationships** using the selected **Local AI CLI** (Claude Code or Codex). Extraction instructions can be edited in `**OSINTCopilot/custom/prompts/skills/graph-extraction.md`**.
 
 **How to use**
 **Extraction logs panel**
@@ -372,11 +381,11 @@ These filters affect type pickers; they do not delete existing notes. Existing e
 - `detailed` verbosity: stage-level log events + sanitized snippets.
 - Optional debug: **Extraction debug: raw CLI output** (use only for troubleshooting; may expose sensitive content).
 
-Settings path: **Settings → OSINT Copilot → Graph extraction (Claude Code)**.
+Settings path: **Settings → OSINT Copilot → Local AI CLI**.
 
 1. Attach files, paste a URL (or text), and say clearly if you want entities extracted into the graph.
 2. Ensure the assistant message has attachment/context so extraction has material to work with.
-3. Bulk vault ingest and the attachment pipeline use **local** `claude` with **Graph extraction** settings; default chat uses your selected **Agent runtime** (Claude, Hermes, or custom) for the unified JSON turn.
+3. Bulk vault ingest and the attachment pipeline use the selected **Extraction and task-agent CLI** (Claude or Codex); default chat uses your selected **Agent runtime** (Claude, Codex, Hermes, or custom) for the unified JSON turn.
 
 **Extracted Information**:
 
@@ -474,7 +483,7 @@ owns, operates, communicates_with, targets, and more...
 **Steps**:
 
 1. **Gather initial intelligence**
-  - Open chat; confirm **Agent runtime** (Claude, Hermes, or custom).
+  - Open chat; confirm **Agent runtime** (Claude, Codex, Hermes, or custom).
   - Ask: "What do we know about APT29?" — review the answer and any **Retrieval** / referenced notes.
 2. **Structure new findings**
   - Paste or attach new intel; ask to extract entities and relationships into the graph.
@@ -540,18 +549,23 @@ owns, operates, communicates_with, targets, and more...
 
 ## Troubleshooting
 
-### Claude Code CLI (local AI)
+### Claude Code or Codex CLI
 
 **Problem:** Extraction or Q&A fails with CLI / spawn errors.
 
 **Solutions:**
 
-1. In a terminal run `claude --version` (or your full path).
-2. **Settings → OSINT Copilot** — set **Claude Code CLI path** to that executable.
-3. Complete Anthropic’s login / API setup for Claude Code.
-4. Restart Obsidian after changing PATH or installing the CLI.
+1. Confirm **Agent runtime** and **Local AI CLI → Extraction and task-agent CLI** select the provider you intend to use.
+2. In a terminal run `claude --version` or `codex --version` (or the full executable path).
+3. Set the matching **Claude CLI path** or **Codex CLI path**. Desktop-launched Obsidian may not inherit your shell's `PATH`; use an absolute path such as the result of `command -v codex` on Linux/macOS.
+4. Complete provider authentication outside Obsidian. For Codex, run `codex login`, finish the browser flow, and check it with `codex login status`.
+5. Run **Test selected local AI CLI**, then restart Obsidian after PATH or CLI installation changes.
 
 If you see `organization does not have access`, this is an account/org entitlement issue in Claude CLI, not a vault path issue.
+
+If Codex starts but chooses an unexpected model, check **Codex model override**. A blank field is intentional: the plugin then omits `--model` and Codex uses the default from `~/.codex/config.toml`.
+
+Codex requests do not resume prior Codex CLI sessions. Every request is a fresh, read-only, ephemeral execution; the plugin passes relevant Obsidian conversation memory in the prompt.
 
 **Problem:** Old behavior cached after editing vault prompts.
 
@@ -675,9 +689,10 @@ If you see `organization does not have access`, this is an account/org entitleme
 
 ### Security considerations
 
-1. **Claude** — Text you send in chat is processed by **Claude Code** per Anthropic’s terms.
-2. **Vault** — Entities, conversations, and `OSINTCopilot/custom/` (prompts, skills, etc.) are normal Markdown/JSON on disk.
-3. **Geocoding** — Map view may send address strings to **Nominatim** (OpenStreetMap); see README privacy section.
+1. **AI providers** — The CLI process is local, but standard Claude Code sends prompt context to Anthropic and standard Codex CLI sends it to OpenAI. Codex billing and data controls depend on whether you authenticate with ChatGPT or an API key.
+2. **Codex execution** — The plugin uses stateless, read-only, ephemeral `codex exec` requests. Proposed graph/vault changes still require confirmation in Obsidian.
+3. **Vault** — Entities, conversations, and `OSINTCopilot/custom/` (prompts, skills, etc.) are normal Markdown/JSON on disk.
+4. **Geocoding** — Map view may send address strings to **Nominatim** (OpenStreetMap); see README privacy section.
 
 ### Vault prompts hygiene
 
@@ -695,4 +710,4 @@ If you see `organization does not have access`, this is an account/org entitleme
 
 ---
 
-*OSINT Copilot — local-first investigation workspace with Claude Code CLI. See `manifest.json` for the current plugin version.*
+*OSINT Copilot — local-first investigation workspace with Claude Code or Codex CLI. See `manifest.json` for the current plugin version.*

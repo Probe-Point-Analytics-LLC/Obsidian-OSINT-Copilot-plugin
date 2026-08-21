@@ -40,12 +40,12 @@ Rules for custom_vault_operations:
 - delete_enricher removes enrichers/{id}.json when the user asks to remove an enricher spec.
 - upsert_script / delete_script target **text scripts** under the vault **scripts** folder (Settings → Scripts folder; default OSINTCopilot/custom/scripts). relativePath is only the path **inside** that folder: forward slashes, no ".." segments, and the filename must use an allowed text extension (e.g. py, sh, ts, md, json — not binary types).
 - For upsert_script you MUST include the **entire file** in the "content" string. Do not store secrets or API keys in script content — use put_credentials and enricher *_vault auth instead.
-- Do not claim the plugin will **run** or execute proposed scripts inside Obsidian; the user reviews the side-by-side diff and applies writes, then runs code in their own terminal or Claude Code if they choose.
+- Do not claim the plugin will **run** or execute proposed scripts inside Obsidian; the user reviews the side-by-side diff and applies writes, then runs code in their own terminal, Claude Code, or Codex if they choose.
 - delete_script removes the file at scripts_folder/relativePath when the user asks to delete a script.
 
 Rules for enricher_invocations:
 - For HTTP APIs the user has defined as JSON files in the vault **enrichers** folder (active enrichers), list calls here. The plugin runs them inside Obsidian using requestUrl (same class of outbound HTTP as other plugin features — not a separate Node server, not the user's browser, so CORS as in a web page does not apply the same way; still use public/token APIs suitable for server-style requests).
-- Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs — use enricher_invocations instead so execution is not blocked by Claude Code permission prompts in Obsidian.
+- Use an empty array when no enricher calls are needed. Do not instruct curl or shell for those APIs — use enricher_invocations instead so execution is not blocked by local CLI permission controls in Obsidian.
 - enricher_id must match each enricher JSON file's **id** field exactly after normalization (lowercase, hyphens). Example: if the file id is leakcheck, use "enricher_id": "leakcheck", not "leakcheck_v2" unless the file id is leakcheck-v2. query maps to URL/body templates as {query}.`;
 
 export function buildUnifiedAgentSystemPrompt(providerLabel: string): string {

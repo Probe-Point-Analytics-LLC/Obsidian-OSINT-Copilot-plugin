@@ -4,7 +4,7 @@ import { executeEnricherHttp } from "../services/enrichers/enricher-executor";
 import { parseEnrichToolId } from "../services/enrichers/enricher-schema";
 
 /**
- * Runs a vault skill via local Claude (v1: single call, skill body as system context).
+ * Runs a vault skill via the selected local AI CLI (single call, skill body as system context).
  */
 export async function executeVaultSkillTool(
 	plugin: VaultAIPlugin,

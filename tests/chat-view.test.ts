@@ -44,6 +44,11 @@ describe('ChatView', () => {
             claudeCodeCliPath: 'claude',
             claudeCodeModel: 'sonnet',
             claudeCodeExtraArgs: '',
+            claudeCodeTimeoutMs: 300_000,
+            codexCliPath: 'codex',
+            codexCliModel: '',
+            codexCliExtraArgs: '',
+            codexCliTimeoutMs: 300_000,
             agentRuntimeProvider: 'claude-code',
             hermesAgentCliPath: 'hermes',
             hermesAgentExtraArgs: '',
@@ -115,5 +120,35 @@ describe('ChatView', () => {
         expect(renderSpy).toHaveBeenCalled();
         const container = chatView.contentEl.querySelector('.chat-container');
         expect(container).not.toBeNull();
+    });
+
+    it('allocates a new evidence path when an uploaded image name already exists', () => {
+        chatView.app = plugin.app;
+        const existing = new Set([
+            'OSINTCopilot/Evidence/screenshot.png',
+            'OSINTCopilot/Evidence/screenshot-2.png',
+        ]);
+        vi.spyOn(chatView.app.vault, 'getAbstractFileByPath').mockImplementation(
+            (path: string) => existing.has(path) ? ({} as any) : null,
+        );
+
+        expect((chatView as any).getAvailableEvidencePath(
+            'OSINTCopilot/Evidence',
+            'screenshot.png',
+        )).toBe('OSINTCopilot/Evidence/screenshot-3.png');
+    });
+
+    it('does not overwrite the extraction provider when a removed chat runtime is normalized', async () => {
+        plugin.settings.agentRuntimeProvider = 'custom:removed';
+        plugin.settings.apiProvider = 'codex';
+        plugin.saveSettings = vi.fn().mockResolvedValue(undefined);
+
+        await (chatView as any).syncRuntimeSelectionToAvailability({
+            byId: { 'claude-code': true, codex: true, 'hermes-agent': false },
+            availableIds: ['claude-code', 'codex'],
+        });
+
+        expect(plugin.settings.agentRuntimeProvider).toBe('claude-code');
+        expect(plugin.settings.apiProvider).toBe('codex');
     });
 });

@@ -25,7 +25,7 @@ export interface AgentTurnDiagnostics {
 }
 
 /**
- * Strict JSON contract returned by both Claude Code and Hermes agent CLIs for one chat turn.
+ * Strict JSON contract returned by supported local agent CLIs for one chat turn.
  */
 export interface AgentTurnResult {
     version: typeof AGENT_TURN_SCHEMA_VERSION;
