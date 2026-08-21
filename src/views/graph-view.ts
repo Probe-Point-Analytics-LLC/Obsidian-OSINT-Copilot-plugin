@@ -3153,13 +3153,17 @@ export class GraphView extends ItemView {
             animate: true,
             animationDuration: 500,
             // Larger values spread nodes farther apart when the user explicitly rearranges.
-            nodeRepulsion: () => spacious ? 18000 : 8000,
-            idealEdgeLength: () => spacious ? 180 : 100,
-            edgeElasticity: () => spacious ? 80 : 100,
-            nestingFactor: spacious ? 1.35 : 1.2,
-            gravity: spacious ? 0.12 : 0.25,
-            numIter: 1000,
-            initialTemp: spacious ? 350 : 200,
+            // The low gravity and component spacing keep the result decentralized instead of
+            // pulling every connected cluster toward one dense central mass.
+            nodeRepulsion: () => spacious ? 32000 : 8000,
+            idealEdgeLength: () => spacious ? 280 : 100,
+            edgeElasticity: () => spacious ? 60 : 100,
+            nestingFactor: spacious ? 1.5 : 1.2,
+            gravity: spacious ? 0.04 : 0.25,
+            componentSpacing: spacious ? 240 : 40,
+            nodeOverlap: spacious ? 30 : 10,
+            numIter: spacious ? 1400 : 1000,
+            initialTemp: spacious ? 600 : 200,
             coolingFactor: 0.95,
             minTemp: 1.0,
             // Keep the larger coordinate space instead of immediately scaling it back down
