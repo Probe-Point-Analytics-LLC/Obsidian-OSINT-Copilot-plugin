@@ -102,6 +102,8 @@ interface CytoscapeCore {
 
 declare const cytoscape: (options?: Record<string, unknown>) => CytoscapeCore;
 
+type RearrangeLayout = 'decentralized' | 'circle' | 'spectral';
+
 export const GRAPH_VIEW_TYPE = 'graph_copilot-graph-view';
 
 // File path for persisting node positions (visible under OSINTCopilot/)
@@ -148,6 +150,8 @@ export class GraphView extends ItemView {
     private allGraphPositions: Record<string, Record<string, NodePosition>> = {};
     private graphHost: OSINTCopilotGraphHost;
     private graphSelectEl: HTMLSelectElement | null = null;
+    private rearrangeLayout: RearrangeLayout = 'decentralized';
+    private rearrangeLayoutSelectEl: HTMLSelectElement | null = null;
 
     /** Which provenance confidence levels are visible (multi-select). */
     private confidenceFilter: Set<OsintConfidence> = new Set(OSINT_CONFIDENCE_LEVELS);
@@ -802,9 +806,35 @@ export class GraphView extends ItemView {
         // Separator
         toolbar.createDiv({ cls: 'graph_copilot-toolbar-separator' });
 
-        // Rearrange button (was Refresh) - resets all node positions using automatic layout
+        // Layout selector + rearrange button - both reset all node positions.
+        const layoutRow = toolbar.createDiv({ cls: 'graph_copilot-layout-row' });
+        layoutRow.setCssProps({ display: 'flex', gap: '5px', 'align-items': 'center' });
+        layoutRow.createSpan({ text: 'Layout:', cls: 'graph_copilot-graph-label' });
+        this.rearrangeLayoutSelectEl = layoutRow.createEl('select', {
+            cls: 'dropdown graph_copilot-layout-select',
+        });
+        const layoutOptions: Array<{ value: RearrangeLayout; label: string }> = [
+            { value: 'decentralized', label: 'Decentralized' },
+            { value: 'circle', label: 'Circular' },
+            { value: 'spectral', label: 'Spectral (eigenvector)' },
+        ];
+        for (const option of layoutOptions) {
+            this.rearrangeLayoutSelectEl.createEl('option', {
+                text: option.label,
+                value: option.value,
+            });
+        }
+        this.rearrangeLayoutSelectEl.value = this.rearrangeLayout;
+        this.rearrangeLayoutSelectEl.title = 'Choose the layout used by rearrange';
+        this.rearrangeLayoutSelectEl.onchange = () => {
+            const value = this.rearrangeLayoutSelectEl?.value as RearrangeLayout | undefined;
+            if (value && layoutOptions.some((option) => option.value === value)) {
+                this.rearrangeLayout = value;
+            }
+        };
+
         const rearrangeBtn = toolbar.createEl('button', { text: '🔄 rearrange' });
-        rearrangeBtn.title = 'Rearrange all entities using automatic layout (resets current positions)';
+        rearrangeBtn.title = 'Rearrange all entities using the selected layout (resets current positions)';
         rearrangeBtn.onclick = () => {
             (async () => {
                 // Show confirmation dialog
@@ -813,7 +843,7 @@ export class GraphView extends ItemView {
 
                 rearrangeBtn.disabled = true;
                 rearrangeBtn.textContent = '🔄 rearranging...';
-                await this.rearrangeGraph();
+                await this.rearrangeGraph(this.rearrangeLayout);
                 rearrangeBtn.disabled = false;
                 rearrangeBtn.textContent = '🔄 rearrange';
             })();
@@ -2906,10 +2936,141 @@ export class GraphView extends ItemView {
         }
     }
 
+    /** Arrange nodes on a broad ring using Cytoscape's built-in circular layout. */
+    private runCircularLayout(): void {
+        if (!this.cy) return;
+
+        this.cy.layout({
+            name: 'circle',
+            animate: true,
+            animationDuration: 500,
+            fit: false,
+            padding: 120,
+            avoidOverlap: true,
+            nodeDimensionsIncludeLabels: true,
+            spacingFactor: 2,
+        }).run();
+    }
+
     /**
-     * Rearrange all nodes using automatic layout (resets positions).
+     * Arrange nodes from the two non-trivial eigenvectors of the normalized graph
+     * Laplacian. This keeps strongly connected nodes near each other while using the
+     * graph's global structure instead of pulling everything toward a single center.
      */
-    rearrangeGraph(): Promise<void> {
+    private runSpectralLayout(): void {
+        if (!this.cy) return;
+
+        const nodes: NodeSingular[] = [];
+        this.cy.nodes().forEach((node) => nodes.push(node));
+        if (nodes.length < 3) {
+            this.runCircularLayout();
+            return;
+        }
+
+        const indexById = new Map<string, number>();
+        nodes.forEach((node, index) => indexById.set(node.id(), index));
+        const adjacency = nodes.map(() => new Map<number, number>());
+        let edgeCount = 0;
+        this.cy.edges().forEach((edge) => {
+            const source = indexById.get(String(edge.data('source')));
+            const target = indexById.get(String(edge.data('target')));
+            if (source === undefined || target === undefined || source === target) return;
+            adjacency[source].set(target, 1);
+            adjacency[target].set(source, 1);
+            edgeCount += 1;
+        });
+        if (edgeCount === 0) {
+            this.runCircularLayout();
+            return;
+        }
+
+        const degrees = adjacency.map((neighbors) => neighbors.size);
+        const degreeRoot = degrees.map((degree) => Math.sqrt(degree));
+        const multiplyLaplacian = (vector: number[]): number[] => vector.map((value, index) => {
+            let neighborSum = 0;
+            for (const [neighbor] of adjacency[index]) {
+                const denominator = degreeRoot[index] * degreeRoot[neighbor];
+                if (denominator > 0) neighborSum += vector[neighbor] / denominator;
+            }
+            return value - neighborSum;
+        });
+
+        const constantVector = this.normalizeVector([...degreeRoot]);
+        const first = this.findSmallestSpectralVector(multiplyLaplacian, nodes.length, [constantVector], 17);
+        const second = this.findSmallestSpectralVector(
+            multiplyLaplacian,
+            nodes.length,
+            [constantVector, first],
+            31,
+        );
+
+        const width = Math.max(900, this.container?.clientWidth || 0);
+        const height = Math.max(700, this.container?.clientHeight || 0);
+        const span = Math.max(900, Math.sqrt(nodes.length) * 190);
+        const xRange = this.vectorRange(first);
+        const yRange = this.vectorRange(second);
+        const positions: Record<string, { x: number; y: number }> = {};
+        nodes.forEach((node, index) => {
+            const x = (first[index] - xRange.min) / xRange.span - 0.5;
+            const y = (second[index] - yRange.min) / yRange.span - 0.5;
+            positions[node.id()] = {
+                x: width / 2 + x * span,
+                y: height / 2 + y * span,
+            };
+        });
+
+        this.cy.layout({
+            name: 'preset',
+            positions,
+            animate: true,
+            animationDuration: 500,
+            fit: false,
+        }).run();
+    }
+
+    private normalizeVector(vector: number[]): number[] {
+        const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+        if (norm < 1e-9) return vector.map(() => 0);
+        return vector.map((value) => value / norm);
+    }
+
+    private orthogonalizeVector(vector: number[], basis: number[][]): number[] {
+        const result = [...vector];
+        for (const b of basis) {
+            const projection = result.reduce((sum, value, index) => sum + value * b[index], 0);
+            for (let index = 0; index < result.length; index++) {
+                result[index] -= projection * b[index];
+            }
+        }
+        return result;
+    }
+
+    private findSmallestSpectralVector(
+        multiplyLaplacian: (vector: number[]) => number[],
+        size: number,
+        basis: number[][],
+        seed: number,
+    ): number[] {
+        let vector = Array.from({ length: size }, (_, index) =>
+            Math.sin((index + 1) * seed) + Math.cos((index + 1) * (seed + 7)),
+        );
+        vector = this.normalizeVector(this.orthogonalizeVector(vector, basis));
+        for (let iteration = 0; iteration < 500; iteration++) {
+            const laplacianVector = multiplyLaplacian(vector);
+            const next = vector.map((value, index) => value - 0.8 * laplacianVector[index]);
+            vector = this.normalizeVector(this.orthogonalizeVector(next, basis));
+        }
+        return vector;
+    }
+
+    private vectorRange(vector: number[]): { min: number; span: number } {
+        const min = Math.min(...vector);
+        const max = Math.max(...vector);
+        return { min, span: Math.max(max - min, 1e-9) };
+    }
+
+    /** Rearrange all nodes using the selected layout (resets positions). */
+    rearrangeGraph(layout: RearrangeLayout = this.rearrangeLayout): Promise<void> {
         return new Promise((resolve) => {
             if (!this.cy) {
                 resolve();
@@ -2919,8 +3080,13 @@ export class GraphView extends ItemView {
             // Clear saved positions
             this.nodePositionsCache.clear();
 
-            // Run a spacious full layout for an explicit rearrange action.
-            this.runLayout({ spacious: true });
+            if (layout === 'circle') {
+                this.runCircularLayout();
+            } else if (layout === 'spectral') {
+                this.runSpectralLayout();
+            } else {
+                this.runLayout({ spacious: true });
+            }
 
             // Save new positions after layout completes
             setTimeout(() => {
