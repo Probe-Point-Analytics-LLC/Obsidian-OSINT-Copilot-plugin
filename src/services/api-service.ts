@@ -16,6 +16,28 @@ import { requestUrl } from 'obsidian';
 import { AIOperation, Entity, ProcessTextResponse, getEntityLabel } from '../entities/types';
 import { ClaudeCodeService, type ExtractionLogOptions } from './claude-code-service';
 
+/** Minimal surface of pdfjs-dist's legacy Node build used for text extraction (no bundled .d.ts for this subpath). */
+interface PdfTextItem {
+    str?: string;
+    /** True when this item ends a visual line (pdf.js layout hint, used to rebuild line breaks). */
+    hasEOL?: boolean;
+}
+interface PdfPageProxy {
+    getTextContent(): Promise<{ items: PdfTextItem[] }>;
+    cleanup?: () => void;
+}
+interface PdfDocumentProxy {
+    numPages: number;
+    getPage(pageNumber: number): Promise<PdfPageProxy>;
+    destroy(): Promise<void>;
+}
+interface PdfJsLib {
+    getDocument(params: { data: Uint8Array; isEvalSupported?: boolean }): { promise: Promise<PdfDocumentProxy> };
+}
+interface PdfJsWorkerModule {
+    WorkerMessageHandler: unknown;
+}
+
 /** Optional tuning for vault ingest: smaller chunks + per-chunk callback for live UI. */
 export interface VaultProcessTextChunkOptions {
     chunkSize?: number;
@@ -60,8 +82,6 @@ export interface ApiSettings {
     customModel: string;
     claudeCodeCliPath?: string;
     claudeCodeModel?: string;
-    /** Explicit override for the pdftotext binary; falls back to auto-detection when unset. */
-    pdftotextPath?: string;
 }
 
 /**
@@ -248,7 +268,7 @@ export class GraphApiService {
 
     /**
      * Extract text from a file locally.
-     * Text formats are read directly. PDFs use pdftotext. DOCX uses XML extraction.
+     * Text formats are read directly. PDFs use the bundled pdfjs-dist. DOCX uses XML extraction.
      * Other binary formats are saved to temp and processed by Claude Code CLI.
      */
     async extractTextFromFile(file: File): Promise<string> {
@@ -273,7 +293,7 @@ export class GraphApiService {
 
         throw new Error(
             `Local text extraction for .${ext} files is not yet supported.\n` +
-            `Supported: text files, PDF (requires pdftotext/poppler), DOCX.\n` +
+            `Supported: text files, PDF, DOCX.\n` +
             `Tip: paste the text content directly into the chat instead.`
         );
     }
@@ -306,82 +326,87 @@ export class GraphApiService {
         });
     }
 
+    /** Pages processed per batch, bounding peak memory/CPU for very long documents. */
+    private static readonly PDF_PAGE_BATCH_SIZE = 8;
     /**
-     * Resolves the pdftotext binary to run. GUI apps (Obsidian included) are often launched
-     * with a PATH that's missing the login shell's additions — most commonly seen when the app
-     * is started from a desktop launcher rather than a terminal — so a plain `execFile('pdftotext', ...)`
-     * can fail with ENOENT even though poppler-utils is genuinely installed. An explicit setting
-     * always wins (the user knows their own install location best); otherwise prefer a known
-     * absolute path if one exists on disk; otherwise fall back to bare `pdftotext` (unchanged
-     * behavior for environments where PATH already resolves it, e.g. Windows).
+     * Overall wall-clock bound. Unlike the old execFile-based approach, there's no way to kill
+     * in-process pdf.js parsing outright — this only bounds how long the caller waits; a
+     * pathological PDF's parsing may keep running in the background after the promise settles.
      */
-    private resolvePdftotextPath(): string {
-        const override = this.settings?.pdftotextPath?.trim();
-        if (override) return override;
+    private static readonly PDF_EXTRACTION_TIMEOUT_MS = 60_000;
 
-        const nodeFs = require('fs') as typeof import('fs');
-        const candidates = [
-            '/usr/bin/pdftotext',
-            '/usr/local/bin/pdftotext',
-            '/opt/homebrew/bin/pdftotext',
-            '/snap/bin/pdftotext',
-        ];
-        for (const candidate of candidates) {
-            try {
-                if (nodeFs.existsSync(candidate)) return candidate;
-            } catch { /* ignore and keep looking */ }
+    /** Rebuilds line breaks from pdf.js's per-item hasEOL layout hint instead of flattening a page to one run-on line. */
+    private static joinPdfTextItems(items: PdfTextItem[]): string {
+        let out = '';
+        for (const item of items) {
+            out += item.str ?? '';
+            out += item.hasEOL ? '\n' : ' ';
         }
-        return 'pdftotext';
+        return out;
     }
 
     /**
-     * Extract text from PDF by saving to temp file and running pdftotext (poppler-utils).
+     * Extract text from PDF using pdfjs-dist (bundled, no external binary required).
+     *
+     * We ship one bundled main.js, not a set of files, so pdf.js can't load a separate
+     * pdf.worker.mjs from disk/URL at runtime the way it normally would. Registering the
+     * worker module's WorkerMessageHandler on globalThis.pdfjsWorker before calling
+     * getDocument() is pdf.js's own documented "run on the main thread" escape hatch — its
+     * PDFWorker checks that global first and, when present, uses it directly instead of
+     * dynamically importing GlobalWorkerOptions.workerSrc (which we deliberately never set).
+     * This is intentional, not a workaround: we only need one-shot text extraction, not a
+     * responsive multi-threaded renderer.
      */
     private async extractPdfText(file: File): Promise<string> {
-        const nodeFs = require('fs') as typeof import('fs');
-        const nodePath = require('path') as typeof import('path');
-        const os = require('os') as typeof import('os');
-        const { execFile } = require('child_process') as typeof import('child_process');
+        const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs') as PdfJsLib;
+        const globalScope = globalThis as { pdfjsWorker?: PdfJsWorkerModule };
+        if (!globalScope.pdfjsWorker) {
+            globalScope.pdfjsWorker = require('pdfjs-dist/legacy/build/pdf.worker.mjs') as PdfJsWorkerModule;
+        }
 
         const buffer = await this.readFileAsArrayBuffer(file);
-        const tmpDir = os.tmpdir();
-        const tmpFile = nodePath.join(tmpDir, `osint-copilot-${Date.now()}.pdf`);
+        const data = new Uint8Array(buffer);
 
-        try {
-            nodeFs.writeFileSync(tmpFile, Buffer.from(buffer));
+        const extract = async (): Promise<string> => {
+            const doc = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
+            try {
+                const pageTexts: string[] = [];
+                for (let batchStart = 1; batchStart <= doc.numPages; batchStart += GraphApiService.PDF_PAGE_BATCH_SIZE) {
+                    const batchEnd = Math.min(batchStart + GraphApiService.PDF_PAGE_BATCH_SIZE - 1, doc.numPages);
+                    const batchNums = Array.from({ length: batchEnd - batchStart + 1 }, (_, i) => batchStart + i);
+                    const batchTexts = await Promise.all(
+                        batchNums.map(async (pageNum) => {
+                            const page = await doc.getPage(pageNum);
+                            try {
+                                const content = await page.getTextContent();
+                                return GraphApiService.joinPdfTextItems(content.items as PdfTextItem[]);
+                            } finally {
+                                page.cleanup?.();
+                            }
+                        })
+                    );
+                    pageTexts.push(...batchTexts);
+                }
 
-            const pdftotextPath = this.resolvePdftotextPath();
-            const text = await new Promise<string>((resolve, reject) => {
-                execFile(pdftotextPath, ['-layout', tmpFile, '-'], {
-                    maxBuffer: 10 * 1024 * 1024,
-                    timeout: 30_000,
-                }, (error: any, stdout: string, stderr: string) => {
-                    if (error) {
-                        reject(new Error(
-                            `PDF text extraction failed (tried "${pdftotextPath}"). Please install poppler-utils:\n` +
-                            `  Ubuntu/Debian: sudo apt install poppler-utils\n` +
-                            `  Arch/Manjaro: sudo pacman -S poppler\n` +
-                            `  macOS: brew install poppler\n\n` +
-                            `If poppler-utils is already installed but Obsidian can't find it, set ` +
-                            `"pdftotext path" under Settings → Graph extraction (Claude Code) to its ` +
-                            `full path (run 'which pdftotext' in the terminal/session Obsidian was ` +
-                            `launched from to find it).\n\n` +
-                            `Error: ${stderr || error.message}`
-                        ));
-                    } else {
-                        resolve(stdout);
-                    }
-                });
-            });
-
-            const trimmed = text.trim();
-            if (!trimmed) {
-                throw new Error('pdftotext returned empty output. The PDF may be image-based (scanned). Image OCR is not yet supported locally.');
+                const text = pageTexts.join('\n\n').trim();
+                if (!text) {
+                    throw new Error('No extractable text found in this PDF. It may be image-based (scanned). Image OCR is not yet supported locally.');
+                }
+                return text;
+            } finally {
+                await doc.destroy();
             }
-            return trimmed;
-        } finally {
-            try { nodeFs.unlinkSync(tmpFile); } catch { /* ignore cleanup errors */ }
-        }
+        };
+
+        return new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                reject(new Error(`PDF text extraction timed out after ${GraphApiService.PDF_EXTRACTION_TIMEOUT_MS}ms. The file may be unusually large or complex.`));
+            }, GraphApiService.PDF_EXTRACTION_TIMEOUT_MS);
+            extract().then(
+                (text) => { clearTimeout(timer); resolve(text); },
+                (err) => { clearTimeout(timer); reject(err); },
+            );
+        });
     }
 
     /**

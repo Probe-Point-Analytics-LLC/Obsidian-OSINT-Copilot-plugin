@@ -44,7 +44,6 @@ export interface VaultAISettings {
 	claudeCodeModel: string;
 	claudeCodeExtraArgs: string;
 	claudeCodeTimeoutMs: number;
-	pdftotextPath: string;
 	agentRuntimeProvider: string;
 	hermesAgentCliPath: string;
 	hermesAgentExtraArgs: string;
@@ -97,7 +96,6 @@ export const DEFAULT_SETTINGS: VaultAISettings = {
 	claudeCodeModel: "sonnet",
 	claudeCodeExtraArgs: "",
 	claudeCodeTimeoutMs: 300_000,
-	pdftotextPath: "",
 	agentRuntimeProvider: CLAUDE_RUNTIME_ID,
 	hermesAgentCliPath: "hermes",
 	hermesAgentExtraArgs: "",

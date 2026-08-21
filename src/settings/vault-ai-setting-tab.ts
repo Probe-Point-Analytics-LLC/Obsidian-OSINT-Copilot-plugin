@@ -633,21 +633,6 @@ export class VaultAISettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("pdftotext path")
-			.setDesc(
-				"Full path to the pdftotext binary (poppler-utils), used for local PDF attachment extraction. Leave blank to auto-detect common install locations. Set this if PDF extraction fails with 'spawn pdftotext ENOENT' even though poppler-utils is installed — GUI apps sometimes launch with a PATH that doesn't include it. Run 'which pdftotext' in the terminal/session Obsidian was launched from to find the right value.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("/usr/bin/pdftotext")
-					.setValue(this.plugin.settings.pdftotextPath)
-					.onChange(async (value) => {
-						this.plugin.settings.pdftotextPath = value.trim();
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
 			.setName("Extraction log verbosity")
 			.setDesc("How much Claude extraction detail is shown in chat while processing attachments.")
 			.addDropdown((dd) =>

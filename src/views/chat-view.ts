@@ -2437,13 +2437,7 @@ export class ChatView extends ItemView {
             break;
           }
 
-          let userMessage = `${fileName}: ${errorStr}`;
-          if (errorStr.includes('poppler') || errorStr.includes('pdftotext')) {
-            userMessage = `${fileName}: PDF extraction requires poppler-utils. Install with: sudo pacman -S poppler`;
-          } else if (errorStr.includes('not yet supported')) {
-            userMessage = `${fileName}: ${errorStr}`;
-          }
-
+          const userMessage = `${fileName}: ${errorStr}`;
           new Notice(userMessage, 8000);
         }
       }

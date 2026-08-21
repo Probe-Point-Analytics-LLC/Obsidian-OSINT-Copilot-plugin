@@ -240,7 +240,6 @@ export default class VaultAIPlugin extends Plugin {
       customModel: '',
       claudeCodeCliPath: this.settings.claudeCodeCliPath,
       claudeCodeModel: this.settings.claudeCodeModel,
-      pdftotextPath: this.settings.pdftotextPath,
     });
     this.vaultPromptLoader = new VaultPromptLoader(
       this.app,
@@ -969,7 +968,6 @@ Do not tell the user to run raw curl from Obsidian for this API; unified chat sh
         customModel: '',
         claudeCodeCliPath: this.settings.claudeCodeCliPath,
         claudeCodeModel: this.settings.claudeCodeModel,
-        pdftotextPath: this.settings.pdftotextPath,
       });
       this.initClaudeCodeService();
     }
