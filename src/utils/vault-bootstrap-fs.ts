@@ -5,6 +5,31 @@ function isAlreadyExistsError(e: unknown): boolean {
 }
 
 /**
+ * After swallowing an "already exists" error, confirms the path really is the expected type on
+ * the real filesystem adapter (not the in-memory cache, which can be unpopulated for the whole
+ * bootstrap phase right after a reload) and warns if it isn't. `adapter.stat()` itself isn't
+ * guaranteed never to throw (e.g. a permission error, or an adapter implementation that doesn't
+ * swallow non-ENOENT failures into null the way the desktop FileSystemAdapter does) -- this is a
+ * best-effort diagnostic, so any stat failure is itself just logged, never allowed to propagate
+ * and abort the bootstrap chain that's awaiting this call.
+ */
+async function warnIfNotReallyThere(
+	app: App,
+	normalized: string,
+	expectedType: "file" | "folder",
+	originalError: unknown,
+): Promise<void> {
+	try {
+		const stat = await app.vault.adapter.stat(normalized);
+		if (stat?.type !== expectedType) {
+			console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a ${expectedType}:`, originalError);
+		}
+	} catch (statError) {
+		console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing; could not verify it's a ${expectedType}:`, statError);
+	}
+}
+
+/**
  * Creates a folder if missing. `getAbstractFileByPath` reads Obsidian's in-memory vault index,
  * which can be momentarily stale right after a plugin reload — it may report a folder as
  * missing even though it genuinely exists on disk. Treating "already exists" from the actual
@@ -26,12 +51,7 @@ export async function ensureFolderExists(app: App, path: string): Promise<void> 
 		await app.vault.createFolder(normalized);
 	} catch (e) {
 		if (!isAlreadyExistsError(e)) throw e;
-		// Same rationale as createFileIfMissing's post-catch check below: the common case is a
-		// benign race where the folder now genuinely exists, but if something else swallowed the
-		// error text, leave a trace rather than silently treating a broken state as success.
-		if (!(app.vault.getAbstractFileByPath(normalized) instanceof TFolder)) {
-			console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a folder:`, e);
-		}
+		await warnIfNotReallyThere(app, normalized, "folder", e);
 	}
 }
 
@@ -63,11 +83,6 @@ export async function createFileIfMissing(app: App, path: string, content: strin
 		await app.vault.create(normalized, content);
 	} catch (e) {
 		if (!isAlreadyExistsError(e)) throw e;
-		// The common, expected case is a benign race (e.g. the same bootstrap running twice
-		// concurrently) where the file now genuinely exists — nothing to do. If something else
-		// is unexpectedly occupying this exact path, that's worth a trace rather than total silence.
-		if (!(app.vault.getAbstractFileByPath(normalized) instanceof TFile)) {
-			console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a file:`, e);
-		}
+		await warnIfNotReallyThere(app, normalized, "file", e);
 	}
 }
