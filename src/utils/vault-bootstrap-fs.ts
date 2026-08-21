@@ -7,11 +7,10 @@ function isAlreadyExistsError(e: unknown): boolean {
 /**
  * After swallowing an "already exists" error, confirms the path really is the expected type on
  * the real filesystem adapter (not the in-memory cache, which can be unpopulated for the whole
- * bootstrap phase right after a reload) and warns if it isn't. `adapter.stat()` itself isn't
- * guaranteed never to throw (e.g. a permission error, or an adapter implementation that doesn't
- * swallow non-ENOENT failures into null the way the desktop FileSystemAdapter does) -- this is a
- * best-effort diagnostic, so any stat failure is itself just logged, never allowed to propagate
- * and abort the bootstrap chain that's awaiting this call.
+ * bootstrap phase right after a reload) and warns if a positive stat proves it is the wrong type.
+ * A null stat is inconclusive rather than proof that the path is absent. Older Obsidian adapters
+ * may not expose `stat()` at all, so this remains a best-effort diagnostic. A thrown stat failure
+ * is logged but never allowed to abort the bootstrap chain that's awaiting this call.
  */
 async function warnIfNotReallyThere(
 	app: App,
@@ -19,9 +18,11 @@ async function warnIfNotReallyThere(
 	expectedType: "file" | "folder",
 	originalError: unknown,
 ): Promise<void> {
+	const statPath = app.vault.adapter.stat;
+	if (typeof statPath !== "function") return;
 	try {
-		const stat = await app.vault.adapter.stat(normalized);
-		if (stat?.type !== expectedType) {
+		const stat = await statPath.call(app.vault.adapter, normalized);
+		if (stat !== null && stat.type !== expectedType) {
 			console.warn(`[vault-bootstrap-fs] "${normalized}" reported as already existing but isn't a ${expectedType}:`, originalError);
 		}
 	} catch (statError) {
@@ -75,7 +76,11 @@ export async function ensureFolderChainForFile(app: App, filePath: string): Prom
 /** Creates a file with the given content only if it doesn't already exist. Never overwrites. */
 export async function createFileIfMissing(app: App, path: string, content: string): Promise<void> {
 	const normalized = normalizePath(path);
-	if (app.vault.getAbstractFileByPath(normalized) instanceof TFile) return;
+	const existing = app.vault.getAbstractFileByPath(normalized);
+	if (existing instanceof TFile) return;
+	if (existing) {
+		throw new Error(`Cannot create file "${normalized}": a folder already exists at that path.`);
+	}
 
 	await ensureFolderChainForFile(app, normalized);
 

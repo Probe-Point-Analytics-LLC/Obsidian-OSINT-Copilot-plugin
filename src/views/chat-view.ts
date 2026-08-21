@@ -93,6 +93,13 @@ export class ChatView extends ItemView {
   // Track active operations for cancellation
   activeAbortControllers: Map<number, AbortController> = new Map();
 
+  private abortAllActiveOperations(): void {
+    for (const controller of this.activeAbortControllers.values()) {
+      controller.abort();
+    }
+    this.activeAbortControllers.clear();
+  }
+
   private shouldDisplayDetailedExtractionLogs(): boolean {
     return this.plugin.settings.extractionLogVerbosity === 'detailed';
   }
@@ -1251,6 +1258,7 @@ export class ChatView extends ItemView {
 
     const conversation = await this.plugin.conversationService.loadConversation(id);
     if (conversation) {
+      this.abortAllActiveOperations();
       this.currentConversation = conversation;
       this.chatHistory = this.conversationMessagesToHistory(conversation.messages);
       this.syncModesFromConversation(conversation);
@@ -1264,6 +1272,7 @@ export class ChatView extends ItemView {
   }
 
   async startNewConversation() {
+    this.abortAllActiveOperations();
     // Save current conversation first if it has messages
     if (this.currentConversation && this.chatHistory.length > 0) {
       await this.saveCurrentConversation();
@@ -1287,6 +1296,7 @@ export class ChatView extends ItemView {
 
         // Clear current conversation if it was deleted
         if (this.currentConversation && this.currentConversation.id === id) {
+          this.abortAllActiveOperations();
           this.currentConversation = null;
           this.chatHistory = [];
         }
@@ -2610,15 +2620,27 @@ export class ChatView extends ItemView {
   async handleOrchestrationAgent(query: string, attachmentsContext: string = "") {
     const assistantIndex = this.chatHistory.length;
 
-    this.chatHistory.push({
+    const pendingItem: ChatHistoryItem = {
       role: "assistant",
       content: "",
       progress: { message: "Starting unified agent…", percent: 10 }
-    });
+    };
+    this.chatHistory.push(pendingItem);
     await this.renderMessages();
+    if (this.chatHistory[assistantIndex] !== pendingItem) return;
+
+    const controller = new AbortController();
+    const isLive = (): boolean =>
+      this.chatHistory[assistantIndex] === pendingItem &&
+      this.activeAbortControllers.get(assistantIndex) === controller;
+    const releaseController = (): void => {
+      if (this.activeAbortControllers.get(assistantIndex) === controller) {
+        this.activeAbortControllers.delete(assistantIndex);
+      }
+    };
 
     const updateProgress = (message: string, percent: number, meta?: OrchestrationProgressMeta) => {
-      if (!this.activeAbortControllers.has(assistantIndex)) return;
+      if (!isLive()) return;
       const item = this.chatHistory[assistantIndex];
       if (
         meta?.orchestrationTool &&
@@ -2638,9 +2660,11 @@ export class ChatView extends ItemView {
 
     // Live CLI activity shown in a collapsible log panel under the progress bar while the
     // agent is thinking, instead of only a single static progress line.
-    const appendAgentLog = this.makeLogAppender(assistantIndex);
+    const appendLiveAgentLog = this.makeLogAppender(assistantIndex);
+    const appendAgentLog: typeof appendLiveAgentLog = (event) => {
+      if (isLive()) appendLiveAgentLog(event);
+    };
 
-    const controller = new AbortController();
     try {
       this.activeAbortControllers.set(assistantIndex, controller);
 
@@ -2664,36 +2688,38 @@ export class ChatView extends ItemView {
         {
           abortSignal: controller.signal,
           onToolsStarting: (tools) => {
-            if (tools.length <= 1) return;
+            if (!isLive() || tools.length <= 1) return;
             return this.setupOrchestrationParallelToolsUI(assistantIndex, tools);
           },
           onLog: appendAgentLog,
         }
       );
 
-      this.activeAbortControllers.delete(assistantIndex);
-      this.chatHistory[assistantIndex].orchestrationAbortByToolId = undefined;
-      this.chatHistory[assistantIndex].orchestrationDisplayToToolId = undefined;
+      releaseController();
+      const item = this.chatHistory[assistantIndex];
+      if (item !== pendingItem) return;
+      item.orchestrationAbortByToolId = undefined;
+      item.orchestrationDisplayToToolId = undefined;
 
       // Handle TOOLS_COMPLETE phase: show tool results for review
       if (result.phase === "TOOLS_COMPLETE" && result.toolResults) {
-        this.chatHistory[assistantIndex].content = result.finalResponse || "Tools complete. Review results below.";
-        this.chatHistory[assistantIndex].toolResults = result.toolResults;
-        this.chatHistory[assistantIndex].savedPlan = result.plan;
-        this.chatHistory[assistantIndex].savedQuery = query;
-        this.chatHistory[assistantIndex].progress = undefined;
-        this.chatHistory[assistantIndex].multiProgress = undefined;
+        item.content = result.finalResponse || "Tools complete. Review results below.";
+        item.toolResults = result.toolResults;
+        item.savedPlan = result.plan;
+        item.savedQuery = query;
+        item.progress = undefined;
+        item.multiProgress = undefined;
         this._awaitingToolReview = true;
         await this.renderMessages();
         return;
       }
 
-      this.chatHistory[assistantIndex].content = result.finalResponse || "Done.";
-      this.chatHistory[assistantIndex].proposedModifications = result.proposedCommands;
-      this.chatHistory[assistantIndex].proposedCustomVaultOps = result.proposedCustomVaultOps;
-      this.chatHistory[assistantIndex].savedQuery = query; // Save query for tool execution
-      this.chatHistory[assistantIndex].progress = undefined;
-      this.chatHistory[assistantIndex].multiProgress = undefined;
+      item.content = result.finalResponse || "Done.";
+      item.proposedModifications = result.proposedCommands;
+      item.proposedCustomVaultOps = result.proposedCustomVaultOps;
+      item.savedQuery = query; // Save query for tool execution
+      item.progress = undefined;
+      item.multiProgress = undefined;
       await this.renderMessages();
 
     } catch (e) {
@@ -2702,16 +2728,17 @@ export class ChatView extends ItemView {
       // controller's own signal (rather than map membership, which the success path also
       // mutates) avoids misclassifying an unrelated later error as a cancel.
       const wasUserCancelled = controller.signal.aborted;
-      this.activeAbortControllers.delete(assistantIndex);
+      releaseController();
       const item = this.chatHistory[assistantIndex];
+      if (item !== pendingItem) return;
       item.orchestrationAbortByToolId = undefined;
       item.orchestrationDisplayToToolId = undefined;
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (wasUserCancelled || errorMsg === 'Cancelled by user') return;
 
-      this.chatHistory[assistantIndex].content = `Orchestration Error: ${errorMsg}`;
-      this.chatHistory[assistantIndex].progress = undefined;
-      this.chatHistory[assistantIndex].multiProgress = undefined;
+      item.content = `Orchestration Error: ${errorMsg}`;
+      item.progress = undefined;
+      item.multiProgress = undefined;
       await this.renderMessages();
     }
   }
@@ -3910,6 +3937,7 @@ export class ChatView extends ItemView {
   }
 
   async onClose() {
+    this.abortAllActiveOperations();
     // Cleanup polling timeouts (using setTimeout for adaptive polling)
     for (const timeoutId of this.pollingIntervals.values()) {
       window.clearTimeout(timeoutId);

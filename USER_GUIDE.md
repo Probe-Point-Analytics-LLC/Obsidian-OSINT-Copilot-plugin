@@ -565,7 +565,7 @@ If you see `organization does not have access`, this is an account/org entitleme
 
 If Codex starts but chooses an unexpected model, check **Codex model override**. A blank field is intentional: the plugin then omits `--model` and Codex uses the default from `~/.codex/config.toml`.
 
-Codex requests do not resume prior Codex CLI sessions. Every request is a fresh, read-only, ephemeral execution; the plugin passes relevant Obsidian conversation memory in the prompt.
+Codex requests do not resume prior Codex CLI sessions. Every request is a fresh, read-only, ephemeral execution; the plugin passes relevant Obsidian conversation memory in the prompt. When Obsidian is installed through Flatpak, the plugin automatically uses Codex's legacy Landlock backend to avoid the unsupported nested-Bubblewrap namespace error while keeping the read-only policy.
 
 **Problem:** Old behavior cached after editing vault prompts.
 

@@ -2,6 +2,8 @@
 
 ## Unreleased (main branch, after v2.5.6)
 
+- **Codex on Flatpak**: automatically use Codex's read-only Landlock backend so CLI tools work without nested-Bubblewrap namespace failures.
+- **Runtime resilience**: ignore late unified-agent progress callbacks after switching conversations, and avoid false bootstrap warnings when filesystem status is temporarily inconclusive.
 - **Plugin layout**: thin `main.ts` re-export; core logic in `src/plugin/vault-ai-plugin.ts` and modular views.
 - **Tools & skills registry**: dedicated ItemView (ribbon **layout-list**); collapsible built-in tools reference; graph icons keyed by entity identity.
 - **OSINT views**: chat, registry, graph, timeline, and map group as tabs in one strip where supported.

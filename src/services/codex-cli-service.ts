@@ -36,6 +36,16 @@ const FRAMEWORK_OWNED_CODEX_ARGS = new Set([
 const FRAMEWORK_OWNED_CODEX_SHORT_ARGS = new Set(['-a', '-s', '-C', '-o', '-i', '-m', '-h', '-V']);
 
 /**
+ * Flatpak already confines Obsidian with Bubblewrap and blocks creation of a second user
+ * namespace. Codex's default Linux sandbox therefore cannot start model-requested commands
+ * from the Flatpak build. Its legacy Landlock backend keeps the requested read-only policy
+ * without attempting that unsupported nested Bubblewrap sandbox.
+ */
+function needsFlatpakLandlockFallback(): boolean {
+    return process.platform === 'linux' && Boolean(process.env.FLATPAK_ID?.trim());
+}
+
+/**
  * Extra arguments may select providers/profiles/features, but cannot replace the
  * invocation contract that keeps plugin calls read-only, non-interactive, and plain-text.
  */
@@ -116,6 +126,7 @@ export class CodexCliService extends ClaudeCodeService {
         const args = [
             // This is a global flag and must precede the `exec` subcommand.
             '--ask-for-approval', 'never',
+            ...(needsFlatpakLandlockFallback() ? ['-c', 'features.use_legacy_landlock=true'] : []),
             ...(enableSearch ? ['--search'] : []),
             'exec',
             '--skip-git-repo-check',

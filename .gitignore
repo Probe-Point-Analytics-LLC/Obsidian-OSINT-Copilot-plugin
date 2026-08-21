@@ -26,3 +26,4 @@ docs/
 
 # Local LLM wiki / knowledge base (not shipped with plugin)
 llm-wiki-vault/
+error.logs

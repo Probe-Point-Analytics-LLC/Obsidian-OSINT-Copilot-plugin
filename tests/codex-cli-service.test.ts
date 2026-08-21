@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexCliService } from '../src/services/codex-cli-service';
 
 class TestCodexCliService extends CodexCliService {
@@ -12,6 +12,10 @@ class TestCodexCliService extends CodexCliService {
 }
 
 describe('CodexCliService', () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
     it('uses safe non-interactive defaults and places the global approval flag before exec', () => {
         const service = new TestCodexCliService('');
 
@@ -76,6 +80,26 @@ describe('CodexCliService', () => {
             '--sandbox',
             'read-only',
             '--oss',
+            '-',
+        ]);
+    });
+
+    it('uses the read-only Landlock backend when Obsidian runs inside Flatpak', () => {
+        vi.stubEnv('FLATPAK_ID', 'test.flatpak.App');
+        const service = new TestCodexCliService('');
+
+        expect(service.args()).toEqual([
+            '--ask-for-approval',
+            'never',
+            '-c',
+            'features.use_legacy_landlock=true',
+            'exec',
+            '--skip-git-repo-check',
+            '--ephemeral',
+            '--color',
+            'never',
+            '--sandbox',
+            'read-only',
             '-',
         ]);
     });

@@ -151,4 +151,38 @@ describe('ChatView', () => {
         expect(plugin.settings.agentRuntimeProvider).toBe('claude-code');
         expect(plugin.settings.apiProvider).toBe('codex');
     });
+
+    it('ignores late orchestration progress and errors after the pending chat item is replaced', async () => {
+        vi.spyOn(chatView, 'renderMessages').mockResolvedValue(undefined);
+        (plugin as any).entityManager = {
+            getAllEntities: vi.fn().mockReturnValue([]),
+            getAllConnections: vi.fn().mockReturnValue([]),
+        };
+
+        let rejectRequest!: (error: Error) => void;
+        let reportProgress!: (message: string, percent: number) => void;
+        const request = new Promise((_resolve, reject) => {
+            rejectRequest = reject;
+        });
+        (plugin as any).orchestrationService = {
+            processRequest: vi.fn().mockImplementation(
+                (_query, _attachments, _graph, _memory, _conversation, onProgress) => {
+                    reportProgress = onProgress;
+                    return request;
+                },
+            ),
+        };
+
+        const run = chatView.handleOrchestrationAgent('test');
+        await vi.waitFor(() => expect(reportProgress).toBeTypeOf('function'));
+
+        const replacement = { role: 'assistant', content: 'Different conversation' } as any;
+        chatView.chatHistory = [replacement];
+        expect(() => reportProgress('Late update', 80)).not.toThrow();
+        rejectRequest(new Error('Codex failed'));
+
+        await expect(run).resolves.toBeUndefined();
+        expect(chatView.chatHistory).toEqual([replacement]);
+        expect(chatView.activeAbortControllers.size).toBe(0);
+    });
 });
