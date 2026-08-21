@@ -920,6 +920,37 @@ export class ChatView extends ItemView {
     return ChatView.IMAGE_EXTENSIONS.has(ext);
   }
 
+  /** Rough English-text heuristic; good enough to size a "this will take a while" warning, not exact billing. */
+  private static readonly CHARS_PER_TOKEN_ESTIMATE = 4;
+  private static readonly LARGE_ATTACHMENT_WARNING_CHARS = 150_000;
+
+  /**
+   * Null below the size threshold; otherwise the warning text to show. Pulled out from
+   * warnIfAttachmentContextIsLarge as a pure function so the threshold/message logic is testable
+   * without needing to spy on the Notice constructor.
+   */
+  static largeAttachmentWarningMessage(attachmentsContextLength: number): string | null {
+    if (attachmentsContextLength < ChatView.LARGE_ATTACHMENT_WARNING_CHARS) return null;
+    const approxTokens = Math.round(attachmentsContextLength / ChatView.CHARS_PER_TOKEN_ESTIMATE);
+    return (
+      `Large attachment content (~${approxTokens.toLocaleString()} estimated tokens). This may take ` +
+      `several minutes to process, especially with slower models like opus. If it times out, try a faster ` +
+      `model, a longer "Claude Code timeout" in Settings, or sending large files separately.`
+    );
+  }
+
+  /**
+   * The unified agent sends extracted attachment text as one prompt in a single turn -- there's
+   * no chunking for chat attachments (unlike vault graph ingest). A large, dense attachment (e.g.
+   * a big CSV export) can legitimately take many minutes for the CLI to process, especially with
+   * a slower model, and previously the only feedback was total silence until either a response or
+   * a timeout. Surface the size up front instead of leaving the user guessing whether it's stuck.
+   */
+  private warnIfAttachmentContextIsLarge(attachmentsContext: string): void {
+    const message = ChatView.largeAttachmentWarningMessage(attachmentsContext.length);
+    if (message) new Notice(message, 15000);
+  }
+
   async handleDroppedFile(file: File) {
     if (!file) return;
 
@@ -2559,6 +2590,7 @@ export class ChatView extends ItemView {
 
       attachmentsContext = extractedContents.join('\n');
       processingValue = processingValue + attachmentsContext;
+      this.warnIfAttachmentContextIsLarge(attachmentsContext);
 
       if (processedFileNames.length > 0) {
         const fileList = processedFileNames.map(f => {

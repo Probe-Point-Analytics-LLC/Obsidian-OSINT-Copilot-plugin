@@ -217,3 +217,23 @@ describe('ChatView', () => {
         expect(chatView.activeAbortControllers.size).toBe(0);
     });
 });
+
+describe('ChatView.largeAttachmentWarningMessage', () => {
+    it('returns null under the size threshold', () => {
+        expect(ChatView.largeAttachmentWarningMessage(1000)).toBeNull();
+        expect(ChatView.largeAttachmentWarningMessage(149_999)).toBeNull();
+    });
+
+    it('warns at and above the threshold, with an estimated token count', () => {
+        // A real reproduction of the reported case: a ~593KB CSV plus PDF text landed well
+        // past this threshold and the CLI call timed out twice at the configured limit with no
+        // visible feedback beforehand -- this is the proactive warning added for that.
+        const message = ChatView.largeAttachmentWarningMessage(600_000);
+        expect(message).not.toBeNull();
+        expect(message).toContain('150,000'); // 600_000 / 4 chars-per-token estimate
+        expect(message).toMatch(/minutes/i);
+
+        const atThreshold = ChatView.largeAttachmentWarningMessage(150_000);
+        expect(atThreshold).not.toBeNull();
+    });
+});
