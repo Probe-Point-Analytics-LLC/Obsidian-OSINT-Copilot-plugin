@@ -4,6 +4,19 @@
 import { App, normalizePath } from 'obsidian';
 
 /**
+ * A double-quoted YAML scalar guaranteed to stay on one physical line. JSON.stringify handles
+ * every standard escape (quotes, backslashes, \n, control chars) but deliberately leaves the
+ * Unicode line/paragraph separators U+2028/U+2029 unescaped, since they're valid in a JS string
+ * -- but frontmatter is later re-extracted with a line-oriented `^key:\s*(.*)$` regex (see
+ * extractYamlValue below) that treats those exact code points as line terminators, silently
+ * truncating the value on read. \u2028 and \u2029 are valid JSON escapes, so JSON.parse (used by
+ * unquoteYamlScalar) reverses this correctly.
+ */
+function yamlSafeQuotedScalar(value: string): string {
+  return JSON.stringify(value).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+}
+
+/**
  * Primary chat task mode (header dropdown). Legacy per-flag fields are derived for YAML backward compatibility.
  * Note: main `handleSend` routes non–vault-ingest sends through unified agent orchestration.
  */
@@ -186,7 +199,8 @@ export class ConversationService {
     const frontmatter = frontmatterMatch[1];
     const basename = filePath.split('/').pop()?.replace('.md', '') || 'unknown';
     const id = this.extractYamlValue(frontmatter, 'id') || basename;
-    const title = this.extractYamlValue(frontmatter, 'title') || 'Untitled';
+    const rawTitle = this.extractYamlValue(frontmatter, 'title');
+    const title = rawTitle ? this.unquoteYamlScalar(rawTitle) : 'Untitled';
     const createdAt = parseInt(this.extractYamlValue(frontmatter, 'createdAt') || '0');
     const updatedAt = parseInt(this.extractYamlValue(frontmatter, 'updatedAt') || '0');
     const messageCount = parseInt(this.extractYamlValue(frontmatter, 'messageCount') || '0');
@@ -243,6 +257,26 @@ export class ConversationService {
   private extractYamlValue(yaml: string, key: string): string | null {
     const match = yaml.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'));
     return match ? match[1].trim() : null;
+  }
+
+  /**
+   * Unquotes a scalar written by extractYamlValue. Values written since the title-escaping fix
+   * are JSON-double-quoted (see serializeConversation); JSON.parse correctly reverses that,
+   * including any escaped characters. Falls back to a raw outer-quote strip for older
+   * conversation files written before that fix, whose titles were embedded unescaped.
+   */
+  private unquoteYamlScalar(raw: string): string {
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return raw.slice(1, -1);
+      }
+    }
+    if (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2) {
+      return raw.slice(1, -1);
+    }
+    return raw;
   }
 
   async loadConversation(id: string): Promise<Conversation | null> {
@@ -362,7 +396,7 @@ export class ConversationService {
     const frontmatterLines = [
       '---',
       `id: ${conversation.id}`,
-      `title: ${conversation.title}`,
+      `title: ${yamlSafeQuotedScalar(conversation.title)}`,
       `createdAt: ${conversation.createdAt}`,
       `updatedAt: ${conversation.updatedAt}`,
       `messageCount: ${conversation.messageCount}`,

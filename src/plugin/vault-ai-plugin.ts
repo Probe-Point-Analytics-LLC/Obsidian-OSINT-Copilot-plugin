@@ -94,6 +94,7 @@ import {
   DEFAULT_SKILLS_FOLDER,
   DEFAULT_TASK_AGENTS_FOLDER,
   DEFAULT_TASK_AGENT_OUTPUT_ALLOWLIST,
+  OSINT_COPILOT_VAULT_ROOT,
 } from '../constants/vault-layout';
 import type { CustomVaultOperation } from '../services/custom-vault-operations';
 import { normalizeCustomVaultOperations, summarizeCustomVaultOperation } from '../services/custom-vault-operations';
@@ -180,6 +181,33 @@ export default class VaultAIPlugin extends Plugin {
     }
   }
 
+  /**
+   * Leaf names of the non-entity folders (conversations, prompts, skills, task-agents,
+   * enrichers, credentials, scripts) that currently sit directly under the entity base path, so
+   * EntityManager's top-level folder scan doesn't try to parse their files as entity notes.
+   * Computed from the live settings rather than hardcoded defaults, so renaming e.g. the
+   * conversation folder in Settings doesn't reintroduce that exact scan.
+   */
+  private getReservedEntityFolderNames(): string[] {
+    const base = normalizePath(this.settings.entityBasePath.trim() || OSINT_COPILOT_VAULT_ROOT);
+    const prefix = `${base}/`;
+    const leafName = (path: string): string | null => {
+      const normalized = normalizePath(path.trim());
+      if (!normalized.startsWith(prefix)) return null;
+      return normalized.slice(prefix.length).split('/')[0] || null;
+    };
+    const candidates = [
+      this.settings.conversationFolder,
+      this.settings.promptsFolder,
+      this.settings.skillsFolder,
+      this.settings.taskAgentsFolder,
+      this.settings.enrichersFolder,
+      this.settings.credentialsFolder,
+      this.settings.scriptsFolder,
+    ];
+    return [...new Set(candidates.map(leafName).filter((n): n is string => !!n))];
+  }
+
   getLocalCliService(providerId: 'claude-code' | 'codex' = this.settings.apiProvider): LocalCliService | null {
     return providerId === 'codex' ? this.codexCliService : this.claudeCodeService;
   }
@@ -247,7 +275,12 @@ export default class VaultAIPlugin extends Plugin {
     }
 
     // Initialize graph plugin components
-    this.entityManager = new EntityManager(this.app, this.settings.entityBasePath, this.vaultLockService);
+    this.entityManager = new EntityManager(
+      this.app,
+      this.settings.entityBasePath,
+      this.vaultLockService,
+      () => this.getReservedEntityFolderNames(),
+    );
     this.waybackArchiveService = new WaybackArchiveService(this.app);
     this.entityManager.setWaybackArchiveService(this.waybackArchiveService);
     this.schemaCatalogService = new SchemaCatalogService(this.app, () => this.settings.entityBasePath);

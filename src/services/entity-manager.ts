@@ -53,6 +53,7 @@ export class EntityManager {
     private vaultLockService: VaultLockService | null = null;
     private schemaCatalog: SchemaCatalogService | null = null;
     private waybackArchiveService: WaybackArchiveService | null = null;
+    private getReservedTopLevelFolderNames: () => string[];
 
     private appendYamlLine(lines: string[], key: string, value: unknown): void {
         if (value === undefined || value === null || value === '') return;
@@ -90,10 +91,19 @@ export class EntityManager {
         lines.push(...chunk.split('\n'));
     }
 
-    constructor(app: App, basePath: string = 'OSINTCopilot', vaultLockService?: VaultLockService | null) {
+    constructor(
+        app: App,
+        basePath: string = 'OSINTCopilot',
+        vaultLockService?: VaultLockService | null,
+        getReservedTopLevelFolderNames?: () => string[],
+    ) {
         this.app = app;
         this.basePath = basePath;
         this.vaultLockService = vaultLockService ?? null;
+        // Default covers the two non-entity folders every vault ships with (conversations,
+        // custom); callers whose settings let these move (e.g. a renamed conversation folder)
+        // should pass a getter that reflects the actual configured paths.
+        this.getReservedTopLevelFolderNames = getReservedTopLevelFolderNames ?? (() => ['conversations', 'custom']);
     }
 
     /** Wired from plugin after SchemaCatalogService is constructed. */
@@ -193,11 +203,20 @@ export class EntityManager {
 
         const baseFolder = this.app.vault.getAbstractFileByPath(this.basePath);
         if (baseFolder instanceof TFolder) {
+            // Not entity-type folders -- conversations and custom (prompts/skills/task-agents/
+            // enrichers/credentials/scripts) both live directly under the vault root too by
+            // default, and the "legacy flat type folder" fallback below would otherwise try to
+            // parse every .md file in them as an entity note (rejected for lacking type/id, but
+            // not before logging a YAML-parse warning for anything whose frontmatter isn't
+            // strict YAML). The getter reflects each folder's *actual* configured path, so a
+            // renamed conversation/prompts/etc. folder is still correctly excluded.
+            const reserved = new Set(this.getReservedTopLevelFolderNames());
             for (const child of baseFolder.children) {
                 if (!(child instanceof TFolder)) continue;
                 if (child.name === 'Connections') continue;
                 if (child.name === 'schemas') continue;
                 if (child.name === GRAPH_YAML_FOLDER_NAME) continue;
+                if (reserved.has(child.name)) continue;
 
                 if (isSchemaFamilyFolderName(child.name)) {
                     await this.loadFamilyEntityTree(child, child.name);

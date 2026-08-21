@@ -1384,7 +1384,40 @@ export class ChatView extends ItemView {
     }).open();
   }
 
-  async renderMessages() {
+  private renderMessagesInFlight: Promise<void> | null = null;
+  private renderMessagesQueued = false;
+
+  /**
+   * Coalesces concurrent callers instead of letting two passes run at once. `doRenderMessages`
+   * empties `messagesContainer` synchronously up front but repopulates it across many `await`
+   * points (one MarkdownRenderer.render per message) -- with 48 call sites across this file,
+   * many fire-and-forget (rapid progress updates chief among them), two overlapping passes were
+   * a real, frequently-hit race: the second pass's `empty()` clears the container while the
+   * first pass's loop is still mid-flight and keeps appending into it, producing duplicated
+   * message bubbles (and orphaned cancel buttons attached to nodes that already got detached).
+   * A caller that arrives mid-pass marks another pass queued and awaits the same in-flight
+   * promise; the loop below re-runs once more after settling so the queued caller's state is
+   * still guaranteed to be reflected before its await resolves.
+   */
+  async renderMessages(): Promise<void> {
+    if (this.renderMessagesInFlight) {
+      this.renderMessagesQueued = true;
+      return this.renderMessagesInFlight;
+    }
+    this.renderMessagesInFlight = (async () => {
+      do {
+        this.renderMessagesQueued = false;
+        await this.doRenderMessages();
+      } while (this.renderMessagesQueued);
+    })();
+    try {
+      await this.renderMessagesInFlight;
+    } finally {
+      this.renderMessagesInFlight = null;
+    }
+  }
+
+  private async doRenderMessages() {
     this.messagesContainer.empty();
 
     if (this.chatHistory.length === 0) {
