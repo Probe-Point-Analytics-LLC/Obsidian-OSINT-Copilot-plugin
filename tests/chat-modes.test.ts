@@ -235,6 +235,26 @@ describe('ChatView send routing', () => {
     expect(plugin.askVaultStream).not.toHaveBeenCalled();
   });
 
+  it('passes extracted attachment text as context instead of query URLs', async () => {
+    applyModeToView(view, 'general');
+    view.inputEl.value = 'Extract entities';
+    view.attachedFiles = [{
+      file: new File([''], 'brief.pdf', { type: 'application/pdf' }),
+      extracted: true,
+      content: 'Entity evidence cites https://embedded.example/report',
+    }];
+    (view as any).renderAttachments = vi.fn();
+    const orchestration = vi.spyOn(view, 'handleOrchestrationAgent').mockResolvedValue(undefined);
+
+    await view.handleSend();
+
+    expect(orchestration).toHaveBeenCalledWith(
+      'Extract entities',
+      expect.stringContaining('https://embedded.example/report'),
+    );
+    expect(orchestration.mock.calls[0][0]).not.toContain('embedded.example');
+  });
+
   it('routes a selected task-agent workflow to the task-agent handler', async () => {
     view.selectedTaskAgentId = 'evidence-report';
     view.inputEl.value = 'Create the evidence report';

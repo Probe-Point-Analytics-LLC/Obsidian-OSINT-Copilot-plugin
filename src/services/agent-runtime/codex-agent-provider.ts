@@ -15,7 +15,7 @@ export class CodexAgentProvider implements AgentProvider {
         onProgress?: (message: string, percent: number) => void,
         logOptions?: ExtractionLogOptions,
     ): Promise<AgentTurnResult> {
-        onProgress?.('Running Codex agent (JSON turn)...', 25);
+        onProgress?.('Running Codex agent (JSON turn)...', 40);
         const system = buildUnifiedAgentSystemPrompt('Codex CLI');
         const user = buildUnifiedAgentUserPrompt(ctx);
         const raw = await this.graphApi.callLocalProviderModel(

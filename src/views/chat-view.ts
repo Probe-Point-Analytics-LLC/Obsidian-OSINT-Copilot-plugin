@@ -134,6 +134,58 @@ export class ChatView extends ItemView {
     };
   }
 
+  /** Keep the full-message and incremental progress render paths identical. */
+  private renderSingleProgress(
+    progressContainer: HTMLElement,
+    messageIndex: number,
+    progress: { message: string; percent: number },
+  ): void {
+    progressContainer.empty();
+
+    const progressBar = progressContainer.createDiv("vault-ai-progress-bar");
+    progressBar.style.width = `${progress.percent}%`;
+
+    const infoContainer = progressContainer.createDiv("vault-ai-progress-info");
+    infoContainer.style.display = "flex";
+    infoContainer.style.justifyContent = "space-between";
+    infoContainer.style.alignItems = "center";
+    infoContainer.style.marginTop = "4px";
+
+    infoContainer.createEl("span", {
+      cls: "vault-ai-progress-text",
+      text: `${progress.message || "Processing..."} (${progress.percent}%)`,
+    });
+
+    if (!this.activeAbortControllers.has(messageIndex)) return;
+
+    const cancelBtn = infoContainer.createEl("button", {
+      text: "✕ Cancel", // eslint-disable-line obsidianmd/ui/sentence-case
+      cls: "vault-ai-cancel-btn",
+    });
+    cancelBtn.style.fontSize = "11px";
+    cancelBtn.style.padding = "2px 6px";
+    cancelBtn.style.height = "auto";
+    cancelBtn.style.marginLeft = "8px";
+    cancelBtn.style.color = "var(--text-muted)";
+    cancelBtn.style.background = "transparent";
+    cancelBtn.style.border = "1px solid var(--background-modifier-border)";
+    cancelBtn.style.borderRadius = "4px";
+    cancelBtn.style.cursor = "pointer";
+
+    cancelBtn.addEventListener("mouseenter", () => {
+      cancelBtn.style.color = "var(--text-error)";
+      cancelBtn.style.borderColor = "var(--text-error)";
+    });
+    cancelBtn.addEventListener("mouseleave", () => {
+      cancelBtn.style.color = "var(--text-muted)";
+      cancelBtn.style.borderColor = "var(--background-modifier-border)";
+    });
+    cancelBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void this.handleCancel(messageIndex);
+    });
+  }
+
   constructor(leaf: WorkspaceLeaf, plugin: VaultAIPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -1369,12 +1421,7 @@ export class ChatView extends ItemView {
       // Show progress bar and intermediate results for report generation
       if (item.role === "assistant" && item.progress && typeof item.progress === "object" && "percent" in item.progress) {
         const progressContainer = messageDiv.createDiv("vault-ai-progress-container");
-        const progressBar = progressContainer.createDiv("vault-ai-progress-bar");
-        progressBar.style.width = `${item.progress.percent}%`;
-        const progressText = progressContainer.createEl("span", {
-          cls: "vault-ai-progress-text",
-          text: `${item.progress.message || "Processing..."} (${item.progress.percent}%)`,
-        });
+        this.renderSingleProgress(progressContainer, i, item.progress);
       }
 
       if (item.role === "assistant" && item.extractionLogs && item.extractionLogs.length > 0) {
@@ -1961,59 +2008,8 @@ export class ChatView extends ItemView {
         } else {
           progressContainer = messageDiv.createDiv("vault-ai-progress-container");
         }
-      } else {
-        // Clear existing content but keep the container
-        progressContainer.empty();
       }
-
-      // Create progress bar
-      const progressBar = progressContainer.createDiv("vault-ai-progress-bar");
-      progressBar.style.width = `${currentProgress.percent}%`;
-
-      // Container for text and button
-      const infoContainer = progressContainer.createDiv("vault-ai-progress-info");
-      infoContainer.style.display = "flex";
-      infoContainer.style.justifyContent = "space-between";
-      infoContainer.style.alignItems = "center";
-      infoContainer.style.marginTop = "4px";
-
-      // Create progress text
-      infoContainer.createEl("span", {
-        cls: "vault-ai-progress-text",
-        text: `${currentProgress.message || "Processing..."} (${currentProgress.percent}%)`,
-      });
-
-      // Add Cancel button if operation is active
-      if (this.activeAbortControllers.has(messageIndex)) {
-        const cancelBtn = infoContainer.createEl("button", {
-          text: "✕ Cancel", // eslint-disable-line obsidianmd/ui/sentence-case
-          cls: "vault-ai-cancel-btn"
-        });
-        cancelBtn.style.fontSize = "11px";
-        cancelBtn.style.padding = "2px 6px";
-        cancelBtn.style.height = "auto";
-        cancelBtn.style.marginLeft = "8px";
-        cancelBtn.style.color = "var(--text-muted)";
-        cancelBtn.style.background = "transparent";
-        cancelBtn.style.border = "1px solid var(--background-modifier-border)";
-        cancelBtn.style.borderRadius = "4px";
-        cancelBtn.style.cursor = "pointer";
-
-        cancelBtn.addEventListener("mouseenter", () => {
-          cancelBtn.style.color = "var(--text-error)";
-          cancelBtn.style.borderColor = "var(--text-error)";
-        });
-
-        cancelBtn.addEventListener("mouseleave", () => {
-          cancelBtn.style.color = "var(--text-muted)";
-          cancelBtn.style.borderColor = "var(--background-modifier-border)";
-        });
-
-        cancelBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.handleCancel(messageIndex);
-        });
-      }
+      this.renderSingleProgress(progressContainer, messageIndex, currentProgress);
 
       const vaultLive = this.chatHistory[messageIndex]?.vaultIngestLiveLog;
       const vaultPreviewCmds = this.chatHistory[messageIndex]?.vaultIngestPreviewCommands;
@@ -2383,7 +2379,8 @@ export class ChatView extends ItemView {
 
     // Build processed value - keep file content separate from chat display
     let displayValue = value; // What user sees in chat
-    let processingValue = value; // What gets sent to graph generation (includes file content)
+    let processingValue = value; // Combined text for task-agent routes that accept one input string
+    let attachmentsContext = ""; // Extracted files stay separate from the user's instruction
     const processedFileNames: string[] = []; // Track file names for display
     const extractedContents: string[] = []; // Extracted text
 
@@ -2527,7 +2524,8 @@ export class ChatView extends ItemView {
         return;
       }
 
-      processingValue = processingValue + extractedContents.join('\n');
+      attachmentsContext = extractedContents.join('\n');
+      processingValue = processingValue + attachmentsContext;
 
       if (processedFileNames.length > 0) {
         const fileList = processedFileNames.map(f => {
@@ -2555,7 +2553,8 @@ export class ChatView extends ItemView {
     } else if (this.vaultGraphIngestMode) {
       await this.handleVaultGraphIngestOnly(processingValue, "");
     } else {
-      await this.handleOrchestrationAgent(processingValue, "");
+      const orchestrationQuery = value || "Extract entities and relationships from the attached content.";
+      await this.handleOrchestrationAgent(orchestrationQuery, attachmentsContext);
     }
 
     // Save conversation after assistant response

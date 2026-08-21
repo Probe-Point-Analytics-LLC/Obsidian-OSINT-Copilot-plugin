@@ -98,6 +98,11 @@ export interface ExecuteGraphModificationsOptions {
     skipConfirmation?: boolean;
 }
 
+function isAbortError(error: unknown): boolean {
+    return typeof error === "object" && error !== null &&
+        "name" in error && (error as { name?: unknown }).name === "AbortError";
+}
+
 export class OrchestrationService {
     private plugin: VaultAIPlugin;
 
@@ -143,6 +148,7 @@ export class OrchestrationService {
                 options,
             );
         } catch (error) {
+            if (isAbortError(error)) throw error;
             console.error("[OrchestrationService] Error:", error);
             this.handleError(error);
             throw error;
@@ -368,7 +374,7 @@ export class OrchestrationService {
                 phase: "SYNTHESIS_COMPLETE",
             };
         } catch (e) {
-            if (e instanceof DOMException && e.name === "AbortError") {
+            if (isAbortError(e)) {
                 throw e;
             }
             const msg = e instanceof Error ? e.message : String(e);

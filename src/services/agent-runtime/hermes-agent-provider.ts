@@ -23,7 +23,7 @@ export class HermesAgentProvider implements AgentProvider {
         signal: AbortSignal | undefined,
         onProgress?: (message: string, percent: number) => void,
     ): Promise<AgentTurnResult> {
-        onProgress?.('Running Hermes agent (JSON turn)...', 25);
+        onProgress?.('Running Hermes agent (JSON turn)...', 40);
         const system = buildUnifiedAgentSystemPrompt('Hermes Agent');
         const user = buildUnifiedAgentUserPrompt(ctx);
         const fullPrompt = `${system}\n\n---\n\n${user}`;

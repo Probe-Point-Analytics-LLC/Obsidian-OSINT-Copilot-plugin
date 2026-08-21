@@ -119,6 +119,9 @@ export const requestUrl = vi.fn();
 
 export const MarkdownRenderer = {
     renderMarkdown: vi.fn(),
+    render: vi.fn(async (_app: App, markdown: string, el: HTMLElement) => {
+        el.textContent = markdown;
+    }),
 };
 
 export class Menu {

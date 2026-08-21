@@ -159,6 +159,89 @@ describe('getConfiguredRuntimeOptions', () => {
 });
 
 describe('OrchestrationService unified path', () => {
+    it('keeps URLs in attachment context from triggering URL extraction', async () => {
+        const turnJson = JSON.stringify({
+            version: AGENT_TURN_SCHEMA_VERSION,
+            answer_markdown: 'Attachment received.',
+            retrieval_hits: [],
+            graph_operations: [],
+            custom_vault_operations: [],
+            enricher_invocations: [],
+        });
+        const tryExtractTextFromUrl = vi.fn().mockResolvedValue({ ok: true, text: 'typed URL content' });
+        const plugin: any = {
+            settings: {
+                enableGraphFeatures: true,
+                credentialsFolder: 'OSINTCopilot/custom/credentials',
+                agentRuntimeProvider: 'claude-code',
+                hermesAgentCliPath: 'hermes',
+                hermesAgentExtraArgs: '',
+                hermesAgentTimeoutMs: 120_000,
+                hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
+            },
+            graphApiService: {
+                tryExtractTextFromUrl,
+                callLocalProviderModel: vi.fn().mockResolvedValue(turnJson),
+            },
+            vaultPromptLoader: { getOrchestrationAugmentation: vi.fn().mockResolvedValue('') },
+            enricherRegistry: { listRunnable: vi.fn().mockResolvedValue([]) },
+        };
+        const orch = new OrchestrationService(plugin);
+
+        await orch.processRequest(
+            'Read https://typed.example/report',
+            'The PDF cites https://embedded.example/report',
+            { entities: [], connections: [] },
+            [],
+            {},
+            vi.fn(),
+            {},
+        );
+
+        expect(tryExtractTextFromUrl).toHaveBeenCalledTimes(1);
+        expect(tryExtractTextFromUrl).toHaveBeenCalledWith('https://typed.example/report');
+        expect(plugin.graphApiService.callLocalProviderModel.mock.calls[0][1][1].content)
+            .toContain('https://embedded.example/report');
+    });
+
+    it('does not log or notify for an expected orchestration abort', async () => {
+        const plugin: any = {
+            settings: {
+                enableGraphFeatures: true,
+                credentialsFolder: 'OSINTCopilot/custom/credentials',
+                agentRuntimeProvider: 'claude-code',
+                hermesAgentCliPath: 'hermes',
+                hermesAgentExtraArgs: '',
+                hermesAgentTimeoutMs: 120_000,
+                hermesAgentHealthCheckArgs: '--version',
+                customAgentRuntimes: [],
+            },
+            graphApiService: {},
+            vaultPromptLoader: { getOrchestrationAugmentation: vi.fn().mockResolvedValue('') },
+            enricherRegistry: { listRunnable: vi.fn().mockResolvedValue([]) },
+        };
+        const orch = new OrchestrationService(plugin);
+        const handleError = vi.spyOn(orch as any, 'handleError');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const controller = new AbortController();
+        controller.abort();
+
+        await expect(orch.processRequest(
+            'Extract entities',
+            '',
+            { entities: [], connections: [] },
+            [],
+            {},
+            vi.fn(),
+            { abortSignal: controller.signal },
+        )).rejects.toMatchObject({ name: 'AbortError' });
+
+        expect(handleError).not.toHaveBeenCalled();
+        expect(consoleError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
+    });
+
     it('returns SYNTHESIS_COMPLETE with proposedCommands from graph_operations', async () => {
         const turnJson = JSON.stringify({
             version: AGENT_TURN_SCHEMA_VERSION,

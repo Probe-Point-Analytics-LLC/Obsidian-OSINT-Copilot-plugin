@@ -14,7 +14,7 @@ export class ClaudeAgentProvider implements AgentProvider {
         onProgress?: (message: string, percent: number) => void,
         logOptions?: ExtractionLogOptions,
     ): Promise<AgentTurnResult> {
-        onProgress?.('Running Claude Code agent (JSON turn)...', 25);
+        onProgress?.('Running Claude Code agent (JSON turn)...', 40);
         const system = buildUnifiedAgentSystemPrompt('Claude Code');
         const user = buildUnifiedAgentUserPrompt(ctx);
         const raw = await this.graphApi.callLocalProviderModel(

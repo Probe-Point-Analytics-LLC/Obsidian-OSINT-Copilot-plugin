@@ -108,6 +108,37 @@ describe('ChatView', () => {
         expect(chatView.graphGenerationMode).toBe(false);
     });
 
+    it('keeps the active cancel button when agent logs trigger a full rerender', async () => {
+        chatView.messagesContainer = document.createElement('div');
+        chatView.chatHistory = [{
+            role: 'assistant',
+            content: '',
+            progress: { message: 'Running Codex agent...', percent: 40 },
+            extractionLogs: [],
+        } as any];
+        const controller = new AbortController();
+        chatView.activeAbortControllers.set(0, controller);
+        const cancelSpy = vi.spyOn(chatView, 'handleCancel').mockResolvedValue(undefined);
+
+        await chatView.renderMessages();
+        expect(chatView.messagesContainer.querySelectorAll('.vault-ai-cancel-btn')).toHaveLength(1);
+
+        const appendLog = (chatView as any).makeLogAppender(0) as (event: any) => void;
+        appendLog({
+            phase: 'invoke_start',
+            level: 'info',
+            message: 'Running Codex CLI',
+            timestamp: Date.now(),
+        });
+        await vi.waitFor(() => {
+            expect(chatView.messagesContainer.querySelectorAll('.vault-ai-cancel-btn')).toHaveLength(1);
+        });
+
+        (chatView.messagesContainer.querySelector('.vault-ai-cancel-btn') as HTMLButtonElement).click();
+        expect(cancelSpy).toHaveBeenCalledWith(0);
+        expect(controller.signal.aborted).toBe(false);
+    });
+
     it('should render basic UI on open', async () => {
         // Mock render method since it uses many Obsidian DOM helpers
         const renderSpy = vi.spyOn(chatView, 'render').mockImplementation(async () => {
