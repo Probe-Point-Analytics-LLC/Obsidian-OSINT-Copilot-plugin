@@ -2919,8 +2919,8 @@ export class GraphView extends ItemView {
             // Clear saved positions
             this.nodePositionsCache.clear();
 
-            // Run full layout
-            this.runLayout();
+            // Run a spacious full layout for an explicit rearrange action.
+            this.runLayout({ spacious: true });
 
             // Save new positions after layout completes
             setTimeout(() => {
@@ -3143,22 +3143,28 @@ export class GraphView extends ItemView {
     /**
      * Run the force-directed layout.
      */
-    runLayout(): void {
+    runLayout(options: { spacious?: boolean } = {}): void {
         if (!this.cy) return;
+
+        const spacious = options.spacious === true;
 
         this.cy.layout({
             name: 'cose',
             animate: true,
             animationDuration: 500,
-            nodeRepulsion: () => 8000,
-            idealEdgeLength: () => 100,
-            edgeElasticity: () => 100,
-            nestingFactor: 1.2,
-            gravity: 0.25,
+            // Larger values spread nodes farther apart when the user explicitly rearranges.
+            nodeRepulsion: () => spacious ? 18000 : 8000,
+            idealEdgeLength: () => spacious ? 180 : 100,
+            edgeElasticity: () => spacious ? 80 : 100,
+            nestingFactor: spacious ? 1.35 : 1.2,
+            gravity: spacious ? 0.12 : 0.25,
             numIter: 1000,
-            initialTemp: 200,
+            initialTemp: spacious ? 350 : 200,
             coolingFactor: 0.95,
-            minTemp: 1.0
+            minTemp: 1.0,
+            // Keep the larger coordinate space instead of immediately scaling it back down
+            // to the viewport. The toolbar's Fit button remains available when needed.
+            fit: !spacious,
         }).run();
     }
 
@@ -3742,4 +3748,3 @@ export class GraphView extends ItemView {
         }
     }
 }
-
